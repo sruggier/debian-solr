@@ -13,8 +13,10 @@ Build-Depends:
  javacc,
  javahelper,
  jflex,
+ junit4,
  libavalon-framework-java,
  libcommons-beanutils-java,
+ libcommons-codec-java (>= 1.6),
  libcommons-collections3-java,
  libcommons-compress-java,
  libcommons-digester-java,
@@ -49,6 +51,7 @@ Suggests: liblucene3-java-doc
 Recommends:
  libavalon-framework-java,
  libcommons-beanutils-java,
+ libcommons-codec-java (>= 1.6),
  libcommons-collections3-java,
  libcommons-compress-java,
  libcommons-digester-java,

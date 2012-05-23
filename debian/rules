@@ -2,15 +2,15 @@
 
 export JAVA_HOME=/usr/lib/jvm/default-java
 
+DEB_UPSTREAM_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^+]+)\-.*,\1,p')
 
 %:
 	dh $@ --with javahelper
 
-
 override_dh_auto_configure:
 	# Link in jars from /usr/share/java rather
 	# than patching the build process
-	for pkg in ant ant-junit junit4; \
+	for pkg in ant ant-junit junit4 hamcrest-core; \
 	do \
 		ln -sf /usr/share/java/$$pkg.jar lucene/test-framework/lib/$$pkg.jar; \
 	done	
@@ -33,15 +33,24 @@ override_dh_auto_configure:
 
 override_dh_auto_build:
 	ant -buildfile lucene/build.xml -propertyfile debian/ant.properties \
-		-Dversion=3.6.0 package
-	#jar-core docs javadocs build-contrib
+		-Dversion=$(DEB_UPSTREAM_VERSION) jar-core docs javadocs build-contrib
 
 override_dh_auto_clean:
 	ant clean-jars
+	rm -f debian/*.jlibs
 	dh_auto_clean
 
+override_dh_auto_install:
+	for jlib in liblucene3-contrib-java liblucene3-java; \
+	do \
+		sed -e "s|__VERSION__|$(DEB_UPSTREAM_VERSION)|g" \
+			< debian/$$jlib.jlibs.in > debian/$$jlib.jlibs; \
+	done
+	dh_auto_install
+
+
 override_dh_installchangelogs:
-	dh_installchangelogs CHANGES.txt
+	dh_installchangelogs lucene/CHANGES.txt
 
 get-orig-source:
 	uscan --force-download --rename
