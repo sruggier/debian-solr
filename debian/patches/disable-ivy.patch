@@ -1,0 +1,13 @@
+Index: lucene-solr/lucene/common-build.xml
+===================================================================
+--- lucene-solr.orig/lucene/common-build.xml	2012-05-23 10:50:17.331614071 +0100
++++ lucene-solr/lucene/common-build.xml	2012-05-23 10:50:55.203734042 +0100
+@@ -257,7 +257,7 @@
+   <target name="resolve" depends="ivy-availability-check,ivy-fail">
+     <!-- todo, make this a property or something. 
+          only special cases need bundles -->
+-    <ivy:retrieve type="jar,bundle" log="download-only"/>
++    <echo message="Ivy usage disabled in Debian build"/>
+   </target>
+   <target name="ivy-availability-check" unless="ivy.available">
+    <echo>

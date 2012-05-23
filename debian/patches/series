@@ -5,3 +5,4 @@
 javacc-system.patch
 #build-versionless-jars.patch
 fix-jar-matches.patch
+disable-ivy.patch

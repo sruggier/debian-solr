@@ -32,8 +32,9 @@ override_dh_auto_configure:
 	dh_auto_configure
 
 override_dh_auto_build:
-	cd lucene && ant -propertyfile debian/ant.properties \
-		-Dversion=3.6.0 jar-core docs javadocs build-contrib
+	ant -buildfile lucene/build.xml -propertyfile debian/ant.properties \
+		-Dversion=3.6.0 package
+	#jar-core docs javadocs build-contrib
 
 override_dh_auto_clean:
 	ant clean-jars
