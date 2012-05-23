@@ -1,0 +1,67 @@
+Index: lucene-solr/lucene/contrib/benchmark/build.xml
+===================================================================
+--- lucene-solr.orig/lucene/contrib/benchmark/build.xml	2012-05-23 09:50:45.048081849 +0100
++++ lucene-solr/lucene/contrib/benchmark/build.xml	2012-05-23 10:27:23.007239077 +0100
+@@ -131,11 +131,11 @@
+       <pathelement path="${highlighter.jar}"/>
+       <pathelement path="${analyzers-common.jar}"/>
+       <pathelement path="${facet.jar}"/>
+-      <fileset dir="${common.dir}/contrib/icu/lib" includes="icu4j-4.8.1.1.jar"/>
++      <fileset dir="${common.dir}/contrib/icu/lib" includes="icu4j.jar"/>
+       <path refid="base.classpath"/>
+     	<fileset dir="lib">
+-    	  <include name="commons-compress-1.2.jar"/>
+-    	  <include name="xercesImpl-2.9.1.jar"/>
++    	  <include name="commons-compress.jar"/>
++    	  <include name="xercesImpl.jar"/>
+     	</fileset>
+     </path>
+     <path id="run.classpath">
+@@ -176,7 +176,7 @@
+ 	<path id="collation.runtime.classpath">
+ 	  <path refid="run.classpath"/>
+     <pathelement path="${icu.jar}"/>
+-    <fileset dir="${common.dir}/contrib/icu/lib" includes="icu4j-4.8.1.1.jar"/>
++    <fileset dir="${common.dir}/contrib/icu/lib" includes="icu4j.jar"/>
+ 	</path>
+ 	
+ 	<target name="collation" depends="compile,jar-icu,top-100k-wiki-word-files">
+Index: lucene-solr/lucene/contrib/icu/build.xml
+===================================================================
+--- lucene-solr.orig/lucene/contrib/icu/build.xml	2012-05-23 09:50:45.068081916 +0100
++++ lucene-solr/lucene/contrib/icu/build.xml	2012-05-23 10:28:22.215430579 +0100
+@@ -28,7 +28,7 @@
+   <import file="../contrib-build.xml"/>
+ 
+   <path id="icujar">
+-     <pathelement location="lib/icu4j-4.8.1.1.jar"/>
++     <pathelement location="lib/icu4j.jar"/>
+   </path>
+ 
+   <path id="classpath">
+Index: lucene-solr/lucene/contrib/analyzers/phonetic/build.xml
+===================================================================
+--- lucene-solr.orig/lucene/contrib/analyzers/phonetic/build.xml	2012-05-23 09:39:25.065825565 +0100
++++ lucene-solr/lucene/contrib/analyzers/phonetic/build.xml	2012-05-23 10:28:53.007530161 +0100
+@@ -30,7 +30,7 @@
+   <import file="../../contrib-build.xml"/>
+ 
+   <path id="classpath">
+-    <pathelement path="lib/commons-codec-1.6.jar"/>
++    <pathelement path="lib/commons-codec.jar"/>
+     <path refid="base.classpath"/>
+   </path>
+ </project>
+Index: lucene-solr/lucene/common-build.xml
+===================================================================
+--- lucene-solr.orig/lucene/common-build.xml	2012-05-23 10:26:21.991041704 +0100
++++ lucene-solr/lucene/common-build.xml	2012-05-23 10:30:42.567884429 +0100
+@@ -59,7 +59,7 @@
+   <property name="ivy.resource" value="org/apache/ivy/ant/antlib.xml" />
+   <available resource="${ivy.resource}" property="ivy.available" />
+ 
+-  <property name="junit.jar" value="junit-4.10.jar"/>
++  <property name="junit.jar" value="junit4.jar"/>
+   <property name="junit-location.jar" value="${common.dir}/test-framework/lib/${junit.jar}"/>
+   <path id="junit-path">
+     <pathelement location="${junit-location.jar}"/>

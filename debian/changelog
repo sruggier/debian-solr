@@ -1,0 +1,21 @@
+lucene-solr (3.6.0-1) unstable; urgency=low
+
+  * New upstream release.
+  * Renamed source package to support a single source package for
+    solr and lucene (upstream release in sync).
+
+ -- James Page <james.page@ubuntu.com>  Wed, 23 May 2012 09:40:49 +0100
+
+lucene3 (3.5.0-1) unstable; urgency=low
+
+  * New upstream release.
+  * Refreshed patches.
+  * Added myself to uploaders.
+
+ -- James Page <james.page@ubuntu.com>  Tue, 29 Nov 2011 09:20:11 +0000
+
+lucene3 (3.3.0+dfsg-1) unstable; urgency=low
+
+  * Initial release. (Closes: #594027)
+
+ -- Mat Scales <mat@wibbly.org.uk>  Tue, 23 Aug 2011 23:03:38 +0100

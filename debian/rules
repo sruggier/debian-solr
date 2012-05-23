@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+
+export JAVA_HOME=/usr/lib/jvm/default-java
+
+
+%:
+	dh $@ --with javahelper
+
+
+override_dh_auto_configure:
+	# Link in jars from /usr/share/java rather
+	# than patching the build process
+	for pkg in ant ant-junit junit4; \
+	do \
+		ln -sf /usr/share/java/$$pkg.jar lucene/test-framework/lib/$$pkg.jar; \
+	done	
+	ln -sf /usr/share/java/commons-codec.jar \
+		lucene/contrib/analyzers/phonetic/lib/commons-codec.jar
+	for pkg in commons-compress commons-logging \
+			   commons-digester commons-collections3 \
+			   commons-beanutils xercesImpl; \
+	do \
+		ln -sf /usr/share/java/$$pkg.jar lucene/contrib/benchmark/lib/$$pkg.jar; \
+	done
+	ln -sf /usr/share/java/com.ibm.icu-4.4.jar lucene/contrib/icu/lib/icu4j.jar
+	ln -sf /usr/share/java/regexp.jar lucene/contrib/queries/lib/jakarta-regexp.jar
+	mkdir -p lucene/lib
+	for pkg in ant junit4; \
+	do \
+		ln -sf /usr/share/java/$$pkg.jar lucene/lib/$$pkg.jar; \
+	done
+	dh_auto_configure
+
+override_dh_auto_build:
+	cd lucene && ant -propertyfile debian/ant.properties \
+		-Dversion=3.6.0 jar-core docs javadocs build-contrib
+
+override_dh_auto_clean:
+	ant clean-jars
+	dh_auto_clean
+
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGES.txt
+
+get-orig-source:
+	uscan --force-download --rename

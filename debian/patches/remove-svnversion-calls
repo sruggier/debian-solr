@@ -1,0 +1,47 @@
+Description: Remove the calls to svnversion during the build process.
+ The upstream build uses svnversion to get detailed build information to put
+ into the jar manifests directly from Apache's version control. Debian's buildd
+ servers can't make network connections during the build so we disable it.
+Author: Mat Scales <mat@wibbly.org.uk>
+Index: lucene-solr/lucene/common-build.xml
+===================================================================
+--- lucene-solr.orig/lucene/common-build.xml	2011-11-29 09:21:37.509631787 +0000
++++ lucene-solr/lucene/common-build.xml	2011-11-29 09:21:38.245633846 +0000
+@@ -173,15 +173,6 @@
+ 
+   <property name="manifest.file" location="${common.dir}/build/MANIFEST.MF"/>
+ 
+-  <!-- 
+-    we attempt to exec svnversion to get details build information
+-    for jar manifests.  this property can be set at runtime to an
+-    explicit path as needed, or ant will just try to find it in the
+-    default PATH. (this is useful for Hudson)
+-  -->
+-  <property name="svnversion.exe" value="svnversion" />
+-  <property name="svn.exe" value="svn" />
+-  
+   <property name="gpg.exe" value="gpg" />
+   <property name="gpg.key" value="CODE SIGNING KEY" />
+ 
+@@ -404,7 +395,7 @@
+         <attribute name="Implementation-Title" value="@{implementation.title}"/>
+         <!-- impl version can be any string -->
+         <attribute name="Implementation-Version"
+-                   value="${version} ${svnversion} - ${user.name} - ${DSTAMP} ${TSTAMP}"/>
++                   value="${version} - ${DSTAMP} ${TSTAMP}"/>
+         <attribute name="Implementation-Vendor"
+                    value="The Apache Software Foundation"/>
+         <attribute name="X-Compile-Source-JDK" value="${javac.source}"/>
+@@ -423,12 +414,6 @@
+     <attribute name="spec.version" default="${spec.version}"/>
+     <element name="nested" optional="true" implicit="true"/>
+     <sequential>
+-      <!-- If possible, include the svnversion -->
+-      <exec dir="." executable="${svnversion.exe}"
+-            outputproperty="svnversion" failifexecutionfails="false">
+-        <arg line="."/>
+-      </exec>
+-      
+       <build-manifest title="@{title}"
+                       implementation.title="@{implementation.title}"
+                       spec.version="@{spec.version}"/>

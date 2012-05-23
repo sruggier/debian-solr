@@ -1,0 +1,2 @@
+version=3
+opts=dversionmangle=s/\+dfsg// http://www.apache.org/dist/lucene/java/(3\.[\d.]+)/lucene-([\d.]+)-src.t(?:ar\.)?gz debian jh_repack

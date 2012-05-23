@@ -1,0 +1,80 @@
+Source: lucene-solr
+Section: java
+Priority: optional
+Maintainer: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
+Uploaders: Mat Scales <mat@wibbly.org.uk>, James Page <james.page@ubuntu.com>
+Homepage: http://lucene.apache.org
+Standards-Version: 3.9.2
+Build-Depends:
+ ant,
+ bnd,
+ debhelper (>= 8),
+ default-jdk,
+ javacc,
+ javahelper,
+ jflex,
+ libavalon-framework-java,
+ libcommons-beanutils-java,
+ libcommons-collections3-java,
+ libcommons-compress-java,
+ libcommons-digester-java,
+ libcommons-logging-java,
+ libexcalibur-logkit-java,
+ libicu4j-4.4-java,
+ liblog4j1.2-java,
+ libregexp-java,
+ libxerces2-java,
+ libxml-commons-external-java,
+ libxml-commons-resolver1.1-java
+Vcs-Git: git://git.debian.org/git/pkg-java/lucene-solr.git
+Vcs-Browser: http://git.debian.org/?p=pkg-java/lucene-solr.git
+
+Package: liblucene3-java
+Architecture: all
+Depends: ${misc:Depends}
+Conflicts: liblucene2-java
+Suggests: liblucene3-java-doc
+Recommends: liblucene3-java-contrib
+Description: Full-text search engine library for Java(TM)
+ Lucene is a full-text search engine for the Java(TM) programming language.
+ Lucene is not a complete application, but rather a code library and API
+ that can easily be used to add search capabilities to applications.
+ .
+ This package contains the Lucene core library.
+
+Package: liblucene3-contrib-java
+Architecture: all
+Depends: liblucene3-java, ${misc:Depends}
+Suggests: liblucene3-java-doc
+Recommends:
+ libavalon-framework-java,
+ libcommons-beanutils-java,
+ libcommons-collections3-java,
+ libcommons-compress-java,
+ libcommons-digester-java,
+ libcommons-logging-java,
+ libexcalibur-logkit-java,
+ libicu4j-4.4-java,
+ liblog4j1.2-java,
+ libregexp-java,
+ libxerces2-java,
+ libxml-commons-external-java,
+ libxml-commons-resolver1.1-java
+Description: Full-text search engine library for Java(TM)
+ Lucene is a full-text search engine for the Java(TM) programming language.
+ Lucene is not a complete application, but rather a code library and API
+ that can easily be used to add search capabilities to applications.
+ .
+ This package contains a number of additional (contributed) libraries.
+
+Package: liblucene3-java-doc
+Architecture: all
+Section: doc
+Suggests: liblucene3-java
+Depends: ${misc:Depends}
+Description: Documentation for Lucene
+ Lucene is a full-text search engine for the Java(TM) programming language.
+ Lucene is not a complete application, but rather a code library and API
+ that can easily be used to add search capabilities to applications.
+ .
+ This package contains class API documentation for Lucene.
