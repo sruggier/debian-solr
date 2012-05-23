@@ -1,0 +1,2 @@
+debian/solr3-tomcat.xml /etc/solr3/
+debian/tomcat.policy /etc/solr3/

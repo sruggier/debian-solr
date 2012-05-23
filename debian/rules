@@ -29,25 +29,36 @@ override_dh_auto_configure:
 	do \
 		ln -sf /usr/share/java/$$pkg.jar lucene/lib/$$pkg.jar; \
 	done
+	# And the same for solr
+	for pkg in commons-codec commons-fileupload commons-httpclient commons-io \
+			   commons-lang easymock geronimo-stax-1.0-spec guava httpclient httpcore \
+			   httpmime jcl-over-slf4j junit4 log4j-over-slf4j servlet-api-2.5 \
+			   slf4j-api slf4j-jdk14 wstx-lgpl; \
+	do \
+		ln -sf /usr/share/java/$$pkg.jar solr/lib/$$pkg.jar; \
+	done
 	dh_auto_configure
 
 override_dh_auto_build:
 	ant -buildfile lucene/build.xml -propertyfile debian/ant.properties \
 		-Dversion=$(DEB_UPSTREAM_VERSION) jar-core docs javadocs build-contrib
+	ant -buildfile solr/build.xml -propertyfile debian/ant.properties \
+		-Dversion=$(DEB_UPSTREAM_VERSION) dist-war
 
 override_dh_auto_clean:
 	ant clean-jars
+	find . -name "*.jar" -type l -delete || true
 	rm -f debian/*.jlibs
 	dh_auto_clean
 
 override_dh_auto_install:
-	for jlib in liblucene3-contrib-java liblucene3-java; \
+	for jlib in liblucene3-contrib-java liblucene3-java \
+				libsolr3-java; \
 	do \
 		sed -e "s|__VERSION__|$(DEB_UPSTREAM_VERSION)|g" \
 			< debian/$$jlib.jlibs.in > debian/$$jlib.jlibs; \
 	done
 	dh_auto_install
-
 
 override_dh_installchangelogs:
 	dh_installchangelogs lucene/CHANGES.txt

@@ -1,0 +1,7 @@
+# This needs to be in libsolr3-java
+#solr/dist/*.jar /usr/share/solr3/WEB-INF/lib/
+solr/build/web/* /usr/share/solr3/
+solr/example/solr/conf /etc/solr3
+solr/scripts /usr/share/solr3
+solr/webapp/web/* /usr/share/solr3/
+solr/webapp/web/WEB-INF/web.xml /etc/solr3/
