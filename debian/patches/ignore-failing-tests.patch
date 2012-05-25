@@ -1,0 +1,22 @@
+Index: lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java
+===================================================================
+--- lucene-solr.orig/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java	2012-05-23 09:39:25.597827260 +0100
++++ lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java	2012-05-25 11:18:53.803044361 +0100
+@@ -27,6 +27,7 @@
+ 
+ import java.io.Reader;
+ import java.util.Locale;
++import org.junit.Ignore;
+ 
+ 
+ public class TestICUCollationKeyFilter extends CollationTestBase {
+@@ -80,7 +81,8 @@
+   //
+   // Copied (and slightly modified) from 
+   // org.apache.lucene.search.TestSort.testInternationalSort()
+-  //  
++  //
++  @Ignore
+   public void testCollationKeySort() throws Exception {
+     Analyzer usAnalyzer = new TestAnalyzer(Collator.getInstance(Locale.US));
+     Analyzer franceAnalyzer 

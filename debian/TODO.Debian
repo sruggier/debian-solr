@@ -1,7 +1,5 @@
 TODO
 ----
-* Fix the tests so they can be run with junit 4.8 not just 4.7 then make them
-  run during the build.
 * Work out the bnd issue where it thinks there is a header called "Name".
   Apparently fixed in later versions but the debian package for bnd is very out
   of date.

@@ -11,11 +11,11 @@ case "$1" in
     configure)
 
         if ! dpkg-statoverride --quiet --list /var/lib/solri3 > /dev/null; then
-            dpkg-statoverride --quiet --update --add jetty root 0750 /var/lib/solr3
+            dpkg-statoverride --quiet --update --add jetty root 0750 /var/lib/solr
         fi
 
-        if ! dpkg-statoverride --quiet --list /var/lib/solr3/data > /dev/null ; then
-            dpkg-statoverride --quiet --update --add jetty root 0750 /var/lib/solr3/data 
+        if ! dpkg-statoverride --quiet --list /var/lib/solr/data > /dev/null ; then
+            dpkg-statoverride --quiet --update --add jetty root 0750 /var/lib/solr/data 
         fi
 
         if [ -d /var/lib/solr/data/index ]; then
