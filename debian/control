@@ -135,6 +135,7 @@ Description: Enterprise search server based on Lucene - Java libraries
 Package: solr-common
 Architecture: all
 Depends:
+ curl,
  debconf (>= 1.5),
  default-jre-headless | java5-runtime-headless | java6-runtime-headless,
  libsolr-java (= ${binary:Version}),
