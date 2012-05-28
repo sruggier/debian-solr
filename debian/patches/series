@@ -1,9 +1,5 @@
-#fix-lib-paths
-#disable-tests
-#remove-svnversion-calls
 #add-osgi-manifest
 javacc-system.patch
-#build-versionless-jars.patch
 fix-jar-matches.patch
 disable-ivy.patch
 ignore-failing-tests.patch
