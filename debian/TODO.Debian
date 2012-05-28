@@ -6,3 +6,4 @@ TODO
 * Use JavaCC to regenerating Java files included in upstream tarball
 * Use JFlex to generate Java files included in upstream tarball (needs 1.5 - not
   yet released)
+* Javadoc package for solr.

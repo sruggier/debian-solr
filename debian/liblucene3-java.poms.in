@@ -28,7 +28,7 @@ solr/contrib/pom.xml --ignore
 solr/contrib/clustering/pom.xml --ignore
 solr/contrib/analysis-extras/pom.xml --ignore
 solr/contrib/langid/pom.xml --ignore
-solr/contrib/dataimporthandler/pom.xml --ignore
+solr/contrib/dataimporthandler/pom.xml --artifact=solr/build/contrib/solr-dataimporthandler/apache-solr-dataimporthandler-__VERSION__.jar --package=libsolr-java --java-lib --usj-name=solr-dataimporthandler
 solr/contrib/extraction/pom.xml --ignore
 solr/contrib/dataimporthandler-extras/pom.xml --ignore
 solr/contrib/velocity/pom.xml --ignore
