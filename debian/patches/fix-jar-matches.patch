@@ -1,3 +1,8 @@
+Description: Misc patches to build process to pickup
+ unversioned jar files to support use of system libraries
+Author: James Page <james.page@ubuntu.com>
+Forwarded: not-needed
+
 Index: lucene-solr/lucene/contrib/benchmark/build.xml
 ===================================================================
 --- lucene-solr.orig/lucene/contrib/benchmark/build.xml	2012-05-23 11:15:26.156364644 +0100

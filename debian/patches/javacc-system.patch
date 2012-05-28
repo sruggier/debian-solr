@@ -1,3 +1,8 @@
+Description: Point javacc configuration at the jar files
+ provided as part of the distribution.
+Author: James Page <james.page@ubuntu.com>
+Forwarded: not-needed
+
 Index: lucene-solr/lucene/common-build.xml
 ===================================================================
 --- lucene-solr.orig/lucene/common-build.xml	2012-05-23 10:00:18.885978436 +0100

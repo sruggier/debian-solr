@@ -1,3 +1,7 @@
+Description: Disable ivy resolution for offline builds.
+Author: James Page <james.page@ubuntu.com>
+Forwarded: not-needed
+
 Index: lucene-solr/lucene/common-build.xml
 ===================================================================
 --- lucene-solr.orig/lucene/common-build.xml	2012-05-23 10:50:17.331614071 +0100

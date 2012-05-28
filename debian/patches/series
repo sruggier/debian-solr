@@ -2,4 +2,4 @@
 javacc-system.patch
 fix-jar-matches.patch
 disable-ivy.patch
-ignore-failing-tests.patch
+icu4.4-compat.patch
