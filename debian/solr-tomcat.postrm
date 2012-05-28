@@ -5,7 +5,6 @@ set -e
 case "$1" in
     remove)
         rm -f /etc/tomcat7/policy.d/05solr.policy
-	    # Is there a way not to restart tomcat if it is due to be removed, too?
     	if [ -x /usr/sbin/invoke-rc.d ]; then
     	    invoke-rc.d tomcat7 restart || true
     	fi

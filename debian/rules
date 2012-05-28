@@ -44,7 +44,7 @@ override_dh_auto_build:
 	ant -buildfile lucene/build.xml -propertyfile debian/ant.properties \
 		-Dversion=$(DEB_UPSTREAM_VERSION) jar-core docs javadocs build-contrib
 	ant -buildfile solr/build.xml -propertyfile debian/ant.properties \
-		-Dversion=$(DEB_UPSTREAM_VERSION) dist-war
+		-Dversion=$(DEB_UPSTREAM_VERSION) dist-war javadocs
 
 ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 override_dh_auto_test:

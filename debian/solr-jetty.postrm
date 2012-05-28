@@ -16,7 +16,6 @@ case "$1" in
     	    fi
     	fi
 
-    	# Is there a way not to restart Jetty if it is due to be removed, too?
     	if [ -x /usr/sbin/invoke-rc.d ]; then
     	    invoke-rc.d jetty restart || true
     	fi

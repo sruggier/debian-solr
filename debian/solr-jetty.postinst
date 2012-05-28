@@ -1,16 +1,13 @@
 #!/bin/sh
 
 set -e
-# Not needed
-# . /usr/share/debconf/confmodule
 
 # If proper permissions for the stuff under /var/lib/solr haven't
 # been set, set them now
-
 case "$1" in
     configure)
 
-        if ! dpkg-statoverride --quiet --list /var/lib/solri3 > /dev/null; then
+        if ! dpkg-statoverride --quiet --list /var/lib/solr > /dev/null; then
             dpkg-statoverride --quiet --update --add jetty root 0750 /var/lib/solr
         fi
 
@@ -26,7 +23,7 @@ case "$1" in
             RESULT=$?
             # Ignore if jetty init script does not exist (yet)
             if [ $RESULT != 100 ]; then
-            exit $RESULT
+                exit $RESULT
             fi
         }
     ;;

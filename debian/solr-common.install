@@ -1,5 +1,3 @@
-# This needs to be in libsolr-java
-#solr/dist/*.jar /usr/share/solr/WEB-INF/lib/
 solr/build/web/* /usr/share/solr/
 solr/example/solr/conf /etc/solr
 solr/scripts/* /usr/share/solr/bin
