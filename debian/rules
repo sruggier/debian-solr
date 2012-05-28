@@ -75,8 +75,9 @@ override_dh_auto_install:
 	dh_auto_install
 
 override_dh_installchangelogs:
-	dh_installchangelogs -pliblucene3-java lucene/CHANGES.txt 
+	dh_installchangelogs -pliblucene3-java lucene/CHANGES.txt
 	dh_installchangelogs -plibsolr-java solr/CHANGES.txt
+	dh_installchangelogs
 
 get-orig-source:
 	uscan --force-download --rename

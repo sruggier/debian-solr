@@ -88,7 +88,7 @@ Package: liblucene3-java-doc
 Architecture: all
 Section: doc
 Suggests: liblucene3-java
-Depends: ${misc:Depends}
+Depends: ${misc:Depends}, libjs-prototype
 Description: Documentation for Lucene
  Lucene is a full-text search engine for the Java(TM) programming language.
  Lucene is not a complete application, but rather a code library and API
@@ -138,6 +138,7 @@ Depends:
  debconf (>= 1.5),
  default-jre-headless | java5-runtime-headless | java6-runtime-headless,
  libsolr-java (= ${binary:Version}),
+ procps,
  ${misc:Depends}
 Recommends: solr-tomcat (= ${binary:Version}) | solr-jetty (= ${binary:Version})
 Description: Enterprise search server based on Lucene3 - common files
