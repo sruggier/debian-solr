@@ -7,8 +7,8 @@ Forwarded: not-needed
 
 Index: lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java
 ===================================================================
---- lucene-solr.orig/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java	2012-05-28 10:02:19.878070608 +0100
-+++ lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java	2012-05-28 10:03:17.442563034 +0100
+--- lucene-solr.orig/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java	2012-05-28 10:05:16.627582079 +0100
++++ lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyFilter.java	2012-05-28 10:49:56.000000000 +0100
 @@ -94,6 +94,6 @@
      // orderings - "BFJHD" is the ordering for the ICU Collator for Locale.US.
      testCollationKeySort
@@ -17,3 +17,16 @@ Index: lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestI
 +     "BFJHD", "EACGI", "BJDFH", "BJDHF");
    }
  }
+Index: lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyAnalyzer.java
+===================================================================
+--- lucene-solr.orig/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyAnalyzer.java	2012-05-23 09:39:25.597827260 +0100
++++ lucene-solr/lucene/contrib/icu/src/test/org/apache/lucene/collation/TestICUCollationKeyAnalyzer.java	2012-05-28 11:00:20.028209522 +0100
+@@ -76,7 +76,7 @@
+     // orderings - "BFJHD" is the ordering for the ICU Collator for Locale.US.
+     testCollationKeySort
+     (usAnalyzer, franceAnalyzer, swedenAnalyzer, denmarkAnalyzer, 
+-     "BFJHD", "ECAGI", "BJDFH", "BJDHF");
++     "BFJHD", "EACGI", "BJDFH", "BJDHF");
+   }
+   
+   public void testThreadSafe() throws Exception {

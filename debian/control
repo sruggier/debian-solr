@@ -49,7 +49,7 @@ Vcs-Browser: http://git.debian.org/?p=pkg-java/lucene-solr.git
 Package: liblucene3-java
 Architecture: all
 Depends: ${misc:Depends}
-Suggests: liblucene3-java-doc
+Suggests: ant, ant-optional, junit4
 Recommends: liblucene3-contrib-java
 Description: Full-text search engine library for Java(TM)
  Lucene is a full-text search engine for the Java(TM) programming language.
@@ -117,7 +117,12 @@ Depends:
  ${misc:Depends}
 Breaks: solr-common (<< 3.6.0-1)
 Replaces: solr-common (<< 3.6.0-1)
-Suggests: libsolr-java-doc
+Suggests:
+ junit4,
+ libeasymock-java,
+ libjetty-extras-java,
+ libjetty-java,
+ libsolr-java-doc
 Description: Enterprise search server based on Lucene - Java libraries
  Solr is an open source enterprise search server based on the Lucene
  Java search library, with XML/HTTP and JSON APIs, hit highlighting,
@@ -134,8 +139,7 @@ Depends:
  default-jre-headless | java5-runtime-headless | java6-runtime-headless,
  libsolr-java (= ${binary:Version}),
  ${misc:Depends}
-Recommends:
- solr-tomcat (= ${binary:Version}) | solr-jetty (= ${binary:Version})
+Recommends: solr-tomcat (= ${binary:Version}) | solr-jetty (= ${binary:Version})
 Description: Enterprise search server based on Lucene3 - common files
  Solr is an open source enterprise search server based on the Lucene
  Java search library, with XML/HTTP and JSON APIs, hit highlighting,
