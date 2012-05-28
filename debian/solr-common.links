@@ -33,3 +33,4 @@
 /usr/share/java/slf4j-jdk14.jar             /usr/share/solr/WEB-INF/lib/slf4j-jdk14.jar
 /usr/share/java/wstx-lgpl.jar               /usr/share/solr/WEB-INF/lib/wstx-lgpl.jar
 /usr/share/java/stax2-api.jar               /usr/share/solr/WEB-INF/lib/stax2-api.jar
+/usr/share/java/mysql.jar                   /usr/share/solr/WEB-INF/lib/mysql.jar

@@ -1,0 +1,18 @@
+Description: In the example configuration that is distributed
+ as part of this package fix the data.dir to /var/lib/solr/data
+Author: James Page <james.page@ubuntu.com>
+Forwarded: not-needed
+
+Index: lucene-solr/solr/example/solr/conf/solrconfig.xml
+===================================================================
+--- lucene-solr.orig/solr/example/solr/conf/solrconfig.xml	2012-05-23 09:39:26.201829183 +0100
++++ lucene-solr/solr/example/solr/conf/solrconfig.xml	2012-05-28 15:11:10.884645851 +0100
+@@ -111,7 +111,7 @@
+        replication is in use, this should match the replication
+        configuration.
+     -->
+-  <dataDir>${solr.data.dir:}</dataDir>
++  <dataDir>/var/lib/solr/data</dataDir>
+ 
+ 
+   <!-- The DirectoryFactory to use for indexes.

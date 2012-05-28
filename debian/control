@@ -122,8 +122,7 @@ Suggests:
  libeasymock-java,
  libjetty-extras-java,
  libjetty-java,
- libsolr-java-doc,
- libmysql-java
+ libsolr-java-doc
 Description: Enterprise search server based on Lucene - Java libraries
  Solr is an open source enterprise search server based on the Lucene
  Java search library, with XML/HTTP and JSON APIs, hit highlighting,
@@ -142,6 +141,7 @@ Depends:
  procps,
  ${misc:Depends}
 Recommends: solr-tomcat (= ${binary:Version}) | solr-jetty (= ${binary:Version})
+Suggests: libmysql-java
 Description: Enterprise search server based on Lucene3 - common files
  Solr is an open source enterprise search server based on the Lucene
  Java search library, with XML/HTTP and JSON APIs, hit highlighting,
@@ -150,6 +150,12 @@ Description: Enterprise search server based on Lucene3 - common files
  .
  This package provides the common files for Solr. Install
  solr-tomcat or solr-jetty to use Solr under Tomcat or Jetty.
+ .
+ This package also contains the dataimporthandler contrib while omiting
+ dataimporthandler-extras, clustering, extraction and velocity due to missing
+ dependencies.
+ .
+ libmysql-java is necessary to connect the dataimporthandler to MySQL.
 
 Package: solr-tomcat
 Architecture: all
