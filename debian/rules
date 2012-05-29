@@ -2,7 +2,7 @@
 
 export JAVA_HOME=/usr/lib/jvm/default-java
 
-DEB_UPSTREAM_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^+]+)\-.*,\1,p')
+DEB_UPSTREAM_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^+]+).*,\1,p')
 
 %:
 	dh $@ --with maven_repo_helper
@@ -19,7 +19,7 @@ override_dh_auto_configure:
 override_dh_auto_build:
 	ant -buildfile build.xml -Dversion=$(DEB_UPSTREAM_VERSION) get-maven-poms
 	ant -buildfile lucene/build.xml -propertyfile debian/ant.properties \
-		-Dversion=$(DEB_UPSTREAM_VERSION) jar-core docs javadocs build-contrib
+		-Dversion=$(DEB_UPSTREAM_VERSION) javacc jar-core docs javadocs build-contrib
 	ant -buildfile solr/contrib/dataimporthandler/build.xml \
 		-propertyfile debian/ant.properties -Dversion=$(DEB_UPSTREAM_VERSION) dist
 	ant -buildfile solr/build.xml -propertyfile debian/ant.properties \
@@ -35,6 +35,8 @@ endif
 
 override_dh_auto_clean:
 	ant clean-jars
+	# breaks if patches not applied
+	ant -buildfile lucene/build.xml clean-javacc || true
 	find . -name "*.jar" -type l -delete || true
 	find . -name "pom.xml" -type f -delete || true
 	rm -f debian/liblucene3-java.poms

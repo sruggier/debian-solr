@@ -1,4 +1,4 @@
-lucene-solr (3.6.0-1) unstable; urgency=low
+lucene-solr (3.6.0+dfsg-1) unstable; urgency=low
 
   * New upstream release.
   * Renamed source package to support a single source package for
@@ -6,7 +6,7 @@ lucene-solr (3.6.0-1) unstable; urgency=low
   * Merged debian/* from solr source package.
   * Enabled test suites.
 
- -- James Page <james.page@ubuntu.com>  Mon, 28 May 2012 14:08:52 +0100
+ -- James Page <james.page@ubuntu.com>  Tue, 29 May 2012 17:32:24 +0100
 
 lucene3 (3.5.0-1) unstable; urgency=low
 
