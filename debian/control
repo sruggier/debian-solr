@@ -160,7 +160,7 @@ Description: Enterprise search server based on Lucene3 - common files
 
 Package: solr-tomcat
 Architecture: all
-Depends: solr-common (= ${binary:Version}), tomcat7, ${misc:Depends}
+Depends: solr-common (= ${binary:Version}), tomcat7 | tomcat6, ${misc:Depends}
 Conflicts: solr-jetty, solr-tomcat6
 Description: Enterprise search server based on Lucene3 - Tomcat integration
  Solr is an open source enterprise search server based on the Lucene

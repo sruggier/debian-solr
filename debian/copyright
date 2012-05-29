@@ -33,6 +33,7 @@ Files: debian/*
 Copyright: 2007-2009 Jan-Pascal van Best <janpascal@vanbest.org>
            2011 Mat Scales <mat@wibbly.org.uk>
            2009-2010 Thomas Koch <thomas@koch.ro>
+           2012 Canonical Ltd (http://www.canonical.com)
 License: Apache-2
 
 Files: debian/patches/add-osgi-manifest
