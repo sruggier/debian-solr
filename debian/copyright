@@ -1,6 +1,9 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0
 Upstream-Name: Apache Lucene and Solr
 Source: http://lucene.apache.org/
+Comments:
+ The upstream codebase for lucene and solr contains a large number
+ of test cases in a number of formats including pdf, docx, zip.
 
 Files: *
 Copyright: 2007-2011 The Apache Software Foundation
