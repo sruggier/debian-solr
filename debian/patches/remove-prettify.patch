@@ -5,8 +5,8 @@ Forwarded: not-needed
 
 Index: lucene-solr/lucene/common-build.xml
 ===================================================================
---- lucene-solr.orig/lucene/common-build.xml	2012-06-07 12:25:01.778670365 +0100
-+++ lucene-solr/lucene/common-build.xml	2012-06-07 12:25:59.190842526 +0100
+--- lucene-solr.orig/lucene/common-build.xml	2012-06-07 12:41:01.245497407 +0100
++++ lucene-solr/lucene/common-build.xml	2012-06-07 12:41:01.281497511 +0100
 @@ -985,7 +985,6 @@
      <sequential>
        <antcall target="download-java5-javadoc-packagelist"/>
@@ -50,3 +50,21 @@ Index: lucene-solr/lucene/common-build.xml
        <delete>
          <fileset file="@{destdir}/log_javadoc.txt">
            <or>
+Index: lucene-solr/lucene/contrib/facet/src/java/org/apache/lucene/facet/doc-files/userguide.html
+===================================================================
+--- lucene-solr.orig/lucene/contrib/facet/src/java/org/apache/lucene/facet/doc-files/userguide.html	2012-05-23 09:39:25.217826049 +0100
++++ lucene-solr/lucene/contrib/facet/src/java/org/apache/lucene/facet/doc-files/userguide.html	2012-06-07 12:41:23.053560596 +0100
+@@ -20,13 +20,6 @@
+ 
+ <!-- load stylesheet + javascript in distribution mode -->
+ <link rel="stylesheet" type="text/css" href="prettify.css">
+-<script src="prettify.js" type="text/javascript"></script>
+-
+-<script language="javascript">
+-	window.onload=function() {
+-		prettyPrint();
+-	}
+-</script>
+ 
+ <style>
+ body {

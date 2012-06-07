@@ -41,22 +41,12 @@ License:
  This script can be used freely as long as all copyright messages are
  intact.
 
-Files: lucene/tools/prettify/*
-       lucene/contrib/facet/src/java/org/apache/lucene/facet/doc-files/prettify.js
-Copyright: UNKNOWN
-License: UNKNOWN
-
 Files: solr/example/solr/conf/velocity/jquery.autocomplete.js
 Copyright: 2007 Dylan Verheul, 
            2007 Dan G. Switzer, 
            2007 Anjesh Tuladhar, 
            2007 Jörn Zaefferer
 License: MIT or GPL-3
-
-Files: solr/webapp/web/admin/jquery-1.4.3.min.js
-Copyright: 2010, John Resig
-           2010, The Dojo Foundation
-License: MIT or GPL-2
 
 Files: solr/client/ruby/flare/public/javascripts/controls.js
        solr/client/ruby/flare/public/javascripts/dragdrop.js
