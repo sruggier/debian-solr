@@ -88,7 +88,7 @@ Package: liblucene3-java-doc
 Architecture: all
 Section: doc
 Suggests: liblucene3-java
-Depends: ${misc:Depends}, libjs-prototype
+Depends: ${misc:Depends}
 Description: Documentation for Lucene
  Lucene is a full-text search engine for the Java(TM) programming language.
  Lucene is not a complete application, but rather a code library and API
