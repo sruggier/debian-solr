@@ -122,7 +122,6 @@ Suggests:
  libeasymock-java,
  libjetty-extras-java,
  libjetty-java,
- libjs-jquery,
  libsolr-java-doc
 Description: Enterprise search server based on Lucene - Java libraries
  Solr is an open source enterprise search server based on the Lucene
@@ -140,6 +139,7 @@ Depends:
  debconf (>= 1.5),
  default-jre-headless | java5-runtime-headless | java6-runtime-headless,
  libsolr-java (= ${binary:Version}),
+ libjs-jquery,
  procps,
  ${misc:Depends}
 Recommends: solr-tomcat (= ${binary:Version}) | solr-jetty (= ${binary:Version})
