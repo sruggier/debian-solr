@@ -4,9 +4,9 @@ set -e
 
 case "$1" in
     remove)
-        rm -f /etc/tomcat7/policy.d/05solr.policy
+        rm -f /etc/tomcat6/policy.d/05solr.policy
     	if [ -x /usr/sbin/invoke-rc.d ]; then
-    	    invoke-rc.d tomcat7 restart || true
+    	    invoke-rc.d tomcat6 restart || true
     	fi
     ;;
     upgrade|purge|failed-upgrade|abort-install|abort-upgrade|disappear)

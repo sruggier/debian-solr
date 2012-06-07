@@ -1,1 +1,1 @@
-/etc/solr/solr-tomcat.xml /etc/tomcat7/Catalina/localhost/solr.xml
+/etc/solr/solr-tomcat.xml /etc/tomcat6/Catalina/localhost/solr.xml
