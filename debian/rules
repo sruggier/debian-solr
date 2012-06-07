@@ -17,6 +17,7 @@ override_dh_auto_configure:
 	dh_auto_configure
 
 override_dh_auto_build:
+	mkdir -p lucene/site/build/site
 	ant -buildfile build.xml -Dversion=$(DEB_UPSTREAM_VERSION) get-maven-poms
 	ant -buildfile lucene/build.xml -propertyfile debian/ant.properties \
 		-Dversion=$(DEB_UPSTREAM_VERSION) javacc jar-core docs javadocs build-contrib
@@ -40,6 +41,7 @@ override_dh_auto_clean:
 	find . -name "*.jar" -type l -delete || true
 	find . -name "pom.xml" -type f -delete || true
 	rm -f debian/liblucene3-java.poms
+	rm -rf lucene/site/build/site
 	dh_auto_clean
 
 override_dh_fixperms:

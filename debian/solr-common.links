@@ -4,6 +4,7 @@
 /var/lib/solr/data                          /usr/share/solr/data
 /var/log/solr                               /usr/share/solr/logs
 /usr/share/solr/bin                         /usr/share/solr/scripts
+/usr/share/javascript/jquery/jquery.min.js  /usr/share/solr/web/admin/jquery-1.4.3.min.js
 /usr/share/java/solr-core.jar               /usr/share/solr/web/WEB-INF/lib/solr-core.jar
 /usr/share/java/solr-solrj.jar              /usr/share/solr/web/WEB-INF/lib/solr-solrj.jar
 /usr/share/java/solr-dataimporthandler.jar  /usr/share/solr/web/WEB-INF/lib/solr-dataimporthandler.jar

@@ -122,6 +122,7 @@ Suggests:
  libeasymock-java,
  libjetty-extras-java,
  libjetty-java,
+ libjs-jquery,
  libsolr-java-doc
 Description: Enterprise search server based on Lucene - Java libraries
  Solr is an open source enterprise search server based on the Lucene
