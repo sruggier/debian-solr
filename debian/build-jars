@@ -31,3 +31,13 @@
 /usr/share/java/slf4j-api.jar:./solr/lib/slf4j-api.jar
 /usr/share/java/slf4j-jdk14.jar:./solr/lib/slf4j-jdk14.jar
 /usr/share/java/wstx-lgpl.jar:./solr/lib/wstx-lgpl.jar
+/usr/share/java/jetty.jar:./solr/example/lib/jetty.jar
+/usr/share/java/jetty-util.jar:./solr/example/lib/jetty-util.jar
+/usr/share/java/jetty-start.jar:./solr/example/lib/start.jar
+/usr/share/java/servlet-api-2.5.jar:./solr/example/lib/servlet-api-2.5.jar
+/usr/share/java/jsp-api-2.1.jar:./solr/example/lib/jsp-api-2.1.jar
+/usr/share/java/el-api-2.1.jar:./solr/example/lib/el-api-2.1.jar
+/usr/share/java/jasper.jar:./solr/example/lib/jasper.jar
+/usr/share/java/jasper-el.jar:./solr/example/lib/jasper-el.jar
+/usr/share/java/tomcat-juli.jar:./solr/example/lib/tomcat-juli.jar
+/usr/share/java/ecj.jar:./solr/example/lib/ecj.jar

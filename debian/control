@@ -37,6 +37,7 @@ Build-Depends:
  libregexp-java,
  libservlet2.5-java (>= 6.0.20),
  libslf4j-java (>= 1.6.1),
+ libtomcat6-java,
  libwoodstox-java,
  libxerces2-java,
  libxml-commons-external-java,
@@ -138,8 +139,8 @@ Depends:
  curl,
  debconf (>= 1.5),
  default-jre-headless | java5-runtime-headless | java6-runtime-headless,
- libsolr-java (= ${binary:Version}),
  libjs-jquery,
+ libsolr-java (= ${binary:Version}),
  procps,
  ${misc:Depends}
 Recommends: solr-tomcat (= ${binary:Version}) | solr-jetty (= ${binary:Version})
