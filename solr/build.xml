@@ -40,7 +40,7 @@
   <!-- ========================================================================= -->
  
   <target name="example" description="Creates a runnable example configuration."
-          depends="resolve-example,dist-contrib,dist-war">
+          depends="dist-contrib,dist-war">
     <copy file="${dist}/${fullnamever}.war"
           tofile="${example}/webapps/${ant.project.name}.war"/>
     <jar destfile="${example}/exampledocs/post.jar"
@@ -56,14 +56,6 @@
     <echo>See ${example}/README.txt for how to run the Solr example configuration.</echo>
   </target>
 
-  <!-- example-DIH needs hsqldb. don't put anything here needed by *tests* -->
-  <target name="resolve-example" unless="example.libs.uptodate">
-    <ant dir="${common-solr.dir}/example/example-DIH" target="resolve" inheritAll="false">
-      <propertyset refid="uptodate.and.compiled.properties"/>
-    </ant>
-    <property name="example.libs.uptodate" value="true"/>
-  </target>
- 
   <target name="run-example" depends="example"
           description="Run Solr interactively, via Jetty.  -Dexample.debug=true to enable JVM debugger">
     <property name="example.solr.home" location="example/solr"/>
@@ -363,11 +355,11 @@
     <tar destfile="${source.package.file}" compression="gzip" longfile="gnu">
       <tarfileset dir="${svn.export.dir}"
                   prefix="${fullnamever}"
-                  excludes="example/**/*.sh example/**/bin/"/>
+                  excludes="solr/example/**/*.sh solr/example/**/bin/ solr/scripts/**"/>
       <tarfileset dir="${svn.export.dir}"
                   prefix="${fullnamever}"
                   filemode="755"
-                  includes="example/**/*.sh example/**/bin/"/>
+                  includes="solr/example/**/*.sh solr/example/**/bin/ solr/scripts/**"/>
       <tarfileset dir="${svn.export.dir}/solr" prefix="${fullnamever}"
                   includes="NOTICE.txt,LICENSE.txt"/>
     </tar>
@@ -436,7 +428,7 @@
                   includes="example/**/*.sh example/**/bin/" />
       <tarfileset dir="."
                   prefix="${fullnamever}"
-                  includes="dist/*.jar dist/*.war dist/solrj-lib/*"
+                  includes="dist/*.jar dist/*.war dist/solrj-lib/* dist/solrj-lib/optional/*"
                   excludes="**/*.tgz **/*.zip **/*.md5 **/*src*.jar **/*docs*.jar **/*.sha1" />
       <tarfileset dir="${dest}/docs"
                   prefix="${fullnamever}/docs" />
@@ -485,7 +477,7 @@
     <!-- NOOP -->
   </target>
 
-  <target name="resolve" depends="resolve-example,resolve-jetty">
+  <target name="resolve" depends="resolve-example">
      <sequential>
      <ant dir="core" target="resolve" inheritall="false">
          <propertyset refid="uptodate.and.compiled.properties"/>
