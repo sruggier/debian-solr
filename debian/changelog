@@ -1,3 +1,9 @@
+lucene-solr (3.6.1+dfsg-1) UNRELEASED; urgency=low
+
+  * New upstream release 
+
+ -- James Page <james.page@ubuntu.com>  Tue, 24 Jul 2012 11:42:18 +0100
+
 lucene-solr (3.6.0+dfsg-1) unstable; urgency=low
 
   * Initial release. (Closes: #594027)
