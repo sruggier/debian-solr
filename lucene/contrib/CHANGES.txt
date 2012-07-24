@@ -3,6 +3,54 @@ Lucene contrib change Log
 For more information on past and future Lucene versions, please see:
 http://s.apache.org/luceneversions
 
+======================= Lucene 3.6.1 ================
+
+Bug Fixes
+
+ * LUCENE-3940: fix Kuromoji to not produce invalid token graph due to UNK 
+   with punctuation being decompounded.  (Mike McCandless)
+
+ * LUCENE-3942: SynonymFilter sets PositionLength correctly when possible.  
+   (Mike McCandless)
+
+ * LUCENE-3969: Throw IAE on bad arguments that could cause confusing errors in 
+   CompoundWordTokenFilterBase, PositionFilter, SnowballFilter, 
+   PathHierarchyTokenizer, ReversePathHierarchyTokenizer and WikipediaTokenizer.
+   ShingleFilter populates PositionLengthAttribute. Fixed PathHierarchyTokenizer 
+   to reset() all state. Protect against AIOOBE in ReversePathHierarchyTokenizer 
+   if skip is large. Fixed wrong final offset calculation in 
+   PathHierarchyTokenizer. (Uwe Schindler, Mike McCandless, Robert Muir)
+  
+ * LUCENE-4022: Offline Sorter used to build spellcheck & suggest dictionaries
+   wrongly used minimum sort buffer resulting in potentially slow FST &
+   Dictionary building. (Simon Willnauer) 
+
+ * LUCENE-4060: Fix a synchronization bug in 
+   DirectoryTaxonomyWriter.addTaxonomies(). Also, the method has been renamed to
+   addTaxonomy and now takes only one Directory and one OrdinalMap.
+   (Shai Erera, Gilad Barkai)
+
+ * LUCENE-4074: FST Sorter BufferSize creates a negative buffer size due to an
+   32 bit signed integer overflow if BufferSize >= 2048MB is passed.
+   (Simon Willnauer)
+
+ * LUCENE-4079: Fixed loading of Hunspell dictionaries that use aliasing (AF rules)
+  (Ludovic Boutros via Chris Male)
+
+ * LUCENE-4209: Fix FSTCompletionLookup to close its sorter, so that it won't
+   leave temp files behind in /tmp. Fix SortedTermFreqIteratorWrapper to not
+   leave temp files behind in /tmp on Windows. Fix Sort to not leave
+   temp files behind when /tmp is a separate volume. (Uwe Schindler, Robert Muir)
+
+ * LUCENE-4165: Removed closing of the Reader used to read the affix file in
+   HunspellDictionary.  Consumers are now responsible for closing all InputStreams
+   once the Dictionary has been instantiated. (Torsten Krah, Uwe Schindler, Chris Male)
+
+Tests
+ 
+ * LUCENE-3919, LUCENE-3969, LUCENE-3990: more thorough testing of analysis 
+   chains.  (Uwe Schindler, Mike McCandless, Robert Muir)
+ 
 ======================= Lucene 3.6.0 ================
 
 Changes in backwards compatibility policy

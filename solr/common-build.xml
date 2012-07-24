@@ -24,7 +24,7 @@
   <dirname file="${ant.file.common-solr}" property="common-solr.dir"/>
   
   <property name="Name" value="Solr" />
-  <property name="version" value="3.6-SNAPSHOT"/>
+  <property name="version" value="3.6.1-SNAPSHOT"/>
   <condition property="version.contains.SNAPSHOT">
     <contains casesensitive="true" string="${version}" substring="-SNAPSHOT"/>
   </condition>
@@ -59,6 +59,7 @@
   <path id="additional.dependencies">
   	<fileset dir="${common-solr.dir}/lib" excludes="${common.classpath.excludes}"/>
   	<fileset dir="${common-solr.dir}/example/lib" excludes="${common.classpath.excludes}"/>
+  	<fileset dir="${common-solr.dir}/example/example-DIH/solr/db/lib" excludes="${common.classpath.excludes}"/> 
   	<fileset dir="lib" excludes="${common.classpath.excludes}" erroronmissingdir="false"/>
   </path>
 
@@ -70,7 +71,7 @@
        By default, this should be set to "X.Y.M.${dateversion}"
        where X.Y.M is the last version released (on this branch).
     -->
-  <property name="solr.spec.version" value="3.6.0.${dateversion}" />
+  <property name="solr.spec.version" value="3.6.1.${dateversion}" />
 
   <path id="solr.base.classpath">
   	<pathelement path="${analyzers-common.jar}"/>
@@ -176,7 +177,7 @@
     <solr-jarify/>
   </target>
 
-  <target name="compile-core" depends="prep-lucene-jars,resolve-jetty,common.compile-core"/>
+  <target name="compile-core" depends="prep-lucene-jars,resolve-example,common.compile-core"/>
   <target name="compile-test" depends="sync-resources,compile-solr-test-framework,common.compile-test"/>
 
   <target name="dist" depends="jar-core">
@@ -291,12 +292,15 @@
     <property name="solr.test.framework.compiled" value="true"/>
   </target>
 
-  <!-- resolve jetty dependencies in the example (relied upon by compile!) -->
-  <target name="resolve-jetty" unless="jetty.libs.uptodate">
+  <!-- resolve dependencies in the example (relied upon by compile/tests) -->
+  <target name="resolve-example" unless="example.libs.uptodate">
     <ant dir="${common-solr.dir}/example" target="resolve" inheritAll="false">
       <propertyset refid="uptodate.and.compiled.properties"/>
     </ant>
-    <property name="jetty.libs.uptodate" value="true"/>
+    <ant dir="${common-solr.dir}/example/example-DIH" target="resolve" inheritAll="false">
+      <propertyset refid="uptodate.and.compiled.properties"/>
+    </ant>
+    <property name="example.libs.uptodate" value="true"/>
   </target>
 
   <!-- Solr contrib targets -->
