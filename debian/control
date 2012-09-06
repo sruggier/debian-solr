@@ -1,7 +1,8 @@
 Source: lucene-solr
 Section: java
 Priority: optional
-Maintainer: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+XSBC-Original-Maintainer: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
 Uploaders: Mat Scales <mat@wibbly.org.uk>, James Page <james.page@ubuntu.com>
 Homepage: http://lucene.apache.org
 Standards-Version: 3.9.3
@@ -178,6 +179,7 @@ Depends:
  jetty (>= 6.1.22),
  libjetty-extra-java (>= 6.1.22),
  solr-common (= ${binary:Version}),
+ default-jdk | java5-sdk,
  ${misc:Depends}
 Conflicts: solr-tomcat, solr-tomcat6
 Description: Enterprise search server based on Lucene3 - Jetty integration
