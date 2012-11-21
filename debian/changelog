@@ -1,16 +1,11 @@
-lucene-solr (3.6.1+dfsg-0ubuntu2) quantal; urgency=low
+lucene-solr (3.6.1+dfsg-1) experimental; urgency=low
 
+  * New upstream release.
   * Add dependency on JDK for solr-jetty (LP: #1046732):
     - d/control: Add extra Depends on default-jdk | java5-jdk as jetty
       requires a full JDK to support use of JSP's which solr uses. 
 
- -- James Page <james.page@ubuntu.com>  Thu, 06 Sep 2012 11:07:52 +0100
-
-lucene-solr (3.6.1+dfsg-0ubuntu1) quantal; urgency=low
-
-  * New upstream release.
-
- -- James Page <james.page@ubuntu.com>  Mon, 23 Jul 2012 16:37:53 +0100
+ -- James Page <james.page@ubuntu.com>  Wed, 21 Nov 2012 09:31:05 +0000
 
 lucene-solr (3.6.0+dfsg-1) unstable; urgency=low
 
