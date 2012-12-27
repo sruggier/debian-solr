@@ -1,3 +1,11 @@
+lucene-solr (3.6.1+dfsg-2) UNRELEASED; urgency=low
+
+  * Team upload.
+  * solr-jetty: correct symlink to solr in /var/lib/jetty/webapps/
+    (Closes: #696347)
+
+ -- tony mancill <tmancill@debian.org>  Wed, 26 Dec 2012 21:50:00 -0800
+
 lucene-solr (3.6.1+dfsg-1) experimental; urgency=low
 
   * New upstream release.
