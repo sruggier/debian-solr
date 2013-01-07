@@ -20,6 +20,16 @@ when more advanced customization is required.
 See README.txt and http://lucene.apache.org/solr for more information
 on how to get started.
 
+==================  3.6.2  ==================
+
+Bug Fixes
+----------------------
+* SOLR-3790: ConcurrentModificationException could be thrown when using hl.fl=*.
+  (yonik, koji)
+
+* SOLR-3589: Edismax parser does not honor mm parameter if analyzer splits a token.
+  (Tom Burton-West, Robert Muir)
+
 ==================  3.6.1  ==================
 More information about this release, including any errata related to the 
 release notes, upgrade instructions, or other changes may be found online at:
@@ -34,7 +44,7 @@ Bug Fixes:
 * SOLR-3361: ReplicationHandler "maxNumberOfBackups" doesn't work if backups are triggered on commit
   (James Dyer, Tomas Fernandez Lobbe)
 
-* SOLR-3375: Fix charset problems with HttpSolrServer (Roger Håkansson, yonik, siren)
+* SOLR-3375: Fix charset problems with HttpSolrServer (Roger HÃ¥kansson, yonik, siren)
 
 * SOLR-3436: Group count incorrect when not all shards are queried in the second
   pass. (Francois Perron, Martijn van Groningen)
@@ -44,7 +54,7 @@ Bug Fixes:
 
 * SOLR-3489: Config file replication less error prone (Jochen Just via janhoy)
 
-* SOLR-3477: SOLR does not start up when no cores are defined (Tomás Fernández Löbbe via tommaso)
+* SOLR-3477: SOLR does not start up when no cores are defined (TomÃ¡s FernÃ¡ndez LÃ¶bbe via tommaso)
 
 ==================  3.6.0  ==================
 More information about this release, including any errata related to the 
@@ -169,7 +179,7 @@ New Features
   (Greg Fodor & Andrew Morrison via janhoy, rmuir, Uwe Schindler)
 
 * SOLR-3026: eDismax: Locking down which fields can be explicitly queried (user fields aka uf)
-  (janhoy, hossmann, Tomás Fernández Löbbe)
+  (janhoy, hossmann, TomÃ¡s FernÃ¡ndez LÃ¶bbe)
 
 * SOLR-2826: URLClassify Update Processor (janhoy)
 
@@ -654,7 +664,7 @@ New Features
   params.  (Yury Kats, hossman)
 
 * SOLR-2714: JSON update format - "null" field values are now dropped
-  instead of causing an exception. (Trygve Laugstøl, yonik)
+  instead of causing an exception. (Trygve LaugstÃ¸l, yonik)
 
 
 Optimizations
@@ -680,7 +690,7 @@ Bug Fixes
 
 * SOLR-2230: CommonsHttpSolrServer.addFile could not be used to send 
   multiple files in a single request.
-  (Stephan Günther, hossman)
+  (Stephan GÃ¼nther, hossman)
 
 * SOLR-2541: PluginInfos was not correctly parsing <long/> tags when 
   initializing plugins
@@ -723,7 +733,7 @@ Bug Fixes
   (Mitsu Hadeishi, hossman)
 
 * SOLR-2734: Fix debug info for MorLikeThisHandler (introduced when SOLR-860 was backported to 3x).
-  (Andrés Cobas, hossman via koji)
+  (AndrÃ©s Cobas, hossman via koji)
 
  Other Changes
 ----------------------
@@ -792,7 +802,7 @@ New Features
 * SOLR-2524: (SOLR-236, SOLR-237, SOLR-1773, SOLR-1311) Grouping / Field collapsing
   using the Lucene grouping contrib. The search result can be grouped by field and query. 
   (Martijn van Groningen, Emmanuel Keller, Shalin Shekhar Mangar, Koji Sekiguchi, 
-   Iván de Prado, Ryan McKinley, Marc Sturlese, Peter Karich, Bojan Smid, 
+   IvÃ¡n de Prado, Ryan McKinley, Marc Sturlese, Peter Karich, Bojan Smid, 
    Charles Hornberger, Dieter Grad, Dmitry Lihachev, Doug Steigerwald,
    Karsten Sperling, Michael Gundlach, Oleg Gnatovskiy, Thomas Traeger,
    Harish Agarwal, yonik, Michael McCandless, Bill Bell)
@@ -813,7 +823,7 @@ Bug Fixes
 
 * SOLR-2519: Improve text_* fieldTypes in example schema.xml: improve
   cross-language defaults for text_general; break out separate
-  English-specific fieldTypes (Jan Høydahl, hossman, Robert Muir,
+  English-specific fieldTypes (Jan HÃ¸ydahl, hossman, Robert Muir,
   yonik, Mike McCandless)
 
 * SOLR-2462: Fix extremely high memory usage problems with spellcheck.collate.
@@ -954,7 +964,7 @@ Other Changes
   (Drew Farris, Robert Muir, Steve Rowe)
 
 * SOLR-2105: Rename RequestHandler param 'update.processor' to 'update.chain'.
-	(Jan Høydahl via Mark Miller)
+	(Jan HÃ¸ydahl via Mark Miller)
 	
 * SOLR-2485: Deprecate BaseResponseWriter, GenericBinaryResponseWriter, and 
   GenericTextResponseWriter.  These classes will be removed in 4.0.  (ryan)
@@ -1247,7 +1257,7 @@ Optimizations
 
 Bug Fixes
 ----------------------
-* SOLR-1769: Solr 1.4 Replication - Repeater throwing NullPointerException (Jörgen Rydenius via noble)
+* SOLR-1769: Solr 1.4 Replication - Repeater throwing NullPointerException (JÃ¶rgen Rydenius via noble)
 
 * SOLR-1432: Make the new ValueSource.getValues(context,reader) delegate
   to the original ValueSource.getValues(reader) so custom sources
@@ -2501,7 +2511,7 @@ Other Changes
 
 44. Upgraded to Lucene 2.9-dev r801856 (Mark Miller)
 
-45. SOLR1276: Added StatsComponentTest (Rafa�ł Ku�ć, gsingers)
+45. SOLR1276: Added StatsComponentTest (Rafaï¿½Å‚ Kuï¿½Ä‡, gsingers)
 
 46. SOLR-1377:  The TokenizerFactory API has changed to explicitly return a Tokenizer 
     rather then a TokenStream (that may be or may not be a Tokenizer).  This change 
@@ -2541,7 +2551,7 @@ Build
 
 Documentation
 ----------------------
- 1. SOLR-789: The javadoc of RandomSortField is not readable (Nicolas Lalev�Á�e via koji)
+ 1. SOLR-789: The javadoc of RandomSortField is not readable (Nicolas Lalevï¿½Ã�ï¿½e via koji)
 
  2. SOLR-962: Note about null handling in ModifiableSolrParams.add javadoc
     (Kay Kay via hossman)
@@ -2982,7 +2992,7 @@ Bug Fixes
  9. SOLR-294: Logging of elapsed time broken on Solaris because the date command
     there does not support the %s output format.  (bill)
 
-10. SOLR-136: Snappuller - "date -d" and locales don't mix.  (J�Á�rgen Hermann via    bill)
+10. SOLR-136: Snappuller - "date -d" and locales don't mix.  (Jï¿½Ã�ï¿½rgen Hermann via    bill)
 
 11. SOLR-333: Changed distributiondump.jsp to use Solr HOME instead of CWD to set path.
  
