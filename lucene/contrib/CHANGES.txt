@@ -3,6 +3,18 @@ Lucene contrib change Log
 For more information on past and future Lucene versions, please see:
 http://s.apache.org/luceneversions
 
+======================= Lucene 3.6.2 =======================
+
+Bug Fixes
+
+* LUCENE-4109: BooleanQueries are not parsed correctly with the
+  flexible query parser. (Karsten Rauch via Robert Muir)
+
+* LUCENE-4269: Deprecate BalancedSegmentMergePolicy (Mike McCandless)
+
+* LUCENE-4289: Fix minor idf inconsistencies/inefficiencies in highlighter.
+  (Robert Muir)
+
 ======================= Lucene 3.6.1 ================
 
 Bug Fixes
