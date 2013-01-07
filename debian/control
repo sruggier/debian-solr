@@ -52,7 +52,7 @@ Architecture: all
 Depends: ${misc:Depends}
 Suggests: ant, ant-optional, junit4
 Recommends: liblucene3-contrib-java
-Description: Full-text search engine library for Java(TM)
+Description: Full-text search engine library for Java - core library
  Lucene is a full-text search engine for the Java(TM) programming language.
  Lucene is not a complete application, but rather a code library and API
  that can easily be used to add search capabilities to applications.
@@ -78,7 +78,7 @@ Recommends:
  libxerces2-java,
  libxml-commons-external-java,
  libxml-commons-resolver1.1-java
-Description: Full-text search engine library for Java(TM)
+Description: Full-text search engine library for Java - additional libraries
  Lucene is a full-text search engine for the Java(TM) programming language.
  Lucene is not a complete application, but rather a code library and API
  that can easily be used to add search capabilities to applications.

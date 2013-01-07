@@ -101,10 +101,6 @@ License: MIT
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE.
 
-License: GPL-2
- On Debian systems, the complete text of the GPL License, version 2, can be
- found in the `/usr/share/common-licenses/GPL-2' file.
-
 License: GPL-3
  On Debian systems, the complete text of the GPL License, version 3, can be
  found in the `/usr/share/common-licenses/GPL-3' file.
