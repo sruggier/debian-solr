@@ -1,3 +1,9 @@
+lucene-solr (3.6.2+dfsg-1) unstable; urgency=low
+
+  * Upload to unstable.
+
+ -- James Page <james.page@ubuntu.com>  Thu, 16 May 2013 10:45:27 +0100
+
 lucene-solr (3.6.2+dfsg-1~exp1) experimental; urgency=low
 
   [ tony mancill ]
