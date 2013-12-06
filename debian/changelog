@@ -1,3 +1,22 @@
+lucene-solr (3.6.2+dfsg-2) UNRELEASED; urgency=low
+
+  * Fixes for new security vulnerabilities (Closes: #731113):
+    - debian/patches/CVE-2013-6397.patch:
+      Fix DocumentAnalysisRequestHandler to correctly use
+      EmptyEntityResolver to prevent loading of external entities like
+      UpdateRequestHandler does.
+      CVE-2013-6397
+    - debian/patches/CVE-2013-6407_CVE-2013-6408.patch:
+      XML and XSLT UpdateRequestHandler should not try to
+      resolve external entities. This improves speed of loading e.g.
+      XSL-transformed XHTML documents.
+      CVE-2013-6407
+      Fix XML parsing in XPathEntityProcessor to correctly
+      expand named entities, but ignore external entities.
+      CVE-2013-6408
+
+ -- James Page <james.page@ubuntu.com>  Fri, 06 Dec 2013 12:25:26 +0000
+
 lucene-solr (3.6.2+dfsg-1) unstable; urgency=low
 
   * Upload to unstable.
