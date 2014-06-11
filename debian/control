@@ -4,11 +4,11 @@ Priority: optional
 Maintainer: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
 Uploaders: Mat Scales <mat@wibbly.org.uk>, James Page <james.page@ubuntu.com>
 Homepage: http://lucene.apache.org
-Standards-Version: 3.9.3
+Standards-Version: 3.9.5
 Build-Depends:
  ant,
  ant-optional,
- debhelper (>= 8),
+ debhelper (>= 9),
  default-jdk,
  javacc,
  jflex,
