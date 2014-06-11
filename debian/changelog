@@ -1,4 +1,4 @@
-lucene-solr (3.6.2+dfsg-3) UNRELEASED; urgency=medium
+lucene-solr (3.6.2+dfsg-3) unstable; urgency=medium
 
   * Team upload.
   * Add tomcat-coyote to debian/build-jars to address FTBFS.
@@ -7,7 +7,7 @@ lucene-solr (3.6.2+dfsg-3) UNRELEASED; urgency=medium
   * Use debhelper 9.
   * Bump Standards-Version to 3.9.5.
 
- -- tony mancill <tmancill@debian.org>  Tue, 10 Jun 2014 21:42:15 -0700
+ -- tony mancill <tmancill@debian.org>  Tue, 10 Jun 2014 22:29:19 -0700
 
 lucene-solr (3.6.2+dfsg-2) unstable; urgency=low
 
