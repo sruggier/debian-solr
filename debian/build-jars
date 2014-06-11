@@ -40,4 +40,5 @@
 /usr/share/java/jasper.jar:./solr/example/lib/jasper.jar
 /usr/share/java/jasper-el.jar:./solr/example/lib/jasper-el.jar
 /usr/share/java/tomcat-juli.jar:./solr/example/lib/tomcat-juli.jar
+/usr/share/java/tomcat-coyote.jar:./solr/example/lib/tomcat-coyote.jar
 /usr/share/java/ecj.jar:./solr/example/lib/ecj.jar
