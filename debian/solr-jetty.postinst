@@ -19,7 +19,7 @@ case "$1" in
             chown -R jetty:root /var/lib/solr/data
         fi
 
-        invoke-rc.d --quiet jetty restart || {
+        invoke-rc.d --quiet jetty8 restart || {
             RESULT=$?
             # Ignore if jetty init script does not exist (yet)
             if [ $RESULT != 100 ]; then

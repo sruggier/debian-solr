@@ -1,3 +1,10 @@
+lucene-solr (3.6.2+dfsg-4) UNRELEASED; urgency=medium
+
+  * Team upload.
+  * Switched the dependencies to tomcat7, libservlet3.0-java and jetty8
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Thu, 13 Mar 2014 16:26:17 +0100
+
 lucene-solr (3.6.2+dfsg-3) unstable; urgency=medium
 
   * Team upload.

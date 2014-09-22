@@ -8,3 +8,4 @@ regex-test-failure.patch
 remove-prettify.patch
 CVE-2013-6397.patch
 CVE-2013-6407_CVE-2013-6408.patch
+jetty8-compatibility.patch
