@@ -1,11 +1,11 @@
-lucene-solr (3.6.2+dfsg-4) UNRELEASED; urgency=medium
+lucene-solr (3.6.2+dfsg-4) unstable; urgency=medium
 
   * Team upload.
   * Switched the dependencies to tomcat7, libservlet3.0-java and jetty8
   * Fixed a format issue with CVE-2013-6397.patch
   * Standards-Version updated to 3.9.6 (no changes)
 
- -- Emmanuel Bourg <ebourg@apache.org>  Thu, 13 Mar 2014 16:26:17 +0100
+ -- Emmanuel Bourg <ebourg@apache.org>  Mon, 06 Oct 2014 15:47:56 +0200
 
 lucene-solr (3.6.2+dfsg-3) unstable; urgency=medium
 
