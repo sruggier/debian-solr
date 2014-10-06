@@ -3,8 +3,6 @@ Section: java
 Priority: optional
 Maintainer: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
 Uploaders: Mat Scales <mat@wibbly.org.uk>, James Page <james.page@ubuntu.com>
-Homepage: http://lucene.apache.org
-Standards-Version: 3.9.5
 Build-Depends:
  ant,
  ant-optional,
@@ -44,8 +42,10 @@ Build-Depends:
  libxml-commons-resolver1.1-java,
  maven-repo-helper (>= 1.5~),
  po-debconf
+Standards-Version: 3.9.6
 Vcs-Git: git://anonscm.debian.org/pkg-java/lucene-solr.git
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-java/lucene-solr.git
+Homepage: http://lucene.apache.org
 
 Package: liblucene3-java
 Architecture: all
