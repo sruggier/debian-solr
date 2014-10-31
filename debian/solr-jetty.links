@@ -1,1 +1,1 @@
-/usr/share/solr/web /var/lib/jetty/webapps/solr
+/etc/solr/solr-jetty.xml /etc/jetty8/contexts/solr.xml
