@@ -1,7 +1,7 @@
 lucene-solr (3.6.2+dfsg-5) UNRELEASED; urgency=medium
 
   * Team upload.
-  * Fixed the deployment with Jetty 8 (Closes: #752547)
+  * Fixed the deployment with Jetty 8 (Closes: #752547, #767525)
   * Enable the symbolic links with Jetty (Closes: #701876)
   * Fixed the path to dpkg-statoverride in solr-jetty.postrm (Closes: #767519)
 
