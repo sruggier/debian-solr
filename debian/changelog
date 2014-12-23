@@ -1,3 +1,10 @@
+lucene-solr (3.6.2+dfsg-6) UNRELEASED; urgency=medium
+
+  * Team upload.
+  * Use XZ compression for the upstream tarball
+
+ -- Emmanuel Bourg <ebourg@apache.org>  Thu, 13 Nov 2014 11:52:20 +0100
+
 lucene-solr (3.6.2+dfsg-5) unstable; urgency=medium
 
   * Team upload.
