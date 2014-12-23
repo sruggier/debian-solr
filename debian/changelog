@@ -2,6 +2,7 @@ lucene-solr (3.6.2+dfsg-6) UNRELEASED; urgency=medium
 
   * Team upload.
   * Use XZ compression for the upstream tarball
+  * debian/watch: No longer use the defunct githubredir.debian.net redirector
 
  -- Emmanuel Bourg <ebourg@apache.org>  Thu, 13 Nov 2014 11:52:20 +0100
 
