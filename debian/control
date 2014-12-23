@@ -44,7 +44,7 @@ Build-Depends:
  po-debconf
 Standards-Version: 3.9.6
 Vcs-Git: git://anonscm.debian.org/pkg-java/lucene-solr.git
-Vcs-Browser: http://anonscm.debian.org/gitweb/?p=pkg-java/lucene-solr.git
+Vcs-Browser: http://anonscm.debian.org/cgit/pkg-java/lucene-solr.git
 Homepage: http://lucene.apache.org
 
 Package: liblucene3-java
