@@ -1,8 +1,12 @@
 lucene-solr (3.6.2+dfsg-6) UNRELEASED; urgency=medium
 
+  [ Emmanuel Bourg ]
   * Team upload.
   * Use XZ compression for the upstream tarball
   * debian/watch: No longer use the defunct githubredir.debian.net redirector
+
+  [ Victor Seva ]
+  * solr-tomcat: allow tomcat7-user as depends (Closes: #606138)
 
  -- Emmanuel Bourg <ebourg@apache.org>  Thu, 13 Nov 2014 11:52:20 +0100
 
