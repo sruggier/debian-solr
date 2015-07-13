@@ -1,23 +1,18 @@
-lucene-solr (3.6.2+dfsg-7) UNRELEASED; urgency=medium
+lucene-solr (3.6.2+dfsg-6) unstable; urgency=medium
 
   * Team upload.
+
+  [ Emmanuel Bourg ]
   * Removed the dependency on libgeronimo-stax-1.2-spec-java
   * Fixed a test failure with commons-codec 1.10
   * Fixed a test failure with Java 8 (Closes: #760927)
-
- -- Emmanuel Bourg <ebourg@apache.org>  Mon, 13 Jul 2015 10:19:53 +0200
-
-lucene-solr (3.6.2+dfsg-6) UNRELEASED; urgency=medium
-
-  [ Emmanuel Bourg ]
-  * Team upload.
   * Use XZ compression for the upstream tarball
   * debian/watch: No longer use the defunct githubredir.debian.net redirector
 
   [ Victor Seva ]
   * solr-tomcat: allow tomcat7-user as depends (Closes: #606138)
 
- -- Emmanuel Bourg <ebourg@apache.org>  Thu, 13 Nov 2014 11:52:20 +0100
+ -- Emmanuel Bourg <ebourg@apache.org>  Mon, 13 Jul 2015 14:45:06 +0200
 
 lucene-solr (3.6.2+dfsg-5) unstable; urgency=medium
 
