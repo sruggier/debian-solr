@@ -23,3 +23,5 @@ org.apache.tika     *          * * * *
 org.apache.uima     *          * * * *
 org.apache.velocity *          * * * *
 org.carrot2         *          * * * *
+
+org.apache.geronimo.specs geronimo-stax-api_1.0_spec

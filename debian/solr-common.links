@@ -14,7 +14,6 @@
 /usr/share/java/commons-io.jar              /usr/share/solr/web/WEB-INF/lib/commons-io.jar
 /usr/share/java/commons-lang.jar            /usr/share/solr/web/WEB-INF/lib/commons-lang.jar
 /usr/share/java/commons-logging.jar         /usr/share/solr/web/WEB-INF/lib/commons-logging.jar
-/usr/share/java/geronimo-stax-1.2-spec.jar  /usr/share/solr/web/WEB-INF/lib/geronimo-stax-1.2-spec.jar
 /usr/share/java/guava.jar                   /usr/share/solr/web/WEB-INF/lib/guava.jar
 /usr/share/java/httpcore.jar                /usr/share/solr/web/WEB-INF/lib/httpcore.jar
 /usr/share/java/httpclient.jar              /usr/share/solr/web/WEB-INF/lib/httpclient.jar

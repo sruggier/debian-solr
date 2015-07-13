@@ -19,7 +19,6 @@
 /usr/share/java/commons-io.jar:./solr/lib/commons-io.jar
 /usr/share/java/commons-lang.jar:./solr/lib/commons-lang.jar
 /usr/share/java/easymock.jar:./solr/lib/easymock.jar
-/usr/share/java/geronimo-stax-1.2-spec.jar:./solr/lib/geronimo-stax-1.2-spec.jar
 /usr/share/java/guava.jar:./solr/lib/guava.jar
 /usr/share/java/httpclient.jar:./solr/lib/httpclient.jar
 /usr/share/java/httpcore.jar:./solr/lib/httpcore.jar
