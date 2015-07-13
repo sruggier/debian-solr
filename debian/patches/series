@@ -10,3 +10,4 @@ CVE-2013-6397.patch
 CVE-2013-6407_CVE-2013-6408.patch
 jetty8-compatibility.patch
 commons-codec-compatibility.patch
+java8-compatibility.patch
