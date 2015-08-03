@@ -57,6 +57,14 @@ override_dh_auto_install:
 		< debian/liblucene3-java.poms.in > debian/liblucene3-java.poms 
 	dh_auto_install
 
+CORE_JAR=debian/liblucene3-java/usr/share/java/lucene3-core-*.jar
+ANALYZERS_JAR=debian/liblucene3-contrib-java/usr/share/java/lucene3-analyzers-*.jar
+override_mh_install:
+	mh_install
+
+	bnd-1.50 wrap -properties debian/lucene3-core.bnd -output $(CORE_JAR) $(CORE_JAR)
+	bnd-1.50 wrap -properties debian/lucene3-analyzers.bnd -output $(ANALYZERS_JAR) $(ANALYZERS_JAR)
+
 override_dh_installchangelogs:
 	dh_installchangelogs -pliblucene3-java lucene/CHANGES.txt
 	dh_installchangelogs -plibsolr-java solr/CHANGES.txt
