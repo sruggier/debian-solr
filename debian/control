@@ -2,7 +2,8 @@ Source: lucene-solr
 Section: java
 Priority: optional
 Maintainer: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
-Uploaders: Mat Scales <mat@wibbly.org.uk>, James Page <james.page@ubuntu.com>
+Uploaders: Mat Scales <mat@wibbly.org.uk>, James Page <james.page@ubuntu.com>,
+ Jakub Adam <jakub.adam@ktknet.cz>
 Build-Depends:
  ant,
  ant-optional,

@@ -1,6 +1,7 @@
 lucene-solr (3.6.2+dfsg-7) UNRELEASED; urgency=medium
 
   * Add OSGi metadata to JAR manifests
+  * Add Jakub Adam to Uploaders
 
  -- Jakub Adam <jakub.adam@ktknet.cz>  Mon, 03 Aug 2015 15:49:56 +0200
 
