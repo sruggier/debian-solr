@@ -12,13 +12,13 @@ Files: *
 Copyright: 2007-2011 The Apache Software Foundation
 License: Apache-2
 
-Files: lucene/src/java/org/apache/lucene/util/UnicodeUtil.java
+Files: lucene/core/src/java/org/apache/lucene/util/UnicodeUtil.java
 Copyright: 2001-2004 Unicode, Inc.
            1995-2011 International Business Machines Corporation and others
            2007-2011 The Apache Software Foundation
 License: Unicode and Apache-2 and ICU
 
-Files: lucene/src/java/org/apache/lucene/util/ArrayUtil.java
+Files: lucene/core/src/java/org/apache/lucene/util/ArrayUtil.java
 Copyright: 1991-2005 Python Software Foundation
            2007-2011 The Apache Software Foundation
 License: PSF-2.4 and Apache-2
@@ -30,7 +30,7 @@ Copyright: 2003 Center for Intelligent Information Retrieval,
 License: CIIR and Apache-2
 
 Files: lucene/contrib/analyzers/common/src/java/org/tartarus/snowball/*.java
-       lucene/analyzers/common/src/resources/org/apache/lucene/analysis/snowball/*
+       lucene/contrib/analyzers/common/src/resources/org/apache/lucene/analysis/snowball/*
 Copyright: 2001 Dr Martin Porter
            2002 Richard Boulton
 License: Snowball and Apache-2
