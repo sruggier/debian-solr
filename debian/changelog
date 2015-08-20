@@ -1,4 +1,4 @@
-lucene-solr (3.6.2+dfsg-7) UNRELEASED; urgency=medium
+lucene-solr (3.6.2+dfsg-7) unstable; urgency=medium
 
   * Add OSGi metadata to JAR manifests
   * Add Jakub Adam to Uploaders
