@@ -37,7 +37,7 @@ License: Snowball and Apache-2
 
 Files: lucene/contrib/xml-query-parser/docs/cctree.js
 Copyright: 2002-2003 Geir Landrö
-License: 
+License: Landrö-License
  This script can be used freely as long as all copyright messages are
  intact.
 
