@@ -1,3 +1,13 @@
+lucene-solr (3.6.2+dfsg-8) unstable; urgency=medium
+
+  * Team upload.
+  * Transition to bnd 2.1.0.
+  * Fix Lintian warning empty-short-license-in-dep5-copyright.
+  * Fix Lintian warnings command-with-path-in-maintainer-script.
+  * Vcs-Browser: Use https.
+
+ -- Markus Koschany <apo@debian.org>  Thu, 19 Nov 2015 22:13:50 +0100
+
 lucene-solr (3.6.2+dfsg-7) unstable; urgency=medium
 
   * Add OSGi metadata to JAR manifests
