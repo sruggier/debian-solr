@@ -7,7 +7,7 @@ Uploaders: Mat Scales <mat@wibbly.org.uk>, James Page <james.page@ubuntu.com>,
 Build-Depends:
  ant,
  ant-optional,
- bnd1.50,
+ bnd (>= 2.1.0),
  debhelper (>= 9),
  default-jdk,
  javacc,

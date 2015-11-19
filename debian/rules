@@ -62,8 +62,10 @@ ANALYZERS_JAR=debian/liblucene3-contrib-java/usr/share/java/lucene3-analyzers-*.
 override_mh_install:
 	mh_install
 
-	bnd-1.50 wrap -properties debian/lucene3-core.bnd -output $(CORE_JAR) $(CORE_JAR)
-	bnd-1.50 wrap -properties debian/lucene3-analyzers.bnd -output $(ANALYZERS_JAR) $(ANALYZERS_JAR)
+	bnd wrap --properties debian/lucene3-core.bnd --output $(CORE_JAR).tmp $(CORE_JAR)
+	bnd wrap --properties debian/lucene3-analyzers.bnd --output $(ANALYZERS_JAR).tmp $(ANALYZERS_JAR)
+	mv $(CORE_JAR).tmp $(CORE_JAR)
+	mv $(ANALYZERS_JAR).tmp $(ANALYZERS_JAR)
 
 override_dh_installchangelogs:
 	dh_installchangelogs -pliblucene3-java lucene/CHANGES.txt
