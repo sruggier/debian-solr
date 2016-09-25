@@ -1,0 +1,43 @@
+# Dutch lucene-solr po-debconf translation,
+# Copyright (C) 2012 THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the lucene-solr package.
+# Vincent Zweije <vincent@zweije.nl>, 2013.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: lucene-solr 3.6.2+dfsg-8\n"
+"Report-Msgid-Bugs-To: pkg-java-maintainers@lists.alioth.debian.org\n"
+"POT-Creation-Date: 2007-10-04 07:18+0200\n"
+"PO-Revision-Date: 2013-02-17 15:21+0000\n"
+"Last-Translator: Vincent Zweije <vincent@zweije.nl>\n"
+"Language-Team: Debian-Dutch <debian-l10n-dutch@lists.debian.org>\n"
+"Language: nl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Type: boolean
+#. Description
+#: ../solr-common.templates:2001
+msgid "Remove Solr index files?"
+msgstr "Solr-indexbestanden verwijderen?"
+
+#. Type: boolean
+#. Description
+#: ../solr-common.templates:2001
+msgid ""
+"The Solr data directory (/var/lib/solr), and the index files it contains, "
+"may be removed while purging the package."
+msgstr ""
+"De Solr-gegevensmap (/var/lib/solr), en de indexbestanden die het bevat, "
+"kunnen bij het verwijderen (purge) van het pakket mee worden verwijderd."
+
+#. Type: boolean
+#. Description
+#: ../solr-common.templates:2001
+msgid ""
+"You should not choose this option if you intend to re-use Solr's index files "
+"later."
+msgstr ""
+"Als u de indexbestanden van Solr later weer verwacht te gebruiken moet u "
+"deze keuze afwijzen."
