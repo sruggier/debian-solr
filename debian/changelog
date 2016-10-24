@@ -1,4 +1,4 @@
-lucene-solr (3.6.2+dfsg-9) UNRELEASED; urgency=medium
+lucene-solr (3.6.2+dfsg-9) unstable; urgency=medium
 
   * Team upload.
 
@@ -12,7 +12,7 @@ lucene-solr (3.6.2+dfsg-9) UNRELEASED; urgency=medium
   * Add Dutch translation of debconf messages. (Closes: #835136)
     Thank you to Frans Spiesschaert for the translation.
 
- -- tony mancill <tmancill@debian.org>  Sun, 25 Sep 2016 11:15:41 -0700
+ -- Emmanuel Bourg <ebourg@apache.org>  Mon, 24 Oct 2016 17:10:19 +0200
 
 lucene-solr (3.6.2+dfsg-8) unstable; urgency=medium
 
