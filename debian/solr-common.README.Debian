@@ -30,7 +30,7 @@ Have a look at /etc/solr/tomcat.policy if you want to enable them.
 MultiCore
 ---------
 
-Solr upstream does not really support the seperation of the application and
+Solr upstream does not really support the separation of the application and
 configuration directory, but knows only a Solr "homedir". We could partly
 handle this by placing a symlink conf to /etc/solr/conf in /usr/share/solr.
 
@@ -74,7 +74,7 @@ The handler writes status information to::
     /etc/solr/conf/dataimport.properties
 
 Make sure that the tomcat/jetty user can write to this file. Yes this is ugly,
-but nobody has teached the FHS to java developers yet.
+but nobody has taught the FHS to java developers yet.
 
 Read more about the DataImportHandler here::
 
