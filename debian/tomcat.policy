@@ -10,9 +10,9 @@ grant codeBase "file:/usr/share/solr/-" {
   permission java.io.FilePermission "/usr/share/java", "read";
   permission java.io.FilePermission "/usr/share/java/-", "read";
   permission java.io.FilePermission "/usr/share/maven-repo/-", "read";
-  permission java.io.FilePermission "/var/log/tomcat7/-", "read,write";
-  permission java.io.FilePermission "/var/lib/tomcat7/webapps/solr/-", "read";
-  permission java.io.FilePermission "/var/lib/tomcat7/temp/-", "read,write";
+  permission java.io.FilePermission "/var/log/tomcat8/-", "read,write";
+  permission java.io.FilePermission "/var/lib/tomcat8/webapps/solr/-", "read";
+  permission java.io.FilePermission "/var/lib/tomcat8/temp/-", "read,write";
   permission java.io.FilePermission "/etc/solr/-", "read";
   permission java.io.FilePermission "/usr/share/solr/-", "read";
   permission java.io.FilePermission "/usr/share/solr", "read";

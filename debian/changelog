@@ -1,6 +1,11 @@
 lucene-solr (3.6.2+dfsg-9) UNRELEASED; urgency=medium
 
   * Team upload.
+
+  [ Emmanuel Bourg ]
+  * Switched the dependencies to tomcat8, libservlet3.1-java and jetty9
+
+  [ tony mancill ]
   * Add Dutch translation of debconf messages. (Closes: #835136)
     Thank you to Frans Spiesschaert for the translation.
 

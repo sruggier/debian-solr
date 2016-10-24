@@ -17,7 +17,7 @@ case "$1" in
     	fi
 
     	if [ -x invoke-rc.d ]; then
-    	    invoke-rc.d jetty8 restart || true
+    	    invoke-rc.d jetty9 restart || true
     	fi
     ;;
     upgrade|purge|failed-upgrade|abort-install|abort-upgrade|disappear)

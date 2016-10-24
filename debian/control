@@ -30,13 +30,14 @@ Build-Depends:
  libhttpclient-java (>= 4.1.1),
  libhttpmime-java,
  libicu4j-4.4-java,
- libjetty8-java (>= 8.1.16-2~),
+ libjetty9-java,
+ libjetty9-extra-java,
  libjmock-java,
  liblog4j1.2-java,
  libregexp-java,
- libservlet3.0-java,
+ libservlet3.1-java,
  libslf4j-java (>= 1.6.1),
- libtomcat7-java,
+ libtomcat8-java,
  libwoodstox-java,
  libxerces2-java,
  libxml-commons-external-java,
@@ -112,7 +113,7 @@ Depends:
  libhttpmime-java,
  liblucene3-contrib-java,
  liblucene3-java,
- libservlet3.0-java,
+ libservlet3.1-java,
  libslf4j-java (>= 1.6.1),
  libwoodstox-java,
  ${misc:Depends}
@@ -121,8 +122,8 @@ Replaces: solr-common (<< 3.6.0-1)
 Suggests:
  junit4,
  libeasymock-java,
- libjetty8-extras-java (>= 8.1.16-2~),
- libjetty8-java (>= 8.1.16-2~),
+ libjetty9-extras-java,
+ libjetty9-java,
  libsolr-java-doc
 Description: Enterprise search server based on Lucene - Java libraries
  Solr is an open source enterprise search server based on the Lucene
@@ -162,7 +163,7 @@ Description: Enterprise search server based on Lucene3 - common files
 
 Package: solr-tomcat
 Architecture: all
-Depends: solr-common (= ${binary:Version}), tomcat7 | tomcat7-user, ${misc:Depends}
+Depends: solr-common (= ${binary:Version}), tomcat8 | tomcat8-user, ${misc:Depends}
 Conflicts: solr-jetty, solr-tomcat6
 Description: Enterprise search server based on Lucene3 - Tomcat integration
  Solr is an open source enterprise search server based on the Lucene
@@ -175,8 +176,8 @@ Description: Enterprise search server based on Lucene3 - Tomcat integration
 Package: solr-jetty
 Architecture: all
 Depends:
- jetty8 (>= 8.1.16-2~),
- libjetty8-extra-java,
+ jetty9,
+ libjetty9-extra-java,
  solr-common (= ${binary:Version}),
  default-jdk | java5-sdk,
  ${misc:Depends}
