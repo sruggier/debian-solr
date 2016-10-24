@@ -5,6 +5,7 @@ lucene-solr (3.6.2+dfsg-9) UNRELEASED; urgency=medium
   [ Emmanuel Bourg ]
   * Switched the dependencies to tomcat8, libservlet3.1-java and jetty9
   * Standards-Version updated to 3.9.8
+  * Use a secure Vcs-* URL
 
   [ tony mancill ]
   * Add Dutch translation of debconf messages. (Closes: #835136)
