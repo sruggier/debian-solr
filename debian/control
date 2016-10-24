@@ -44,7 +44,7 @@ Build-Depends:
  libxml-commons-resolver1.1-java,
  maven-repo-helper (>= 1.5~),
  po-debconf
-Standards-Version: 3.9.6
+Standards-Version: 3.9.8
 Vcs-Git: git://anonscm.debian.org/pkg-java/lucene-solr.git
 Vcs-Browser: https://anonscm.debian.org/cgit/pkg-java/lucene-solr.git
 Homepage: http://lucene.apache.org
