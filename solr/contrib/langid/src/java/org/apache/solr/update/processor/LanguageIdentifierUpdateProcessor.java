@@ -1,6 +1,4 @@
-package org.apache.solr.update.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.update.processor;
 
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
@@ -25,11 +24,13 @@ import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.schema.IndexSchema;
+import org.apache.solr.schema.SchemaField;
 import org.apache.solr.update.AddUpdateCommand;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -39,9 +40,9 @@ import java.util.regex.Pattern;
 
 
 /**
- * Identifies the language of a set of input fields. 
+ * Identifies the language of a set of input fields.
  * Also supports mapping of field names based
- * on detected language. 
+ * on detected language.
  * <p>
  * See <a href="http://wiki.apache.org/solr/LanguageDetection">http://wiki.apache.org/solr/LanguageDetection</a>
  * @since 3.5
@@ -49,8 +50,7 @@ import java.util.regex.Pattern;
  */
 public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestProcessor implements LangIdParams {
 
-  protected final static Logger log = LoggerFactory
-          .getLogger(LanguageIdentifierUpdateProcessor.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   protected boolean enabled;
 
@@ -74,8 +74,11 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
   protected HashSet<String> mapIndividualFieldsSet;
   protected HashSet<String> allMapFieldsSet;
   protected HashMap<String,String> lcMap;
+  protected HashMap<String,String> mapLcMap;
   protected IndexSchema schema;
-  
+  protected int maxFieldValueChars;
+  protected int maxTotalChars;
+
   // Regex patterns
   protected final Pattern tikaSimilarityPattern = Pattern.compile(".*\\((.*?)\\)");
   protected final Pattern langPattern = Pattern.compile("\\{lang\\}");
@@ -84,10 +87,10 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
                                            SolrQueryResponse rsp, UpdateRequestProcessor next) {
     super(next);
     schema = req.getSchema();
-    
+
     initParams(req.getParams());
   }
-  
+
   private void initParams(SolrParams params) {
     if (params != null) {
       // Document-centric langId params
@@ -97,13 +100,14 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
       }
       langField = params.get(LANG_FIELD, DOCID_LANGFIELD_DEFAULT);
       langsField = params.get(LANGS_FIELD, DOCID_LANGSFIELD_DEFAULT);
-      docIdField = params.get(DOCID_PARAM, DOCID_FIELD_DEFAULT);
+      SchemaField uniqueKeyField = schema.getUniqueKeyField();
+      docIdField = params.get(DOCID_PARAM, uniqueKeyField == null ? DOCID_FIELD_DEFAULT : uniqueKeyField.getName());
       fallbackValue = params.get(FALLBACK);
       if(params.get(FALLBACK_FIELDS, "").length() > 0) {
         fallbackFields = params.get(FALLBACK_FIELDS).split(",");
       }
       overwrite = params.getBool(OVERWRITE, false);
-      langWhitelist = new HashSet<String>();
+      langWhitelist = new HashSet<>();
       threshold = params.getDouble(THRESHOLD, DOCID_THRESHOLD_DEFAULT);
       if(params.get(LANG_WHITELIST, "").length() > 0) {
         for(String lang : params.get(LANG_WHITELIST, "").split(",")) {
@@ -127,22 +131,35 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
       if(params.get(MAP_INDIVIDUAL_FL, "").length() > 0) {
         mapIndividualFields = params.get(MAP_INDIVIDUAL_FL, "").split(",");
       } else {
-        mapIndividualFields = mapFields;        
+        mapIndividualFields = mapFields;
       }
-      mapIndividualFieldsSet = new HashSet<String>(Arrays.asList(mapIndividualFields));
+      mapIndividualFieldsSet = new HashSet<>(Arrays.asList(mapIndividualFields));
       // Compile a union of the lists of fields to map
-      allMapFieldsSet = new HashSet<String>(Arrays.asList(mapFields));
+      allMapFieldsSet = new HashSet<>(Arrays.asList(mapFields));
       if(Arrays.equals(mapFields, mapIndividualFields)) {
         allMapFieldsSet.addAll(mapIndividualFieldsSet);
       }
-      
+
+      // Normalize detected langcode onto normalized langcode
+      lcMap = new HashMap<>();
+      if(params.get(LCMAP) != null) {
+        for(String mapping : params.get(LCMAP).split("[, ]")) {
+          String[] keyVal = mapping.split(":");
+          if(keyVal.length == 2) {
+            lcMap.put(keyVal[0], keyVal[1]);
+          } else {
+            log.error("Unsupported format for langid.lcmap: "+mapping+". Skipping this mapping.");
+          }
+        }
+      }
+
       // Language Code mapping
-      lcMap = new HashMap<String,String>();
+      mapLcMap = new HashMap<>();
       if(params.get(MAP_LCMAP) != null) {
         for(String mapping : params.get(MAP_LCMAP).split("[, ]")) {
           String[] keyVal = mapping.split(":");
           if(keyVal.length == 2) {
-            lcMap.put(keyVal[0], keyVal[1]);
+            mapLcMap.put(keyVal[0], keyVal[1]);
           } else {
             log.error("Unsupported format for langid.map.lcmap: "+mapping+". Skipping this mapping.");
           }
@@ -152,8 +169,21 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
 
       mapPattern = Pattern.compile(params.get(MAP_PATTERN, MAP_PATTERN_DEFAULT));
       mapReplaceStr = params.get(MAP_REPLACE, MAP_REPLACE_DEFAULT);
-      
-      
+      maxFieldValueChars = params.getInt(MAX_FIELD_VALUE_CHARS, MAX_FIELD_VALUE_CHARS_DEFAULT);
+      maxTotalChars = params.getInt(MAX_TOTAL_CHARS, MAX_TOTAL_CHARS_DEFAULT);
+      if (maxFieldValueChars > maxTotalChars) {
+        if (maxTotalChars == MAX_TOTAL_CHARS_DEFAULT) {
+          // If the user specified only maxFieldValueChars, make maxTotalChars the same as it
+          log.warn(MAX_FIELD_VALUE_CHARS + " (" + maxFieldValueChars + ") is less than " + MAX_TOTAL_CHARS + " ("
+              + maxTotalChars + ").  Setting " + MAX_TOTAL_CHARS + " to " + maxFieldValueChars + ".");
+          maxTotalChars = maxFieldValueChars;
+        } else {
+          // If the user specified maxTotalChars, make maxFieldValueChars the same as it
+          log.warn(MAX_FIELD_VALUE_CHARS + " (" + maxFieldValueChars + ") is less than " + MAX_TOTAL_CHARS + " ("
+              + maxTotalChars + ").  Setting " + MAX_FIELD_VALUE_CHARS + " to " + maxTotalChars + ".");
+          maxFieldValueChars = maxTotalChars;
+        }
+      }
     }
     log.debug("LangId configured");
 
@@ -162,7 +192,7 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
       throw new SolrException(ErrorCode.BAD_REQUEST,
               "Missing or faulty configuration of LanguageIdentifierUpdateProcessor. Input fields must be specified as a comma separated list");
     }
-    
+
   }
 
   @Override
@@ -174,7 +204,7 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
     }
     super.processAdd(cmd);
   }
-  
+
   /**
    * This is the main, testable process method called from processAdd()
    * @param doc the SolrInputDocument to work on
@@ -182,15 +212,14 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
    */
   protected SolrInputDocument process(SolrInputDocument doc) {
     String docLang = null;
-    HashSet<String> docLangs = new HashSet<String>();
+    HashSet<String> docLangs = new HashSet<>();
     String fallbackLang = getFallbackLang(doc, fallbackFields, fallbackValue);
-      
+
     if(langField == null || !doc.containsKey(langField) || (doc.containsKey(langField) && overwrite)) {
-      String allText = concatFields(doc, inputFields);
-      List<DetectedLanguage> languagelist = detectLanguage(allText);
+      List<DetectedLanguage> languagelist = detectLanguage(doc);
       docLang = resolveLanguage(languagelist, fallbackLang);
       docLangs.add(docLang);
-      log.debug("Detected main document language from fields "+inputFields+": "+docLang);
+      log.debug("Detected main document language from fields "+ Arrays.toString(inputFields) +": "+docLang);
 
       if(doc.containsKey(langField) && overwrite) {
         log.debug("Overwritten old value "+doc.getFieldValue(langField));
@@ -207,11 +236,10 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
 
     if(enableMapping) {
       for (String fieldName : allMapFieldsSet) {
-        if(doc.containsKey(fieldName)) {        
+        if(doc.containsKey(fieldName)) {
           String fieldLang;
           if(mapIndividual && mapIndividualFieldsSet.contains(fieldName)) {
-            String text = (String) doc.getFieldValue(fieldName);
-            List<DetectedLanguage> languagelist = detectLanguage(text);
+            List<DetectedLanguage> languagelist = detectLanguage(doc);
             fieldLang = resolveLanguage(languagelist, docLang);
             docLangs.add(fieldLang);
             log.debug("Mapping field "+fieldName+" using individually detected language "+fieldLang);
@@ -220,11 +248,7 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
             log.debug("Mapping field "+fieldName+" using document global language "+fieldLang);
           }
           String mappedOutputField = getMappedField(fieldName, fieldLang);
-          if(enforceSchema && schema.getFieldOrNull(fieldName) == null) {
-            log.warn("Unsuccessful field name mapping to {}, field does not exist, skipping mapping.", mappedOutputField, fieldName);
-            mappedOutputField = fieldName;
-          }
-            
+
           if (mappedOutputField != null) {
             log.debug("Mapping field {} to {}", doc.getFieldValue(docIdField), fieldLang);
             SolrInputField inField = doc.getField(fieldName);
@@ -237,17 +261,15 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
             throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Invalid output field mapping for "
                     + fieldName + " field and language: " + fieldLang);
           }
-        } else {
-          log.warn("Document {} does not contain input field {}. Skipping this field.", doc.getFieldValue(docIdField), fieldName);
         }
       }
     }
-    
+
     // Set the languages field to an array of all detected languages
     if(langsField != null && langsField.length() != 0) {
       doc.setField(langsField, docLangs.toArray());
     }
-    
+
     return doc;
   }
 
@@ -258,7 +280,7 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
    * @param fallbackValue a language code to use in case no fallbackFields are found
    */
   private String getFallbackLang(SolrInputDocument doc, String[] fallbackFields, String fallbackValue) {
-    String lang = null; 
+    String lang = null;
     for(String field : fallbackFields) {
       if(doc.containsKey(field)) {
         lang = (String) doc.getFieldValue(field);
@@ -273,48 +295,28 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
     return lang;
   }
 
-  /*
-   * Concatenates content from multiple fields
-   */
-  protected String concatFields(SolrInputDocument doc, String[] fields) {
-    StringBuffer sb = new StringBuffer();
-    for (String fieldName : inputFields) {
-      log.debug("Appending field "+fieldName);
-      if (doc.containsKey(fieldName)) {
-        Object content = doc.getFieldValue(fieldName);
-        if(content instanceof String) {
-          sb.append((String) doc.getFieldValue(fieldName));
-          sb.append(" ");
-        } else {
-          log.warn("Field "+fieldName+" not a String value, not including in detection");          
-        }
-      }
-    }
-    return sb.toString();
-  }
-  
   /**
    * Detects language(s) from a string.
    * Classes wishing to implement their own language detection module should override this method.
    * @param content The content to identify
    * @return List of detected language(s) according to RFC-3066
    */
-  protected abstract List<DetectedLanguage> detectLanguage(String content);
+  protected abstract List<DetectedLanguage> detectLanguage(SolrInputDocument content);
 
   /**
-   * Chooses a language based on the list of candidates detected 
+   * Chooses a language based on the list of candidates detected
    * @param language language code as a string
    * @param fallbackLang the language code to use as a fallback
    * @return a string of the chosen language
    */
   protected String resolveLanguage(String language, String fallbackLang) {
-    List<DetectedLanguage> l = new ArrayList<DetectedLanguage>();
+    List<DetectedLanguage> l = new ArrayList<>();
     l.add(new DetectedLanguage(language, 1.0));
     return resolveLanguage(l, fallbackLang);
   }
 
   /**
-   * Chooses a language based on the list of candidates detected 
+   * Chooses a language based on the list of candidates detected
    * @param languages a List of DetectedLanguages with certainty score
    * @param fallbackLang the language code to use as a fallback
    * @return a string of the chosen language
@@ -326,10 +328,11 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
       langStr = fallbackLang;
     } else {
       DetectedLanguage lang = languages.get(0);
-      if(langWhitelist.isEmpty() || langWhitelist.contains(lang.getLangCode())) {
-        log.debug("Language detected {} with certainty {}", lang.getLangCode(), lang.getCertainty());
+      String normalizedLang = normalizeLangCode(lang.getLangCode());
+      if(langWhitelist.isEmpty() || langWhitelist.contains(normalizedLang)) {
+        log.debug("Language detected {} with certainty {}", normalizedLang, lang.getCertainty());
         if(lang.getCertainty() >= threshold) {
-          langStr = lang.getLangCode();
+          langStr = normalizedLang;
         } else {
           log.debug("Detected language below threshold {}, using fallback {}", threshold, fallbackLang);
           langStr = fallbackLang;
@@ -339,29 +342,49 @@ public abstract class LanguageIdentifierUpdateProcessor extends UpdateRequestPro
         langStr = fallbackLang;
       }
     }
-    
+
     if(langStr == null || langStr.length() == 0) {
       log.warn("Language resolved to null or empty string. Fallback not configured?");
       langStr = "";
     }
-  
+
     return langStr;
   }
 
   /**
+   * Looks up language code in map (langid.lcmap) and returns mapped value
+   * @param langCode the language code string returned from detector
+   * @return the normalized/mapped language code
+   */
+  protected String normalizeLangCode(String langCode) {
+    if (lcMap.containsKey(langCode)) {
+      String lc = lcMap.get(langCode);
+      log.debug("Doing langcode normalization mapping from "+langCode+" to "+lc);
+      return lc;
+    }
+    return langCode;
+  }
+
+  /**
    * Returns the name of the field to map the current contents into, so that they are properly analyzed.  For instance
-   * if the currentField is "text" and the code is "en", the new field would be "text_en".  If such a field doesn't exist,
-   * then null is returned.
+   * if the currentField is "text" and the code is "en", the new field would by default be "text_en".
+   * This method also performs custom regex pattern replace if configured. If enforceSchema=true
+   * and the resulting field name doesn't exist, then null is returned.
    *
    * @param currentField The current field name
    * @param language the language code
-   * @return The new schema field name, based on pattern and replace
+   * @return The new schema field name, based on pattern and replace, or null if illegal
    */
   protected String getMappedField(String currentField, String language) {
-    String lc = lcMap.containsKey(language) ? lcMap.get(language) : language;
+    String lc = mapLcMap.containsKey(language) ? mapLcMap.get(language) : language;
     String newFieldName = langPattern.matcher(mapPattern.matcher(currentField).replaceFirst(mapReplaceStr)).replaceFirst(lc);
-    log.debug("Doing mapping from "+currentField+" with language "+language+" to field "+newFieldName);
-    return newFieldName; 
+    if(enforceSchema && schema.getFieldOrNull(newFieldName) == null) {
+      log.warn("Unsuccessful field name mapping from {} to {}, field does not exist and enforceSchema=true; skipping mapping.", currentField, newFieldName);
+      return null;
+    } else {
+      log.debug("Doing mapping from "+currentField+" with language "+language+" to field "+newFieldName);
+    }
+    return newFieldName;
   }
 
   /**

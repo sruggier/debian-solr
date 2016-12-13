@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
 
 
 import java.util.Set;
@@ -55,7 +55,7 @@ public class MapOfSets<K, V> {
     if (theMap.containsKey(key)) {
       theSet = theMap.get(key);
     } else {
-      theSet = new HashSet<V>(23);
+      theSet = new HashSet<>(23);
       theMap.put(key, theSet);
     }
     theSet.add(val);
@@ -72,7 +72,7 @@ public class MapOfSets<K, V> {
     if (theMap.containsKey(key)) {
       theSet = theMap.get(key);
     } else {
-      theSet = new HashSet<V>(23);
+      theSet = new HashSet<>(23);
       theMap.put(key, theSet);
     }
     theSet.addAll(vals);

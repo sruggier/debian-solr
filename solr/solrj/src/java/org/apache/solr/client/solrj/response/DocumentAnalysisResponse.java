@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.response;
 
 import org.apache.solr.common.util.NamedList;
@@ -28,12 +27,12 @@ import java.util.Map;
  * A response that is returned by processing the {@link org.apache.solr.client.solrj.request.DocumentAnalysisRequest}.
  * Holds a map of {@link DocumentAnalysis} objects by a document id (unique key).
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class DocumentAnalysisResponse extends AnalysisResponseBase implements Iterable<Map.Entry<String, DocumentAnalysisResponse.DocumentAnalysis>> {
 
-  private final Map<String, DocumentAnalysis> documentAnalysisByKey = new HashMap<String, DocumentAnalysis>();
+  private final Map<String, DocumentAnalysis> documentAnalysisByKey = new HashMap<>();
 
   /**
    * {@inheritDoc}
@@ -42,24 +41,30 @@ public class DocumentAnalysisResponse extends AnalysisResponseBase implements It
   public void setResponse(NamedList<Object> response) {
     super.setResponse(response);
 
-    NamedList<Object> analysis = (NamedList<Object>) response.get("analysis");
-    for (Map.Entry<String, Object> documentEntry : analysis) {
-      DocumentAnalysis documentAnalysis = new DocumentAnalysis(documentEntry.getKey());
-      NamedList<Object> document = (NamedList<Object>) documentEntry.getValue();
-      for (Map.Entry<String, Object> fieldEntry : document) {
+    @SuppressWarnings("unchecked")
+    NamedList<NamedList<NamedList<Object>>> analysis 
+      = (NamedList<NamedList<NamedList<Object>>>) response.get("analysis");
+    for (Map.Entry<String, NamedList<NamedList<Object>>> document : analysis) {
+      DocumentAnalysis documentAnalysis = new DocumentAnalysis(document.getKey());
+      for (Map.Entry<String, NamedList<Object>> fieldEntry : document.getValue()) {
         FieldAnalysis fieldAnalysis = new FieldAnalysis(fieldEntry.getKey());
-        NamedList field = (NamedList) fieldEntry.getValue();
 
-        NamedList<Object> query = (NamedList<Object>) field.get("query");
+        NamedList<Object> field = fieldEntry.getValue();
+
+        @SuppressWarnings("unchecked")
+        NamedList<List<NamedList<Object>>> query 
+          = (NamedList<List<NamedList<Object>>>) field.get("query");
         if (query != null) {
           List<AnalysisPhase> phases = buildPhases(query);
           fieldAnalysis.setQueryPhases(phases);
         }
-
-        NamedList<Object> index = (NamedList<Object>) field.get("index");
-        for (Map.Entry<String, Object> valueEntry : index) {
+        
+        @SuppressWarnings("unchecked")
+        NamedList<NamedList<List<NamedList<Object>>>> index 
+          = (NamedList<NamedList<List<NamedList<Object>>>>) field.get("index");
+        for (Map.Entry<String, NamedList<List<NamedList<Object>>>> valueEntry : index) {
           String fieldValue = valueEntry.getKey();
-          NamedList<Object> valueNL = (NamedList<Object>) valueEntry.getValue();
+          NamedList<List<NamedList<Object>>> valueNL = valueEntry.getValue();
           List<AnalysisPhase> phases = buildPhases(valueNL);
           fieldAnalysis.setIndexPhases(fieldValue, phases);
         }
@@ -97,6 +102,7 @@ public class DocumentAnalysisResponse extends AnalysisResponseBase implements It
    *
    * @return An iterator over the document analyses map.
    */
+  @Override
   public Iterator<Map.Entry<String, DocumentAnalysis>> iterator() {
     return documentAnalysisByKey.entrySet().iterator();
   }
@@ -109,7 +115,7 @@ public class DocumentAnalysisResponse extends AnalysisResponseBase implements It
   public static class DocumentAnalysis implements Iterable<Map.Entry<String, FieldAnalysis>> {
 
     private final String documentKey;
-    private Map<String, FieldAnalysis> fieldAnalysisByFieldName = new HashMap<String, FieldAnalysis>();
+    private Map<String, FieldAnalysis> fieldAnalysisByFieldName = new HashMap<>();
 
     private DocumentAnalysis(String documentKey) {
       this.documentKey = documentKey;
@@ -146,6 +152,7 @@ public class DocumentAnalysisResponse extends AnalysisResponseBase implements It
      *
      * @return An iterator over the field analyses map.
      */
+    @Override
     public Iterator<Map.Entry<String, FieldAnalysis>> iterator() {
       return fieldAnalysisByFieldName.entrySet().iterator();
     }
@@ -160,7 +167,7 @@ public class DocumentAnalysisResponse extends AnalysisResponseBase implements It
 
     private final String fieldName;
     private List<AnalysisPhase> queryPhases;
-    private Map<String, List<AnalysisPhase>> indexPhasesByFieldValue = new HashMap<String, List<AnalysisPhase>>();
+    private Map<String, List<AnalysisPhase>> indexPhasesByFieldValue = new HashMap<>();
 
     private FieldAnalysis(String fieldName) {
       this.fieldName = fieldName;

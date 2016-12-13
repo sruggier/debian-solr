@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,58 +16,91 @@
  */
 package org.apache.solr.servlet;
 
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpMethodBase;
-import org.apache.commons.httpclient.NameValuePair;
-import org.apache.commons.httpclient.methods.GetMethod;
-import org.apache.commons.httpclient.methods.HeadMethod;
-import org.apache.commons.httpclient.methods.PostMethod;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpHead;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.util.EntityUtils;
 import org.apache.solr.SolrJettyTestBase;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
+import org.apache.solr.client.solrj.impl.HttpSolrClient;
 import org.junit.Test;
+
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 
 public abstract class CacheHeaderTestBase extends SolrJettyTestBase {
 
-  protected HttpMethodBase getSelectMethod(String method) {
-    CommonsHttpSolrServer httpserver = (CommonsHttpSolrServer)getSolrServer();
-    HttpMethodBase m = null;
-    if ("GET".equals(method)) {
-      m = new GetMethod(httpserver.getBaseURL() + "/select");
-    } else if ("HEAD".equals(method)) {
-      m = new HeadMethod(httpserver.getBaseURL() + "/select");
-    } else if ("POST".equals(method)) {
-      m = new PostMethod(httpserver.getBaseURL() + "/select");
+  protected HttpRequestBase getSelectMethod(String method, String... params) throws URISyntaxException {
+    HttpSolrClient client = (HttpSolrClient) getSolrClient();
+    HttpRequestBase m = null;
+    
+    ArrayList<BasicNameValuePair> qparams = new ArrayList<>();
+    if(params.length==0) {
+      qparams.add(new BasicNameValuePair("q", "solr"));
+      qparams.add(new BasicNameValuePair("qt", "standard"));
     }
-    m.setQueryString(new NameValuePair[] { new NameValuePair("q", "solr"),
-          new NameValuePair("qt", "standard") });
+    for (int i = 0; i < params.length / 2; i++) {
+      qparams.add(new BasicNameValuePair(params[i * 2], params[i * 2 + 1]));
+    }
+
+    URI uri = URI.create(client.getBaseURL() + "/select?" +
+                         URLEncodedUtils.format(qparams, StandardCharsets.UTF_8));
+   
+    if ("GET".equals(method)) {
+      m = new HttpGet(uri);
+    } else if ("HEAD".equals(method)) {
+      m = new HttpHead(uri);
+    } else if ("POST".equals(method)) {
+      m = new HttpPost(uri);
+    }
+    
     return m;
   }
 
-  protected HttpMethodBase getUpdateMethod(String method) {
-    CommonsHttpSolrServer httpserver = (CommonsHttpSolrServer)getSolrServer();
-    HttpMethodBase m = null;
+  protected HttpRequestBase getUpdateMethod(String method, String... params) throws URISyntaxException {
+    HttpSolrClient client = (HttpSolrClient) getSolrClient();
+    HttpRequestBase m = null;
+    
+    ArrayList<BasicNameValuePair> qparams = new ArrayList<>();
+    for(int i=0;i<params.length/2;i++) {
+      qparams.add(new BasicNameValuePair(params[i*2], params[i*2+1]));
+    }
+
+    URI uri = URI.create(client.getBaseURL() + "/update?" +
+                         URLEncodedUtils.format(qparams, StandardCharsets.UTF_8));
     
     if ("GET".equals(method)) {
-      m=new GetMethod(httpserver.getBaseURL()+"/update/csv");
+      m=new HttpGet(uri);
     } else if ("POST".equals(method)) {
-      m=new PostMethod(httpserver.getBaseURL()+"/update/csv");
+      m=new HttpPost(uri);
     } else if ("HEAD".equals(method)) {
-      m=new HeadMethod(httpserver.getBaseURL()+"/update/csv");
+      m=new HttpHead(uri);
     }
-    
+
     return m;
   }
   
   protected HttpClient getClient() {
-    CommonsHttpSolrServer httpserver = (CommonsHttpSolrServer)getSolrServer();
-    return httpserver.getHttpClient();
+    HttpSolrClient client = (HttpSolrClient) getSolrClient();
+    return client.getHttpClient();
   }
 
-  protected void checkResponseBody(String method, HttpMethodBase resp)
+  protected void checkResponseBody(String method, HttpResponse resp)
       throws Exception {
-    String responseBody = resp.getResponseBodyAsString();
+    String responseBody ="";
+    
+    if (resp.getEntity() != null) {
+      responseBody = EntityUtils.toString(resp.getEntity());
+    }
+
     if ("GET".equals(method)) {
-      switch (resp.getStatusCode()) {
+      switch (resp.getStatusLine().getStatusCode()) {
         case 200:
           assertTrue("Response body was empty for method " + method,
               responseBody != null && responseBody.length() > 0);
@@ -82,7 +115,7 @@ public abstract class CacheHeaderTestBase extends SolrJettyTestBase {
           break;
         default:
           System.err.println(responseBody);
-          assertEquals("Unknown request response", 0, resp.getStatusCode());
+          assertEquals("Unknown request response", 0, resp.getStatusLine().getStatusCode());
       }
     }
     if ("HEAD".equals(method)) {

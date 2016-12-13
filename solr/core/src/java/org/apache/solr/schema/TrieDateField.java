@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,122 +14,89 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.schema;
 
-import org.apache.solr.search.function.ValueSource;
-import org.apache.solr.search.QParser;
-import org.apache.solr.response.TextResponseWriter;
-import org.apache.solr.response.XMLWriter;
-import org.apache.lucene.document.Fieldable;
-import org.apache.lucene.search.SortField;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.NumericRangeQuery;
-
-import java.util.Map;
 import java.util.Date;
-import java.io.IOException;
 
-public class TrieDateField extends DateField {
+import org.apache.lucene.index.IndexableField;
+import org.apache.solr.update.processor.TimestampUpdateProcessorFactory;
+import org.apache.solr.util.DateMathParser;
 
-  final TrieField wrappedField = new TrieField() {{
-    type = TrieTypes.DATE;
-  }};
-
-  @Override
-  protected void init(IndexSchema schema, Map<String, String> args) {
-    wrappedField.init(schema, args);
-    analyzer = wrappedField.analyzer;
-    queryAnalyzer = wrappedField.queryAnalyzer;
-  }
-
-  @Override
-  public Date toObject(Fieldable f) {
-    return (Date) wrappedField.toObject(f);
-  }
-
-  @Override
-  public SortField getSortField(SchemaField field, boolean top) {
-    return wrappedField.getSortField(field, top);
-  }
-
-  @Override
-  public ValueSource getValueSource(SchemaField field, QParser parser) {
-    return wrappedField.getValueSource(field, parser);
-  }
-
-  /**
-   * @return the precisionStep used to index values into the field
-   */
-  public int getPrecisionStep() {
-    return wrappedField.getPrecisionStep();
-  }
-
-  @Override
-  public void write(XMLWriter xmlWriter, String name, Fieldable f) throws IOException {
-    wrappedField.write(xmlWriter, name, f);
-  }
-
-  @Override
-  public void write(TextResponseWriter writer, String name, Fieldable f) throws IOException {
-    wrappedField.write(writer, name, f);
-  }
-
-  @Override
-  public boolean isTokenized() {
-    return wrappedField.isTokenized();
-  }
-
-  @Override
-  public boolean multiValuedFieldCache() {
-    return wrappedField.multiValuedFieldCache();
-  }
-
-  @Override
-  public String storedToReadable(Fieldable f) {
-    return wrappedField.storedToReadable(f);
-  }
-
-  @Override
-  public String readableToIndexed(String val) {  
-    return wrappedField.readableToIndexed(val);
-  }
-
-  @Override
-  public String toInternal(String val) {
-    return wrappedField.toInternal(val);
-  }
-
-  @Override
-  public String toExternal(Fieldable f) {
-    return wrappedField.toExternal(f);
-  }
-
-  @Override
-  public String indexedToReadable(String indexedForm) {
-    return wrappedField.indexedToReadable(indexedForm);
-  }
-
-  @Override
-  public String storedToIndexed(Fieldable f) {
-    return wrappedField.storedToIndexed(f);
-  }
-
-  @Override
-  public Fieldable createField(SchemaField field, String externalVal, float boost) {
-    return wrappedField.createField(field, externalVal, boost);
-  }
-
-  @Override
-  public Query getRangeQuery(QParser parser, SchemaField field, String min, String max, boolean minInclusive, boolean maxInclusive) {
-    return wrappedField.getRangeQuery(parser, field, min, max, minInclusive, maxInclusive);
+/**
+ * FieldType that can represent any Date/Time with millisecond precision.
+ * <p>
+ * Date Format for the XML, incoming and outgoing:
+ * </p>
+ * <blockquote>
+ * A date field shall be of the form 1995-12-31T23:59:59Z
+ * The trailing "Z" designates UTC time and is mandatory
+ * (See below for an explanation of UTC).
+ * Optional fractional seconds are allowed, as long as they do not end
+ * in a trailing 0 (but any precision beyond milliseconds will be ignored).
+ * All other parts are mandatory.
+ * </blockquote>
+ * <p>
+ * This format was derived to be standards compliant (ISO 8601) and is a more
+ * restricted form of the
+ * <a href="http://www.w3.org/TR/xmlschema-2/#dateTime-canonical-representation">canonical
+ * representation of dateTime</a> from XML schema part 2.  Examples...
+ * </p>
+ * <ul>
+ *   <li>1995-12-31T23:59:59Z</li>
+ *   <li>1995-12-31T23:59:59.9Z</li>
+ *   <li>1995-12-31T23:59:59.99Z</li>
+ *   <li>1995-12-31T23:59:59.999Z</li>
+ * </ul>
+ * <p>
+ * Note that TrieDateField is lenient with regards to parsing fractional
+ * seconds that end in trailing zeros and will ensure that those values
+ * are indexed in the correct canonical format.
+ * </p>
+ * <p>
+ * This FieldType also supports incoming "Date Math" strings for computing
+ * values by adding/rounding internals of time relative either an explicit
+ * datetime (in the format specified above) or the literal string "NOW",
+ * ie: "NOW+1YEAR", "NOW/DAY", "1995-12-31T23:59:59.999Z+5MINUTES", etc...
+ * -- see {@link DateMathParser} for more examples.
+ * </p>
+ * <p>
+ * <b>NOTE:</b> Although it is possible to configure a <code>TrieDateField</code>
+ * instance with a default value of "<code>NOW</code>" to compute a timestamp
+ * of when the document was indexed, this is not advisable when using SolrCloud
+ * since each replica of the document may compute a slightly different value.
+ * {@link TimestampUpdateProcessorFactory} is recommended instead.
+ * </p>
+ *
+ * <p>
+ * Explanation of "UTC"...
+ * </p>
+ * <blockquote>
+ * "In 1970 the Coordinated Universal Time system was devised by an
+ * international advisory group of technical experts within the International
+ * Telecommunication Union (ITU).  The ITU felt it was best to designate a
+ * single abbreviation for use in all languages in order to minimize
+ * confusion.  Since unanimous agreement could not be achieved on using
+ * either the English word order, CUT, or the French word order, TUC, the
+ * acronym UTC was chosen as a compromise."
+ * </blockquote>
+ *
+ * @see TrieField
+ */
+public class TrieDateField extends TrieField implements DateValueFieldType {
+  {
+    this.type = TrieTypes.DATE;
   }
   
   @Override
-  public Query getRangeQuery(QParser parser, SchemaField sf, Date min, Date max, boolean minInclusive, boolean maxInclusive) {
-    return NumericRangeQuery.newLongRange(sf.getName(), wrappedField.precisionStep,
-              min == null ? null : min.getTime(),
-              max == null ? null : max.getTime(),
-              minInclusive, maxInclusive);
+  public Date toObject(IndexableField f) {
+    return (Date)super.toObject(f);
+  }
+
+  @Override
+  public Object toNativeType(Object val) {
+    if (val instanceof String) {
+      return DateMathParser.parseMath(null, (String)val);
+    }
+    return super.toNativeType(val);
   }
 }

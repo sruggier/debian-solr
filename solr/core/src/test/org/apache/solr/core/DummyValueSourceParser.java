@@ -1,5 +1,4 @@
-package org.apache.solr.core;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,14 +14,14 @@ package org.apache.solr.core;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.queryParser.ParseException;
+package org.apache.solr.core;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.valuesource.SimpleFloatFunction;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.search.FunctionQParser;
+import org.apache.solr.search.SyntaxError;
 import org.apache.solr.search.ValueSourceParser;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.SimpleFloatFunction;
-import org.apache.solr.search.function.ValueSource;
 
 
 /**
@@ -38,7 +37,7 @@ public class DummyValueSourceParser extends ValueSourceParser {
   }
 
   @Override
-  public ValueSource parse(FunctionQParser fp) throws ParseException {
+  public ValueSource parse(FunctionQParser fp) throws SyntaxError {
     ValueSource source = fp.parseValueSource();
     ValueSource result = new SimpleFloatFunction(source) {
       @Override
@@ -47,7 +46,7 @@ public class DummyValueSourceParser extends ValueSourceParser {
       }
 
       @Override
-      protected float func(int doc, DocValues vals) {
+      protected float func(int doc, FunctionValues vals) {
         float result = 0;
         return result;
       }

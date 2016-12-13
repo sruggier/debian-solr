@@ -1,6 +1,4 @@
-package org.apache.solr.common.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +14,13 @@ package org.apache.solr.common.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.common.util;
 
 import org.apache.lucene.util.LuceneTestCase;
 
 import java.util.Random;
 
 /** Tests for lookup3ycs hash functions
- * @author yonik
  */
 public class TestHash extends LuceneTestCase {
 
@@ -73,7 +71,7 @@ public class TestHash extends LuceneTestCase {
 
 
   public void testHash() {
-    Random r = random;
+    Random r = random();
     int[] utf32 = new int[20];
     tstEquiv(utf32,0);
 

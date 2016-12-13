@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 import java.util.Collection;
@@ -23,10 +23,12 @@ import java.util.HashSet;
 import java.util.List;
 
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Fieldable;
-import org.apache.lucene.search.Similarity;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 
 public class TestSegmentReader extends LuceneTestCase {
   private Directory dir;
@@ -39,8 +41,8 @@ public class TestSegmentReader extends LuceneTestCase {
     super.setUp();
     dir = newDirectory();
     DocHelper.setupDoc(testDoc);
-    SegmentInfo info = DocHelper.writeDoc(random, dir, testDoc);
-    reader = SegmentReader.get(true, info, IndexReader.DEFAULT_TERMS_INDEX_DIVISOR);
+    SegmentCommitInfo info = DocHelper.writeDoc(random(), dir, testDoc);
+    reader = new SegmentReader(info, IOContext.READ);
   }
   
   @Override
@@ -65,45 +67,31 @@ public class TestSegmentReader extends LuceneTestCase {
     //There are 2 unstored fields on the document that are not preserved across writing
     assertTrue(DocHelper.numFields(result) == DocHelper.numFields(testDoc) - DocHelper.unstored.size());
     
-    List<Fieldable> fields = result.getFields();
-    for (final Fieldable field : fields ) { 
+    List<IndexableField> fields = result.getFields();
+    for (final IndexableField field : fields ) { 
       assertTrue(field != null);
       assertTrue(DocHelper.nameValues.containsKey(field.name()));
     }
   }
   
-  public void testDelete() throws IOException {
-    Document docToDelete = new Document();
-    DocHelper.setupDoc(docToDelete);
-    SegmentInfo info = DocHelper.writeDoc(random, dir, docToDelete);
-    SegmentReader deleteReader = SegmentReader.get(false, info, IndexReader.DEFAULT_TERMS_INDEX_DIVISOR);
-    assertTrue(deleteReader != null);
-    assertTrue(deleteReader.numDocs() == 1);
-    deleteReader.deleteDocument(0);
-    assertTrue(deleteReader.isDeleted(0) == true);
-    assertTrue(deleteReader.hasDeletions() == true);
-    assertTrue(deleteReader.numDocs() == 0);
-    deleteReader.close();
-  }    
-  
   public void testGetFieldNameVariations() {
-    Collection<String> allFieldNames = new HashSet<String>();
-    Collection<String> indexedFieldNames = new HashSet<String>();
-    Collection<String> notIndexedFieldNames = new HashSet<String>();
-    Collection<String> tvFieldNames = new HashSet<String>();
-    Collection<String> noTVFieldNames = new HashSet<String>();
+    Collection<String> allFieldNames = new HashSet<>();
+    Collection<String> indexedFieldNames = new HashSet<>();
+    Collection<String> notIndexedFieldNames = new HashSet<>();
+    Collection<String> tvFieldNames = new HashSet<>();
+    Collection<String> noTVFieldNames = new HashSet<>();
 
     for(FieldInfo fieldInfo : reader.getFieldInfos()) {
       final String name = fieldInfo.name;
       allFieldNames.add(name);
-      if (fieldInfo.isIndexed) {
+      if (fieldInfo.getIndexOptions() != IndexOptions.NONE) {
         indexedFieldNames.add(name);
       } else {
         notIndexedFieldNames.add(name);
       }
-      if (fieldInfo.storeTermVector) {
+      if (fieldInfo.hasVectors()) {
         tvFieldNames.add(name);
-      } else if (fieldInfo.isIndexed) {
+      } else if (fieldInfo.getIndexOptions() != IndexOptions.NONE) {
         noTVFieldNames.add(name);
       }
     }
@@ -126,30 +114,42 @@ public class TestSegmentReader extends LuceneTestCase {
   } 
   
   public void testTerms() throws IOException {
-    TermEnum terms = reader.terms();
-    assertTrue(terms != null);
-    while (terms.next() == true)
-    {
-      Term term = terms.term();
-      assertTrue(term != null);
-      //System.out.println("Term: " + term);
-      String fieldValue = (String)DocHelper.nameValues.get(term.field());
-      assertTrue(fieldValue.indexOf(term.text()) != -1);
+    Fields fields = MultiFields.getFields(reader);
+    for (String field : fields) {
+      Terms terms = fields.terms(field);
+      assertNotNull(terms);
+      TermsEnum termsEnum = terms.iterator();
+      while(termsEnum.next() != null) {
+        BytesRef term = termsEnum.term();
+        assertTrue(term != null);
+        String fieldValue = (String) DocHelper.nameValues.get(field);
+        assertTrue(fieldValue.indexOf(term.utf8ToString()) != -1);
+      }
     }
     
-    TermDocs termDocs = reader.termDocs();
-    assertTrue(termDocs != null);
-    termDocs.seek(new Term(DocHelper.TEXT_FIELD_1_KEY, "field"));
-    assertTrue(termDocs.next() == true);
+    PostingsEnum termDocs = TestUtil.docs(random(), reader,
+        DocHelper.TEXT_FIELD_1_KEY,
+        new BytesRef("field"),
+        null,
+        0);
+    assertTrue(termDocs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
 
-    termDocs.seek(new Term(DocHelper.NO_NORMS_KEY,  DocHelper.NO_NORMS_TEXT));
-    assertTrue(termDocs.next() == true);
+    termDocs = TestUtil.docs(random(), reader,
+        DocHelper.NO_NORMS_KEY,
+        new BytesRef(DocHelper.NO_NORMS_TEXT),
+        null,
+        0);
+
+    assertTrue(termDocs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
 
     
-    TermPositions positions = reader.termPositions();
-    assertTrue(positions != null);
-    positions.seek(new Term(DocHelper.TEXT_FIELD_1_KEY, "field"));
-    assertTrue(positions.doc() == 0);
+    PostingsEnum positions = MultiFields.getTermPositionsEnum(reader,
+                                                                      DocHelper.TEXT_FIELD_1_KEY,
+                                                                      new BytesRef("field"));
+    // NOTE: prior rev of this test was failing to first
+    // call next here:
+    assertTrue(positions.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
+    assertTrue(positions.docID() == 0);
     assertTrue(positions.nextPosition() >= 0);
   }    
   
@@ -169,43 +169,56 @@ public class TestSegmentReader extends LuceneTestCase {
     checkNorms(reader);
   }
 
-  public static void checkNorms(IndexReader reader) throws IOException {
-        // test omit norms
+  public static void checkNorms(LeafReader reader) throws IOException {
+    // test omit norms
     for (int i=0; i<DocHelper.fields.length; i++) {
-      Fieldable f = DocHelper.fields[i];
-      if (f.isIndexed()) {
-        assertEquals(reader.hasNorms(f.name()), !f.getOmitNorms());
-        assertEquals(reader.hasNorms(f.name()), !DocHelper.noNorms.containsKey(f.name()));
-        if (!reader.hasNorms(f.name())) {
-          // test for fake norms of 1.0 or null depending on the flag
-          byte [] norms = reader.norms(f.name());
-          byte norm1 = Similarity.getDefault().encodeNormValue(1.0f);
+      IndexableField f = DocHelper.fields[i];
+      if (f.fieldType().indexOptions() != IndexOptions.NONE) {
+        assertEquals(reader.getNormValues(f.name()) != null, !f.fieldType().omitNorms());
+        assertEquals(reader.getNormValues(f.name()) != null, !DocHelper.noNorms.containsKey(f.name()));
+        if (reader.getNormValues(f.name()) == null) {
+          // test for norms of null
+          NumericDocValues norms = MultiDocValues.getNormValues(reader, f.name());
           assertNull(norms);
-          norms = new byte[reader.maxDoc()];
-          reader.norms(f.name(),norms, 0);
-          for (int j=0; j<reader.maxDoc(); j++) {
-            assertEquals(norms[j], norm1);
-          }
         }
       }
     }
   }
   
   public void testTermVectors() throws IOException {
-    TermFreqVector result = reader.getTermFreqVector(0, DocHelper.TEXT_FIELD_2_KEY);
-    assertTrue(result != null);
-    String [] terms = result.getTerms();
-    int [] freqs = result.getTermFrequencies();
-    assertTrue(terms != null && terms.length == 3 && freqs != null && freqs.length == 3);
-    for (int i = 0; i < terms.length; i++) {
-      String term = terms[i];
-      int freq = freqs[i];
+    Terms result = reader.getTermVectors(0).terms(DocHelper.TEXT_FIELD_2_KEY);
+    assertNotNull(result);
+    assertEquals(3, result.size());
+    TermsEnum termsEnum = result.iterator();
+    while(termsEnum.next() != null) {
+      String term = termsEnum.term().utf8ToString();
+      int freq = (int) termsEnum.totalTermFreq();
       assertTrue(DocHelper.FIELD_2_TEXT.indexOf(term) != -1);
       assertTrue(freq > 0);
     }
 
-    TermFreqVector [] results = reader.getTermFreqVectors(0);
+    Fields results = reader.getTermVectors(0);
     assertTrue(results != null);
-    assertTrue("We do not have 3 term freq vectors, we have: " + results.length, results.length == 3);      
+    assertEquals("We do not have 3 term freq vectors", 3, results.size());
   }    
+  
+  public void testOutOfBoundsAccess() throws IOException {
+    int numDocs = reader.maxDoc();
+
+    expectThrows(IndexOutOfBoundsException.class, () -> {
+      reader.document(-1);
+    });
+    
+    expectThrows(IndexOutOfBoundsException.class, () -> {
+      reader.getTermVectors(-1);
+    });
+    
+    expectThrows(IndexOutOfBoundsException.class, () -> {
+      reader.document(numDocs);
+    });
+    
+    expectThrows(IndexOutOfBoundsException.class, () -> {
+      reader.getTermVectors(numDocs);
+    });    
+  }
 }

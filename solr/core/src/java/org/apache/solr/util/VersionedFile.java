@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,14 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FilenameFilter;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -56,13 +57,14 @@ public class VersionedFile
         if (!f.exists()) {
           File dir = new File(dirName);
           String[] names = dir.list(new FilenameFilter() {
+            @Override
             public boolean accept(File dir, String name) {
               return name.startsWith(prefix);
             }
           });
           Arrays.sort(names);
           f = new File(dir, names[names.length-1]);
-          oldFiles = new ArrayList<File>();
+          oldFiles = new ArrayList<>();
           for (int i=0; i<names.length-1; i++) {
             oldFiles.add(new File(dir, names[i]));
           }
@@ -79,7 +81,7 @@ public class VersionedFile
       is = new FileInputStream(f);
     }
 
-    // delete old files only after we have successfuly opened the newest
+    // delete old files only after we have successfully opened the newest
     if (oldFiles != null) {
       delete(oldFiles);
     }
@@ -87,14 +89,19 @@ public class VersionedFile
     return is;
   }
 
-  private static final Set<File> deleteList = new HashSet<File>();
+  private static final Set<File> deleteList = new HashSet<>();
   private static synchronized void delete(Collection<File> files) {
     synchronized (deleteList) {
       deleteList.addAll(files);
-      List<File> deleted = new ArrayList<File>();
+      List<File> deleted = new ArrayList<>();
       for (File df : deleteList) {
         try {
-          df.delete();
+          try {
+            Files.deleteIfExists(df.toPath());
+          } catch (IOException cause) {
+            // TODO: should this class care if a file couldn't be deleted?
+            // this just emulates previous behavior, where only SecurityException would be handled.
+          }
           // deleteList.remove(df);
           deleted.add(df);
         } catch (SecurityException e) {

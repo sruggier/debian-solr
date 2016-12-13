@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
 import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.handler.StandardRequestHandler;
+import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrRequestHandler;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -38,10 +37,18 @@ public class RequestHandlersTest extends SolrTestCaseJ4 {
   }
 
   @Test
+  public void testImplicitRequestHandlers(){
+    SolrCore core = h.getCore();
+    assertNotNull(core.getRequestHandler( "/update/json"));
+    assertNotNull(core.getRequestHandler( "/update/json/docs"));
+    assertNotNull(core.getRequestHandler( "/update/csv"));
+  }
+
+  @Test
   public void testLazyLoading() {
     SolrCore core = h.getCore();
-    SolrRequestHandler handler = core.getRequestHandler( "lazy" );
-    assertFalse( handler instanceof StandardRequestHandler ); 
+    PluginBag.PluginHolder<SolrRequestHandler> handler = core.getRequestHandlers().getRegistry().get("lazy");
+    assertFalse(handler.isLoaded());
     
     assertU(adoc("id", "42",
                  "name", "Zapp Brannigan"));
@@ -77,14 +84,33 @@ public class RequestHandlersTest extends SolrTestCaseJ4 {
   public void testPathNormalization()
   {
     SolrCore core = h.getCore();
-    SolrRequestHandler h1 = core.getRequestHandler("/update/csv" );
+    SolrRequestHandler h1 = core.getRequestHandler("/update" );
     assertNotNull( h1 );
 
-    SolrRequestHandler h2 = core.getRequestHandler("/update/csv/" );
+    SolrRequestHandler h2 = core.getRequestHandler("/update/" );
     assertNotNull( h2 );
     
     assertEquals( h1, h2 ); // the same object
     
-    assertNull( core.getRequestHandler("/update/csv/asdgadsgas" ) ); // prefix
+    assertNull( core.getRequestHandler("/update/asdgadsgas" ) ); // prefix
+  }
+
+  @Test
+  public void testStatistics() {
+    SolrCore core = h.getCore();
+    SolrRequestHandler updateHandler = core.getRequestHandler("/update");
+    SolrRequestHandler termHandler = core.getRequestHandler("/terms");
+
+    assertU(adoc("id", "47",
+        "text", "line up and fly directly at the enemy death cannons, clogging them with wreckage!"));
+    assertU(commit());
+
+    NamedList updateStats = updateHandler.getStatistics();
+    NamedList termStats = termHandler.getStatistics();
+
+    Double updateTime = (Double) updateStats.get("totalTime");
+    Double termTime = (Double) termStats.get("totalTime");
+
+    assertFalse("RequestHandlers should not share statistics!", updateTime.equals(termTime));
   }
 }

@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
 
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
@@ -44,60 +44,116 @@ import java.util.concurrent.ConcurrentHashMap;
  * if not implemented carefully. The map only contains {@link Iterator} implementations
  * on the values and not-GCed keys. Lucene's implementation also supports {@code null}
  * keys, but those are never weak!
+ * 
+ * <p><a name="reapInfo"></a>The map supports two modes of operation:
+ * <ul>
+ *  <li>{@code reapOnRead = true}: This behaves identical to a {@link java.util.WeakHashMap}
+ *  where it also cleans up the reference queue on every read operation ({@link #get(Object)},
+ *  {@link #containsKey(Object)}, {@link #size()}, {@link #valueIterator()}), freeing map entries
+ *  of already GCed keys.</li>
+ *  <li>{@code reapOnRead = false}: This mode does not call {@link #reap()} on every read
+ *  operation. In this case, the reference queue is only cleaned up on write operations
+ *  (like {@link #put(Object, Object)}). This is ideal for maps with few entries where
+ *  the keys are unlikely be garbage collected, but there are lots of {@link #get(Object)}
+ *  operations. The code can still call {@link #reap()} to manually clean up the queue without
+ *  doing a write operation.</li>
+ * </ul>
  *
  * @lucene.internal
  */
 public final class WeakIdentityMap<K,V> {
-  private final ReferenceQueue<Object> queue = new ReferenceQueue<Object>();
+  private final ReferenceQueue<Object> queue = new ReferenceQueue<>();
   private final Map<IdentityWeakReference, V> backingStore;
+  private final boolean reapOnRead;
 
-  /** Creates a new {@code WeakIdentityMap} based on a non-synchronized {@link HashMap}. */
-  public static final <K,V> WeakIdentityMap<K,V> newHashMap() {
-    return new WeakIdentityMap<K,V>(new HashMap<IdentityWeakReference,V>());
+
+  /** 
+   * Creates a new {@code WeakIdentityMap} based on a non-synchronized {@link HashMap}.
+   * The map <a href="#reapInfo">cleans up the reference queue on every read operation</a>.
+   */
+  public static <K,V> WeakIdentityMap<K,V> newHashMap() {
+    return newHashMap(true);
   }
 
-  /** Creates a new {@code WeakIdentityMap} based on a {@link ConcurrentHashMap}. */
-  public static final <K,V> WeakIdentityMap<K,V> newConcurrentHashMap() {
-    return new WeakIdentityMap<K,V>(new ConcurrentHashMap<IdentityWeakReference,V>());
+  /**
+   * Creates a new {@code WeakIdentityMap} based on a non-synchronized {@link HashMap}.
+   * @param reapOnRead controls if the map <a href="#reapInfo">cleans up the reference queue on every read operation</a>.
+   */
+  public static <K,V> WeakIdentityMap<K,V> newHashMap(boolean reapOnRead) {
+    return new WeakIdentityMap<>(new HashMap<IdentityWeakReference,V>(), reapOnRead);
   }
 
-  private WeakIdentityMap(Map<IdentityWeakReference, V> backingStore) {
+  /**
+   * Creates a new {@code WeakIdentityMap} based on a {@link ConcurrentHashMap}.
+   * The map <a href="#reapInfo">cleans up the reference queue on every read operation</a>.
+   */
+  public static <K,V> WeakIdentityMap<K,V> newConcurrentHashMap() {
+    return newConcurrentHashMap(true);
+  }
+
+  /**
+   * Creates a new {@code WeakIdentityMap} based on a {@link ConcurrentHashMap}.
+   * @param reapOnRead controls if the map <a href="#reapInfo">cleans up the reference queue on every read operation</a>.
+   */
+  public static <K,V> WeakIdentityMap<K,V> newConcurrentHashMap(boolean reapOnRead) {
+    return new WeakIdentityMap<>(new ConcurrentHashMap<IdentityWeakReference,V>(), reapOnRead);
+  }
+
+  /** Private only constructor, to create use the static factory methods. */
+  private WeakIdentityMap(Map<IdentityWeakReference, V> backingStore, boolean reapOnRead) {
     this.backingStore = backingStore;
+    this.reapOnRead = reapOnRead;
   }
 
+  /** Removes all of the mappings from this map. */
   public void clear() {
     backingStore.clear();
     reap();
   }
 
+  /** Returns {@code true} if this map contains a mapping for the specified key. */
   public boolean containsKey(Object key) {
-    reap();
+    if (reapOnRead) reap();
     return backingStore.containsKey(new IdentityWeakReference(key, null));
   }
 
+  /** Returns the value to which the specified key is mapped. */
   public V get(Object key) {
-    reap();
+    if (reapOnRead) reap();
     return backingStore.get(new IdentityWeakReference(key, null));
   }
 
+  /** Associates the specified value with the specified key in this map.
+   * If the map previously contained a mapping for this key, the old value
+   * is replaced. */
   public V put(K key, V value) {
     reap();
     return backingStore.put(new IdentityWeakReference(key, queue), value);
   }
 
+  /** Returns {@code true} if this map contains no key-value mappings. */
   public boolean isEmpty() {
     return size() == 0;
   }
 
+  /** Removes the mapping for a key from this weak hash map if it is present.
+   * Returns the value to which this map previously associated the key,
+   * or {@code null} if the map contained no mapping for the key.
+   * A return value of {@code null} does not necessarily indicate that
+   * the map contained.*/
   public V remove(Object key) {
     reap();
     return backingStore.remove(new IdentityWeakReference(key, null));
   }
 
+  /** Returns the number of key-value mappings in this map. This result is a snapshot,
+   * and may not reflect unprocessed entries that will be removed before next
+   * attempted access because they are no longer referenced.
+   */
   public int size() {
     if (backingStore.isEmpty())
       return 0;
-    reap();
+    if (reapOnRead) reap();
     return backingStore.size();
   }
   
@@ -107,31 +163,35 @@ public final class WeakIdentityMap<K,V> {
   public Iterator<K> keyIterator() {
     reap();
     final Iterator<IdentityWeakReference> iterator = backingStore.keySet().iterator();
+    // IMPORTANT: Don't use oal.util.FilterIterator here:
+    // We need *strong* reference to current key after setNext()!!!
     return new Iterator<K>() {
       // holds strong reference to next element in backing iterator:
       private Object next = null;
       // the backing iterator was already consumed:
       private boolean nextIsSet = false;
     
+      @Override
       public boolean hasNext() {
-        return nextIsSet ? true : setNext();
+        return nextIsSet || setNext();
       }
       
-      @SuppressWarnings("unchecked")
+      @Override @SuppressWarnings("unchecked")
       public K next() {
-        if (nextIsSet || setNext()) {
-          try {
-            assert nextIsSet;
-            return (K) next;
-          } finally {
-             // release strong reference and invalidate current value:
-            nextIsSet = false;
-            next = null;
-          }
+        if (!hasNext()) {
+          throw new NoSuchElementException();
         }
-        throw new NoSuchElementException();
+        assert nextIsSet;
+        try {
+          return (K) next;
+        } finally {
+           // release strong reference and invalidate current value:
+          nextIsSet = false;
+          next = null;
+        }
       }
       
+      @Override
       public void remove() {
         throw new UnsupportedOperationException();
       }
@@ -141,14 +201,15 @@ public final class WeakIdentityMap<K,V> {
         while (iterator.hasNext()) {
           next = iterator.next().get();
           if (next == null) {
-            // already garbage collected!
-            continue;
+            // the key was already GCed, we can remove it from backing map:
+            iterator.remove();
+          } else {
+            // unfold "null" special value:
+            if (next == NULL) {
+              next = null;
+            }
+            return nextIsSet = true;
           }
-          // unfold "null" special value
-          if (next == NULL) {
-            next = null;
-          }
-          return nextIsSet = true;
         }
         return false;
       }
@@ -157,13 +218,21 @@ public final class WeakIdentityMap<K,V> {
   
   /** Returns an iterator over all values of this map.
    * This iterator may return values whose key is already
-   * garbage collected while iterator is consumed. */
+   * garbage collected while iterator is consumed,
+   * especially if {@code reapOnRead} is {@code false}. */
   public Iterator<V> valueIterator() {
-    reap();
+    if (reapOnRead) reap();
     return backingStore.values().iterator();
   }
 
-  private void reap() {
+  /**
+   * This method manually cleans up the reference queue to remove all garbage
+   * collected key/value pairs from the map. Calling this method is not needed
+   * if {@code reapOnRead = true}. Otherwise it might be a good idea
+   * to call this method when there is spare time (e.g. from a background thread).
+   * @see <a href="#reapInfo">Information about the <code>reapOnRead</code> setting</a>
+   */
+  public void reap() {
     Reference<?> zombie;
     while ((zombie = queue.poll()) != null) {
       backingStore.remove(zombie);
@@ -181,10 +250,12 @@ public final class WeakIdentityMap<K,V> {
       hash = System.identityHashCode(obj);
     }
 
+    @Override
     public int hashCode() {
       return hash;
     }
 
+    @Override
     public boolean equals(Object o) {
       if (this == o) {
         return true;

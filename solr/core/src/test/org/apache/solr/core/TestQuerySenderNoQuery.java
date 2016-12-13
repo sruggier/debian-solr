@@ -1,6 +1,4 @@
-package org.apache.solr.core;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,10 @@ package org.apache.solr.core;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.core;
 
-import org.apache.lucene.store.Directory;
 import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.common.params.EventParams;
 import org.apache.solr.search.SolrIndexSearcher;
-import org.apache.solr.search.TestExtendedDismaxParser;
 import org.apache.solr.util.RefCounted;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -78,8 +74,7 @@ public class TestQuerySenderNoQuery extends SolrTestCaseJ4 {
     assertNotNull("Mock is null", mock);
     assertNull("Req (firstsearcher) is not null", mock.req);
 
-    Directory dir = currentSearcher.getIndexReader().directory();
-    SolrIndexSearcher newSearcher = new SolrIndexSearcher(core, core.getSchema(), "testQuerySenderNoQuery", dir, true, false);
+    SolrIndexSearcher newSearcher = new SolrIndexSearcher(core, core.getNewIndexDir(), core.getLatestSchema(), core.getSolrConfig().indexConfig, "testQuerySenderNoQuery", false, core.getDirectoryFactory());
 
     qsl.newSearcher(newSearcher, currentSearcher); // get newSearcher.
     assertNull("Req (newsearcher) is not null", mock.req);

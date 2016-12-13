@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
@@ -30,7 +30,7 @@ import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Create an index with terms from 000-999.
@@ -46,33 +46,30 @@ public class TestWildcardRandom extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(_TestUtil.nextInt(random, 50, 1000)));
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir,
+        newIndexWriterConfig(new MockAnalyzer(random()))
+        .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
     
     Document doc = new Document();
-    Field bogus1 = newField("bogus1", "", Field.Store.NO, Field.Index.NOT_ANALYZED_NO_NORMS);
-    Field field = newField("field", "", Field.Store.NO, Field.Index.ANALYZED_NO_NORMS);
-    Field bogus2 = newField("zbogus2", "", Field.Store.NO, Field.Index.NOT_ANALYZED_NO_NORMS);
+    Field field = newStringField("field", "", Field.Store.NO);
     doc.add(field);
-    doc.add(bogus1);
-    doc.add(bogus2);
     
-    NumberFormat df = new DecimalFormat("000", new DecimalFormatSymbols(Locale.ENGLISH));
+    NumberFormat df = new DecimalFormat("000", new DecimalFormatSymbols(Locale.ROOT));
     for (int i = 0; i < 1000; i++) {
-      field.setValue(df.format(i));
-      bogus1.setValue(_TestUtil.randomUnicodeString(random, 10));
-      bogus2.setValue(_TestUtil.randomUnicodeString(random, 10));
+      field.setStringValue(df.format(i));
       writer.addDocument(doc);
     }
     
     reader = writer.getReader();
     searcher = newSearcher(reader);
     writer.close();
+    if (VERBOSE) {
+      System.out.println("TEST: setUp searcher=" + searcher);
+    }
   }
   
   private char N() {
-    return (char) (0x30 + random.nextInt(10));
+    return (char) (0x30 + random().nextInt(10));
   }
   
   private String fillPattern(String wildcardPattern) {
@@ -91,14 +88,17 @@ public class TestWildcardRandom extends LuceneTestCase {
   
   private void assertPatternHits(String pattern, int numHits) throws Exception {
     // TODO: run with different rewrites
-    Query wq = new WildcardQuery(new Term("field", fillPattern(pattern)));
+    final String filledPattern = fillPattern(pattern);
+    if (VERBOSE) {
+      System.out.println("TEST: run wildcard pattern=" + pattern + " filled=" + filledPattern);
+    }
+    Query wq = new WildcardQuery(new Term("field", filledPattern));
     TopDocs docs = searcher.search(wq, 25);
     assertEquals("Incorrect hits for pattern: " + pattern, numHits, docs.totalHits);
   }
 
   @Override
   public void tearDown() throws Exception {
-    searcher.close();
     reader.close();
     dir.close();
     super.tearDown();

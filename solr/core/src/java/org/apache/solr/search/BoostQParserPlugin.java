@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,15 +16,14 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.queryParser.ParseException;
+import org.apache.lucene.queries.function.BoostedQuery;
+import org.apache.lucene.queries.function.FunctionQuery;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.valuesource.QueryValueSource;
 import org.apache.lucene.search.Query;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.search.function.BoostedQuery;
-import org.apache.solr.search.function.FunctionQuery;
-import org.apache.solr.search.function.QueryValueSource;
-import org.apache.solr.search.function.ValueSource;
 
 /**
  * Create a boosted query from the input value.  The main value is the query to be boosted.
@@ -34,14 +33,12 @@ import org.apache.solr.search.function.ValueSource;
  * The query to be boosted may be of any type.
  *
  * <p>Example: <code>{!boost b=recip(ms(NOW,mydatefield),3.16e-11,1,1)}foo</code> creates a query "foo"
- * which is boosted by the date boosting function referenced in {@link org.apache.solr.search.function.ReciprocalFloatFunction}
+ * which is boosted by the date boosting function referenced in
+ * {@link org.apache.lucene.queries.function.valuesource.ReciprocalFloatFunction}
  */
 public class BoostQParserPlugin extends QParserPlugin {
-  public static String NAME = "boost";
+  public static final String NAME = "boost";
   public static String BOOSTFUNC = "b";
-
-  public void init(NamedList args) {
-  }
 
   @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
@@ -51,7 +48,7 @@ public class BoostQParserPlugin extends QParserPlugin {
       String b;
 
       @Override
-      public Query parse() throws ParseException {
+      public Query parse() throws SyntaxError {
         b = localParams.get(BOOSTFUNC);
         baseParser = subQuery(localParams.get(QueryParsing.V), null);
         Query q = baseParser.getQuery();
@@ -73,7 +70,7 @@ public class BoostQParserPlugin extends QParserPlugin {
       }
                                            
       @Override
-      public Query getHighlightQuery() throws ParseException {
+      public Query getHighlightQuery() throws SyntaxError {
         return baseParser.getHighlightQuery();
       }
 

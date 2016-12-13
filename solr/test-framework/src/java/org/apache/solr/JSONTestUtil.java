@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,13 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr;
 
-import org.apache.noggit.ObjectBuilder;
+import org.noggit.JSONParser;
+import org.noggit.ObjectBuilder;
 import org.apache.solr.common.util.StrUtils;
 
+import java.io.IOException;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 public class JSONTestUtil {
@@ -29,8 +32,9 @@ public class JSONTestUtil {
    * Default delta used in numeric equality comparisons for floats and doubles.
    */
   public final static double DEFAULT_DELTA = 1e-5;
+  public static boolean failRepeatedKeys = false;
 
-  /** 
+  /**
    * comparison using default delta
    * @see #DEFAULT_DELTA
    * @see #match(String,String,double)
@@ -39,7 +43,7 @@ public class JSONTestUtil {
     return match(input, pathAndExpected, DEFAULT_DELTA);
   }
 
-  /** 
+  /**
    * comparison using default delta
    * @see #DEFAULT_DELTA
    * @see #match(String,String,String,double)
@@ -70,24 +74,51 @@ public class JSONTestUtil {
   }
 
   /**
+   * @param input Object structure to parse and test against
+   * @param pathAndExpected JSON path expression + '==' + expected value
+   * @param delta tollerance allowed in comparing float/double values
+   */
+  public static String matchObj(Object input, String pathAndExpected, double delta) throws Exception {
+    int pos = pathAndExpected.indexOf("==");
+    String path = pos>=0 ? pathAndExpected.substring(0,pos) : null;
+    String expected = pos>=0 ? pathAndExpected.substring(pos+2) : pathAndExpected;
+    Object expectObj = failRepeatedKeys ? new NoDupsObjectBuilder(new JSONParser(expected)).getVal() : ObjectBuilder.fromJSON(expected);
+    return matchObj(path, input, expectObj, delta);
+  }
+
+  /**
    * @param path JSON path expression
    * @param input JSON Structure to parse and test against
    * @param expected expected value of path
    * @param delta tollerance allowed in comparing float/double values
    */
   public static String match(String path, String input, String expected, double delta) throws Exception {
-    Object inputObj = ObjectBuilder.fromJSON(input);
-    Object expectObj = ObjectBuilder.fromJSON(expected);
+    Object inputObj = failRepeatedKeys ? new NoDupsObjectBuilder(new JSONParser(input)).getVal() : ObjectBuilder.fromJSON(input);
+    Object expectObj = failRepeatedKeys ? new NoDupsObjectBuilder(new JSONParser(expected)).getVal() : ObjectBuilder.fromJSON(expected);
     return matchObj(path, inputObj, expectObj, delta);
   }
-  
+
+  static class NoDupsObjectBuilder extends ObjectBuilder {
+    public NoDupsObjectBuilder(JSONParser parser) throws IOException {
+      super(parser);
+    }
+
+    @Override
+    public void addKeyVal(Object map, Object key, Object val) throws IOException {
+      Object prev = ((Map<Object, Object>) map).put(key, val);
+      if (prev != null) {
+        throw new RuntimeException("REPEATED JSON OBJECT KEY: key=" + key + " prevValue=" + prev + " thisValue" + val);
+      }
+    }
+  }
+
   /**
    * @param path JSON path expression
    * @param input JSON Structure
    * @param expected expected JSON Object
    * @param delta tollerance allowed in comparing float/double values
    */
-  public static String matchObj(String path, Object input, Object expected, double delta) throws Exception {
+  public static String matchObj(String path, Object input, Object expected, double delta) {
     CollectionTester tester = new CollectionTester(input,delta);
     boolean reversed = path.startsWith("!");
     String positivePath = reversed ? path.substring(1) : path;
@@ -116,7 +147,7 @@ class CollectionTester {
     this.val = val;
     this.valRoot = val;
     this.delta = delta;
-    path = new ArrayList<Object>();
+    path = new ArrayList<>();
   }
   public CollectionTester(Object val) {
     this(val, JSONTestUtil.DEFAULT_DELTA);
@@ -162,8 +193,12 @@ class CollectionTester {
   }
 
   boolean match() {
-    if (expected == null && val == null) {
+    if (expected == val) {
       return true;
+    }
+    if (expected == null || val == null) {
+      setErr("mismatch: '" + expected + "'!='" + val + "'");
+      return false;
     }
     if (expected instanceof List) {
       return matchList();
@@ -174,6 +209,13 @@ class CollectionTester {
 
     // generic fallback
     if (!expected.equals(val)) {
+
+      if (expected instanceof String) {
+        String str = (String)expected;
+        if (str.length() > 6 && str.startsWith("///") && str.endsWith("///")) {
+          return handleSpecialString(str);
+        }
+      }
 
       // make an exception for some numerics
       if ((expected instanceof Integer && val instanceof Long || expected instanceof Long && val instanceof Integer)
@@ -191,6 +233,29 @@ class CollectionTester {
 
     // setErr("unknown expected type " + expected.getClass().getName());
     return true;
+  }
+
+  private boolean handleSpecialString(String str) {
+    String code = str.substring(3,str.length()-3);
+    if ("ignore".equals(code)) {
+      return true;
+    } else if (code.startsWith("regex:")) {
+      String regex = code.substring("regex:".length());
+      if (!(val instanceof String)) {
+        setErr("mismatch: '" + expected + "'!='" + val + "', value is not a string");
+        return false;
+      }
+      Pattern pattern = Pattern.compile(regex);
+      Matcher matcher = pattern.matcher((String)val);
+      if (matcher.find()) {
+        return true;
+      }
+      setErr("mismatch: '" + expected + "'!='" + val + "', regex does not match");
+      return false;
+    }
+
+    setErr("mismatch: '" + expected + "'!='" + val + "'");
+    return false;
   }
 
   boolean matchList() {
@@ -223,7 +288,7 @@ class CollectionTester {
     return true;
   }
 
-  private static Set<String> reserved = new HashSet<String>(Arrays.asList("_SKIP_","_MATCH_","_ORDERED_","_UNORDERED_"));
+  private static Set<String> reserved = new HashSet<>(Arrays.asList("_SKIP_","_MATCH_","_ORDERED_","_UNORDERED_"));
 
   boolean matchMap() {
     Map<String,Object> expectedMap = (Map<String,Object>)expected;
@@ -250,7 +315,7 @@ class CollectionTester {
     }
 
     Set<String> keys = match != null ? match : expectedMap.keySet();
-    Set<String> visited = new HashSet<String>();
+    Set<String> visited = new HashSet<>();
 
     Iterator<Map.Entry<String,Object>> iter = ordered ? v.entrySet().iterator() : null;
 
@@ -310,7 +375,7 @@ class CollectionTester {
           if (v.containsKey(skipStr)) skipped++;
       }
       if (numExpected != (v.size() - skipped)) {
-        HashSet<String> set = new HashSet<String>(v.keySet());
+        HashSet<String> set = new HashSet<>(v.keySet());
         set.removeAll(expectedMap.keySet());
         setErr("unexpected map keys " + set); 
         return false;

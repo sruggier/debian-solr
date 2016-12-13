@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.schema;
 
+import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.schema.SchemaField;
-import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 /**
  * This is a simple test to make sure the unique key is not required 
@@ -27,26 +27,19 @@ import org.apache.solr.util.AbstractSolrTestCase;
  * 
  * It needs its own file so it can load a special schema file
  */
-public class NotRequiredUniqueKeyTest extends AbstractSolrTestCase {
+public class NotRequiredUniqueKeyTest extends SolrTestCaseJ4 {
 
-  @Override public String getSchemaFile() { return "schema-not-required-unique-key.xml"; }
-  @Override public String getSolrConfigFile() { return "solrconfig.xml"; }
-
-  @Override 
-  public void setUp() throws Exception {
-    super.setUp();
-  }
-  
-  @Override 
-  public void tearDown() throws Exception {
-    super.tearDown();
+  @BeforeClass
+  public static void beforeTests() throws Exception {
+    System.setProperty("enable.update.log", "false"); // usecase doesn't work with updateLog
+    initCore("solrconfig.xml","schema-not-required-unique-key.xml");
   }
 
-  
+  @Test
   public void testSchemaLoading() 
   {
     SolrCore core = h.getCore();
-    IndexSchema schema = core.getSchema();
+    IndexSchema schema = core.getLatestSchema();
     SchemaField uniqueKey = schema.getUniqueKeyField();
     
     assertFalse( uniqueKey.isRequired() );

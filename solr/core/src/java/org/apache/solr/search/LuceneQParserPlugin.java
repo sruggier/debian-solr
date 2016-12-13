@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +16,9 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.queryParser.ParseException;
-import org.apache.lucene.queryParser.QueryParser;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.Sort;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.request.SolrQueryRequest;
 
@@ -36,55 +32,12 @@ import java.util.List;
  * <br>Example: <code>{!lucene q.op=AND df=text sort='price asc'}myfield:foo +bar -baz</code>
  */
 public class LuceneQParserPlugin extends QParserPlugin {
-  public static String NAME = "lucene";
-
-  public void init(NamedList args) {
-  }
+  public static final String NAME = "lucene";
 
   @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
     return new LuceneQParser(qstr, localParams, params, req);
   }
-}
-
-class LuceneQParser extends QParser {
-  SolrQueryParser lparser;
-
-  public LuceneQParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
-    super(qstr, localParams, params, req);
-  }
-
-
-  @Override
-  public Query parse() throws ParseException {
-    String qstr = getString();
-    if (qstr == null || qstr.length()==0) return null;
-
-    String defaultField = getParam(CommonParams.DF);
-    if (defaultField==null) {
-      defaultField = getReq().getSchema().getDefaultSearchFieldName();
-    }
-    lparser = new SolrQueryParser(this, defaultField);
-
-    // these could either be checked & set here, or in the SolrQueryParser constructor
-    String opParam = getParam(QueryParsing.OP);
-    if (opParam != null) {
-      lparser.setDefaultOperator("AND".equals(opParam) ? QueryParser.Operator.AND : QueryParser.Operator.OR);
-    } else {
-      // try to get default operator from schema
-      QueryParser.Operator operator = getReq().getSchema().getSolrQueryParser(null).getDefaultOperator();
-      lparser.setDefaultOperator(null == operator ? QueryParser.Operator.OR : operator);
-    }
-
-    return lparser.parse(qstr);
-  }
-
-
-  @Override
-  public String[] getDefaultHighlightFields() {
-    return lparser == null ? new String[]{} : new String[]{lparser.getField()};
-  }
-  
 }
 
 
@@ -96,7 +49,7 @@ class OldLuceneQParser extends LuceneQParser {
   }
 
   @Override
-  public Query parse() throws ParseException {
+  public Query parse() throws SyntaxError {
     // handle legacy "query;sort" syntax
     if (getLocalParams() == null) {
       String qstr = getString();
@@ -114,7 +67,7 @@ class OldLuceneQParser extends LuceneQParser {
           qstr = commands.get(0);
         }
         else if (commands.size() > 2) {
-          throw new ParseException("If you want to use multiple ';' in the query, use the 'sort' param.");
+          throw new SyntaxError("If you want to use multiple ';' in the query, use the 'sort' param.");
         }
       }
       setString(qstr);
@@ -124,12 +77,18 @@ class OldLuceneQParser extends LuceneQParser {
   }
 
   @Override
-  public SortSpec getSort(boolean useGlobal) throws ParseException {
-    SortSpec sort = super.getSort(useGlobal);
+  @Deprecated
+  public SortSpec getSort(boolean useGlobal) throws SyntaxError {
+    return getSortSpec(useGlobal);
+  }
+
+  @Override
+  public SortSpec getSortSpec(boolean useGlobal) throws SyntaxError {
+    SortSpec sort = super.getSortSpec(useGlobal);
     if (sortStr != null && sortStr.length()>0 && sort.getSort()==null) {
-      Sort oldSort = QueryParsing.parseSort(sortStr, getReq());
-      if( oldSort != null ) {
-        sort.sort = oldSort;
+      SortSpec oldSort = SortSpecParsing.parseSortSpec(sortStr, getReq());
+      if( oldSort.getSort() != null ) {
+        sort.setSortAndFields(oldSort.getSort(), oldSort.getSchemaFields());
       }
     }
     return sort;

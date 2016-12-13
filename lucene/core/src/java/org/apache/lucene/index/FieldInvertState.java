@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +16,11 @@
  */
 package org.apache.lucene.index;
 
+import org.apache.lucene.analysis.TokenStream; // javadocs
+import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
+import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
+import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
+import org.apache.lucene.analysis.tokenattributes.TermToBytesRefAttribute;
 import org.apache.lucene.util.AttributeSource;
 
 /**
@@ -26,6 +31,7 @@ import org.apache.lucene.util.AttributeSource;
  * @lucene.experimental
  */
 public final class FieldInvertState {
+  String name;
   int position;
   int length;
   int numOverlap;
@@ -33,12 +39,26 @@ public final class FieldInvertState {
   int maxTermFrequency;
   int uniqueTermCount;
   float boost;
+  // we must track these across field instances (multi-valued case)
+  int lastStartOffset = 0;
+  int lastPosition = 0;
   AttributeSource attributeSource;
 
-  public FieldInvertState() {
-  }
+  OffsetAttribute offsetAttribute;
+  PositionIncrementAttribute posIncrAttribute;
+  PayloadAttribute payloadAttribute;
+  TermToBytesRefAttribute termAttribute;
 
-  public FieldInvertState(int position, int length, int numOverlap, int offset, float boost) {
+  /** Creates {code FieldInvertState} for the specified
+   *  field name. */
+  public FieldInvertState(String name) {
+    this.name = name;
+  }
+  
+  /** Creates {code FieldInvertState} for the specified
+   *  field name and values for all fields. */
+  public FieldInvertState(String name, int position, int length, int numOverlap, int offset, float boost) {
+    this.name = name;
     this.position = position;
     this.length = length;
     this.numOverlap = numOverlap;
@@ -47,18 +67,32 @@ public final class FieldInvertState {
   }
 
   /**
-   * Re-initialize the state, using this boost value.
-   * @param docBoost boost value to use.
+   * Re-initialize the state
    */
-  void reset(float docBoost) {
-    position = 0;
+  void reset() {
+    position = -1;
     length = 0;
     numOverlap = 0;
     offset = 0;
     maxTermFrequency = 0;
     uniqueTermCount = 0;
-    boost = docBoost;
-    attributeSource = null;
+    boost = 1.0f;
+    lastStartOffset = 0;
+    lastPosition = 0;
+  }
+  
+  // TODO: better name?
+  /**
+   * Sets attributeSource to a new instance.
+   */
+  void setAttributeSource(AttributeSource attributeSource) {
+    if (this.attributeSource != attributeSource) {
+      this.attributeSource = attributeSource;
+      termAttribute = attributeSource.getAttribute(TermToBytesRefAttribute.class);
+      posIncrAttribute = attributeSource.addAttribute(PositionIncrementAttribute.class);
+      offsetAttribute = attributeSource.addAttribute(OffsetAttribute.class);
+      payloadAttribute = attributeSource.getAttribute(PayloadAttribute.class);
+    }
   }
 
   /**
@@ -77,6 +111,7 @@ public final class FieldInvertState {
     return length;
   }
 
+  /** Set length value. */
   public void setLength(int length) {
     this.length = length;
   }
@@ -89,6 +124,8 @@ public final class FieldInvertState {
     return numOverlap;
   }
 
+  /** Set number of terms with {@code positionIncrement ==
+   *  0}. */
   public void setNumOverlap(int numOverlap) {
     this.numOverlap = numOverlap;
   }
@@ -110,7 +147,8 @@ public final class FieldInvertState {
   public float getBoost() {
     return boost;
   }
-  
+
+  /** Set boost value. */
   public void setBoost(float boost) {
     this.boost = boost;
   }
@@ -130,8 +168,18 @@ public final class FieldInvertState {
   public int getUniqueTermCount() {
     return uniqueTermCount;
   }
-  
+
+  /** Returns the {@link AttributeSource} from the {@link
+   *  TokenStream} that provided the indexed tokens for this
+   *  field. */
   public AttributeSource getAttributeSource() {
     return attributeSource;
+  }
+  
+  /**
+   * Return the field's name
+   */
+  public String getName() {
+    return name;
   }
 }

@@ -1,12 +1,4 @@
-package org.apache.lucene.document;
-
-import org.apache.lucene.util.LuceneTestCase;
-
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.RandomIndexWriter;
-import org.apache.lucene.store.Directory;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -22,6 +14,16 @@ import org.apache.lucene.store.Directory;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.document;
+
+
+import java.nio.charset.StandardCharsets;
+
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.LuceneTestCase;
 
 /**
  * Tests {@link Document} class.
@@ -34,17 +36,11 @@ public class TestBinaryDocument extends LuceneTestCase {
   public void testBinaryFieldInIndex()
     throws Exception
   {
-    Fieldable binaryFldStored = new Field("binaryStored", binaryValStored.getBytes());
-    Fieldable stringFldStored = new Field("stringStored", binaryValStored, Field.Store.YES, Field.Index.NO, Field.TermVector.NO);
+    FieldType ft = new FieldType();
+    ft.setStored(true);
+    StoredField binaryFldStored = new StoredField("binaryStored", binaryValStored.getBytes(StandardCharsets.UTF_8));
+    Field stringFldStored = new Field("stringStored", binaryValStored, ft);
 
-    try {
-      // binary fields with store off are not allowed
-      new Field("fail", binaryValStored.getBytes(), Field.Store.NO);
-      fail();
-    }
-    catch (IllegalArgumentException iae) {
-    }
-    
     Document doc = new Document();
     
     doc.add(binaryFldStored);
@@ -52,11 +48,11 @@ public class TestBinaryDocument extends LuceneTestCase {
     doc.add(stringFldStored);
 
     /** test for field count */
-    assertEquals(2, doc.fields.size());
+    assertEquals(2, doc.getFields().size());
     
     /** add the doc to a ram index */
     Directory dir = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir);
     writer.addDocument(doc);
     
     /** open a reader and fetch the document */ 
@@ -64,29 +60,24 @@ public class TestBinaryDocument extends LuceneTestCase {
     Document docFromReader = reader.document(0);
     assertTrue(docFromReader != null);
     
-    /** fetch the binary stored field and compare it's content with the original one */
-    String binaryFldStoredTest = new String(docFromReader.getBinaryValue("binaryStored"));
+    /** fetch the binary stored field and compare its content with the original one */
+    BytesRef bytes = docFromReader.getBinaryValue("binaryStored");
+    assertNotNull(bytes);
+    String binaryFldStoredTest = new String(bytes.bytes, bytes.offset, bytes.length, StandardCharsets.UTF_8);
     assertTrue(binaryFldStoredTest.equals(binaryValStored));
     
-    /** fetch the string field and compare it's content with the original one */
+    /** fetch the string field and compare its content with the original one */
     String stringFldStoredTest = docFromReader.get("stringStored");
     assertTrue(stringFldStoredTest.equals(binaryValStored));
     
-    writer.close();    
-    reader.close();
-    
-    reader = IndexReader.open(dir, false);
-    /** delete the document from index */
-    reader.deleteDocument(0);
-    assertEquals(0, reader.numDocs());
-    
+    writer.close();
     reader.close();
     dir.close();
   }
   
   public void testCompressionTools() throws Exception {
-    Fieldable binaryFldCompressed = new Field("binaryCompressed", CompressionTools.compress(binaryValCompressed.getBytes()));
-    Fieldable stringFldCompressed = new Field("stringCompressed", CompressionTools.compressString(binaryValCompressed));
+    StoredField binaryFldCompressed = new StoredField("binaryCompressed", CompressionTools.compress(binaryValCompressed.getBytes(StandardCharsets.UTF_8)));
+    StoredField stringFldCompressed = new StoredField("stringCompressed", CompressionTools.compressString(binaryValCompressed));
     
     Document doc = new Document();
     
@@ -95,7 +86,7 @@ public class TestBinaryDocument extends LuceneTestCase {
     
     /** add the doc to a ram index */
     Directory dir = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir);
     writer.addDocument(doc);
     
     /** open a reader and fetch the document */ 
@@ -103,8 +94,8 @@ public class TestBinaryDocument extends LuceneTestCase {
     Document docFromReader = reader.document(0);
     assertTrue(docFromReader != null);
     
-    /** fetch the binary compressed field and compare it's content with the original one */
-    String binaryFldCompressedTest = new String(CompressionTools.decompress(docFromReader.getBinaryValue("binaryCompressed")));
+    /** fetch the binary compressed field and compare its content with the original one */
+    String binaryFldCompressedTest = new String(CompressionTools.decompress(docFromReader.getBinaryValue("binaryCompressed")), StandardCharsets.UTF_8);
     assertTrue(binaryFldCompressedTest.equals(binaryValCompressed));
     assertTrue(CompressionTools.decompressString(docFromReader.getBinaryValue("stringCompressed")).equals(binaryValCompressed));
 

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import java.io.IOException;
@@ -26,7 +25,7 @@ import java.io.IOException;
  * Implementations should have a noarg constructor and be thread safe (a single instance will be
  * used for all cache autowarmings).
  *
- * @version $Id$
+ *
  */
 public interface CacheRegenerator {
   /**
@@ -39,5 +38,5 @@ public interface CacheRegenerator {
    * @param oldVal      the old value of the cache item
    * @return true to continue with autowarming, false to stop
    */
-  public boolean regenerateItem(SolrIndexSearcher newSearcher, SolrCache newCache, SolrCache oldCache, Object oldKey, Object oldVal) throws IOException;
+  boolean regenerateItem(SolrIndexSearcher newSearcher, SolrCache newCache, SolrCache oldCache, Object oldKey, Object oldVal) throws IOException;
 }

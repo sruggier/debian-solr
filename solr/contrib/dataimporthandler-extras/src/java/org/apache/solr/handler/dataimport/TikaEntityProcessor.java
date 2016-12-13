@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -22,11 +22,11 @@ import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.AutoDetectParser;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.parser.Parser;
+import org.apache.tika.parser.html.HtmlMapper;
+import org.apache.tika.parser.html.IdentityHtmlMapper;
 import org.apache.tika.sax.BodyContentHandler;
 import org.apache.tika.sax.ContentHandlerDecorator;
 import org.apache.tika.sax.XHTMLContentHandler;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.xml.sax.Attributes;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
@@ -43,6 +43,7 @@ import java.io.InputStream;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVERE;
@@ -50,23 +51,35 @@ import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrap
 import static org.apache.solr.handler.dataimport.DataImporter.COLUMN;
 import static org.apache.solr.handler.dataimport.XPathEntityProcessor.URL;
 /**
- * <p>An implementation of {@link org.apache.solr.handler.dataimport.EntityProcessor}
- * which reads data from rich docs using <a href="http://tika.apache.org/">Apache Tika</a>
+ * <p>An implementation of {@link EntityProcessor} which reads data from rich docs
+ * using <a href="http://tika.apache.org/">Apache Tika</a>
  *
- * @version $Id$
+ * <p>To index latitude/longitude data that might
+ * be extracted from a file's metadata, identify
+ * the geo field for this information with this attribute:
+ * <code>spatialMetadataField</code>
+ *
  * @since solr 3.1
  */
 public class TikaEntityProcessor extends EntityProcessorBase {
   private TikaConfig tikaConfig;
-  private static final Logger LOG = LoggerFactory.getLogger(TikaEntityProcessor.class);
   private String format = "text";
   private boolean done = false;
+  private boolean extractEmbedded = false;
   private String parser;
   static final String AUTO_PARSER = "org.apache.tika.parser.AutoDetectParser";
+  private String htmlMapper;
+  private String spatialMetadataField;
 
+  @Override
+  public void init(Context context) {
+    super.init(context);
+    done = false;
+  }
 
   @Override
   protected void firstInit(Context context) {
+    super.firstInit(context);
     try {
       String tikaConfigFile = context.getResolvedEntityAttribute("tikaConfig");
       if (tikaConfigFile == null) {
@@ -83,22 +96,34 @@ public class TikaEntityProcessor extends EntityProcessorBase {
       wrapAndThrow (SEVERE, e,"Unable to load Tika Config");
     }
 
+    String extractEmbeddedString = context.getResolvedEntityAttribute("extractEmbedded");
+    if ("true".equals(extractEmbeddedString)) {
+      extractEmbedded = true;
+    }
     format = context.getResolvedEntityAttribute("format");
     if(format == null)
       format = "text";
     if (!"html".equals(format) && !"xml".equals(format) && !"text".equals(format)&& !"none".equals(format) )
       throw new DataImportHandlerException(SEVERE, "'format' can be one of text|html|xml|none");
+
+    htmlMapper = context.getResolvedEntityAttribute("htmlMapper");
+    if (htmlMapper == null)
+      htmlMapper = "default";
+    if (!"default".equals(htmlMapper) && !"identity".equals(htmlMapper))
+      throw new DataImportHandlerException(SEVERE, "'htmlMapper', if present, must be 'default' or 'identity'");
+
     parser = context.getResolvedEntityAttribute("parser");
     if(parser == null) {
       parser = AUTO_PARSER;
     }
-    done = false;
+
+    spatialMetadataField = context.getResolvedEntityAttribute("spatialMetadataField");
   }
 
   @Override
   public Map<String, Object> nextRow() {
     if(done) return null;
-    Map<String, Object> row = new HashMap<String, Object>();
+    Map<String, Object> row = new HashMap<>();
     DataSource<InputStream> dataSource = context.getDataSource();
     InputStream is = dataSource.getData(context.getResolvedEntityAttribute(URL));
     ContentHandler contentHandler = null;
@@ -121,11 +146,22 @@ public class TikaEntityProcessor extends EntityProcessorBase {
     if(parser.equals(AUTO_PARSER)){
       tikaParser = new AutoDetectParser(tikaConfig);
     } else {
-      tikaParser = (Parser) context.getSolrCore().getResourceLoader().newInstance(parser);
+      tikaParser = context.getSolrCore().getResourceLoader().newInstance(parser, Parser.class);
     }
     try {
-      tikaParser.parse(is, contentHandler, metadata , new ParseContext());
+        ParseContext context = new ParseContext();
+        if ("identity".equals(htmlMapper)){
+          context.set(HtmlMapper.class, IdentityHtmlMapper.INSTANCE);
+        }
+        if (extractEmbedded) {
+          context.set(Parser.class, tikaParser);
+        }
+        tikaParser.parse(is, contentHandler, metadata , context);
     } catch (Exception e) {
+      if(SKIP.equals(onError)) {
+        throw new DataImportHandlerException(DataImportHandlerException.SKIP_ROW,
+            "Document skipped :" + e.getMessage());
+      }
       wrapAndThrow(SEVERE, e, "Unable to read content");
     }
     IOUtils.closeQuietly(is);
@@ -136,8 +172,18 @@ public class TikaEntityProcessor extends EntityProcessorBase {
       if (s != null) row.put(col, s);
     }
     if(!"none".equals(format) ) row.put("text", sw.toString());
+    tryToAddLatLon(metadata, row);
     done = true;
     return row;
+  }
+
+  private void tryToAddLatLon(Metadata metadata, Map<String, Object> row) {
+    if (spatialMetadataField == null) return;
+    String latString = metadata.get(Metadata.LATITUDE);
+    String lonString = metadata.get(Metadata.LONGITUDE);
+    if (latString != null && lonString != null) {
+      row.put(spatialMetadataField, String.format(Locale.ROOT, "%s,%s", latString, lonString));
+    }
   }
 
   private static ContentHandler getHtmlHandler(Writer writer)

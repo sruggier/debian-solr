@@ -33,50 +33,39 @@
   <description>Apache Solr Test Framework</description>
   <properties>
     <module-directory>solr/test-framework</module-directory>
-    <build-directory>../build/solr-test-framework</build-directory>
+    <relative-top-level>../../..</relative-top-level>
+    <module-path>${relative-top-level}/${module-directory}</module-path>
   </properties>
   <scm>
-    <connection>
-      scm:svn:http://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </connection>
-    <developerConnection>
-      scm:svn:https://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </developerConnection>
-    <url>
-      http://svn.apache.org/viewvc/lucene/dev/branches/branch_3x/${module-directory}
-    </url>
+    <connection>scm:git:${vc-anonymous-base-url}</connection>
+    <developerConnection>scm:git:${vc-dev-base-url}</developerConnection>
+    <url>${vc-browse-base-url};f=${module-directory}</url>
   </scm>
   <dependencies>
     <!-- These dependencies are compile scope because this is a test framework. -->
     <dependency>
-      <groupId>${project.groupId}</groupId>
-      <artifactId>solr-core</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
+      <!-- lucene-test-framework dependency must come before lucene-core -->
       <groupId>org.apache.lucene</groupId>
       <artifactId>lucene-test-framework</artifactId>
-      <version>${project.version}</version>
     </dependency>
-    <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-    </dependency>
+@solr-test-framework.internal.dependencies@
+@solr-test-framework.external.dependencies@
+@solr-test-framework.internal.test.dependencies@
+@solr-test-framework.external.test.dependencies@
   </dependencies>
   <build>
-    <directory>${build-directory}</directory>
-    <outputDirectory>${build-directory}/classes/java</outputDirectory>
-    <testOutputDirectory>${build-directory}/classes/test</testOutputDirectory>
-    <sourceDirectory>src/java</sourceDirectory>
-    <testSourceDirectory/>
+    <sourceDirectory>${module-path}/src/java</sourceDirectory>
+    <testSourceDirectory>${module-path}/src/test</testSourceDirectory>
     <resources>
       <resource>
-        <directory>.</directory>
-        <excludes>
-          <exclude>**/*.java</exclude>
-        </excludes>
+        <directory>${module-path}/src/resources</directory>
       </resource>
     </resources>
+    <testResources>
+      <testResource>
+        <directory>${module-path}/src/test-files</directory>
+      </testResource>
+    </testResources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -84,6 +73,22 @@
         <configuration>
           <skip>true</skip>
         </configuration>
+      </plugin>
+       <plugin>
+        <groupId>de.thetaphi</groupId>
+        <artifactId>forbiddenapis</artifactId>
+        <executions>
+          <execution>
+            <id>solr-shared-check-forbidden-apis</id>
+            <phase>none</phase> <!-- Block inherited execution -->
+          </execution>
+          <execution>
+            <id>solr-shared-test-check-forbidden-apis</id>
+            <goals>
+              <goal>check</goal> <!-- NOT testCheck -->
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

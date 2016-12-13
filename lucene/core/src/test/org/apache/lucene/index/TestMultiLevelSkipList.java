@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,21 +14,25 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
-import java.io.Reader;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.LowerCaseTokenizer;
-import org.apache.lucene.analysis.TokenFilter;
-import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.*;
 import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field.Index;
-import org.apache.lucene.document.Field.Store;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
+import org.junit.Before;
 
 /**
  * This testcase tests whether multi-level skipping is being used
@@ -41,33 +43,48 @@ import org.apache.lucene.util.LuceneTestCase;
  * 
  */
 public class TestMultiLevelSkipList extends LuceneTestCase {
+  
+  class CountingRAMDirectory extends MockDirectoryWrapper {
+    public CountingRAMDirectory(Directory delegate) {
+      super(random(), delegate);
+    }
+
+    @Override
+    public IndexInput openInput(String fileName, IOContext context) throws IOException {
+      IndexInput in = super.openInput(fileName, context);
+      if (fileName.endsWith(".frq"))
+        in = new CountingStream(in);
+      return in;
+    }
+  }
+  
   @Override
+  @Before
   public void setUp() throws Exception {
     super.setUp();
-    PayloadFilter.count = 0;
+    counter = 0;
   }
 
   public void testSimpleSkip() throws IOException {
-    RAMDirectory dir = new RAMDirectory();
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new PayloadAnalyzer()).setMergePolicy(newLogMergePolicy()));
+    Directory dir = new CountingRAMDirectory(new RAMDirectory());
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new PayloadAnalyzer())
+                                                .setCodec(TestUtil.alwaysPostingsFormat(TestUtil.getDefaultPostingsFormat()))
+                                                .setMergePolicy(newLogMergePolicy()));
     Term term = new Term("test", "a");
     for (int i = 0; i < 5000; i++) {
       Document d1 = new Document();
-      d1.add(newField(term.field(), term.text(), Store.NO, Index.ANALYZED));
+      d1.add(newTextField(term.field(), term.text(), Field.Store.NO));
       writer.addDocument(d1);
     }
     writer.commit();
     writer.forceMerge(1);
     writer.close();
 
-    IndexReader reader = SegmentReader.getOnlySegmentReader(dir);
-    SegmentTermPositions tp = (SegmentTermPositions) reader.termPositions();
-    tp.freqStream = new CountingStream(tp.freqStream);
-
+    LeafReader reader = getOnlyLeafReader(DirectoryReader.open(dir));
+    
     for (int i = 0; i < 2; i++) {
       counter = 0;
-      tp.seek(term);
-
+      PostingsEnum tp = reader.postings(term, PostingsEnum.ALL);
       checkSkipTo(tp, 14, 185); // no skips
       checkSkipTo(tp, 17, 190); // one skip on level 0
       checkSkipTo(tp, 287, 200); // one skip on level 1, two on level 0
@@ -78,35 +95,38 @@ public class TestMultiLevelSkipList extends LuceneTestCase {
     }
   }
 
-  public void checkSkipTo(TermPositions tp, int target, int maxCounter) throws IOException {
-    tp.skipTo(target);
+  public void checkSkipTo(PostingsEnum tp, int target, int maxCounter) throws IOException {
+    tp.advance(target);
     if (maxCounter < counter) {
       fail("Too many bytes read: " + counter + " vs " + maxCounter);
     }
 
-    assertEquals("Wrong document " + tp.doc() + " after skipTo target " + target, target, tp.doc());
+    assertEquals("Wrong document " + tp.docID() + " after skipTo target " + target, target, tp.docID());
     assertEquals("Frequency is not 1: " + tp.freq(), 1,tp.freq());
     tp.nextPosition();
-    byte[] b = new byte[1];
-    tp.getPayload(b, 0);
-    assertEquals("Wrong payload for the target " + target + ": " + b[0], (byte) target, b[0]);
+    BytesRef b = tp.getPayload();
+    assertEquals(1, b.length);
+    assertEquals("Wrong payload for the target " + target + ": " + b.bytes[b.offset], (byte) target, b.bytes[b.offset]);
   }
 
   private static class PayloadAnalyzer extends Analyzer {
+    private final AtomicInteger payloadCount = new AtomicInteger(-1);
     @Override
-    public TokenStream tokenStream(String fieldName, Reader reader) {
-      return new PayloadFilter(new LowerCaseTokenizer(TEST_VERSION_CURRENT, reader));
+    public TokenStreamComponents createComponents(String fieldName) {
+      Tokenizer tokenizer = new MockTokenizer(MockTokenizer.WHITESPACE, true);
+      return new TokenStreamComponents(tokenizer, new PayloadFilter(payloadCount, tokenizer));
     }
 
   }
 
   private static class PayloadFilter extends TokenFilter {
-    static int count = 0;
     
     PayloadAttribute payloadAtt;
+    private AtomicInteger payloadCount;
     
-    protected PayloadFilter(TokenStream input) {
+    protected PayloadFilter(AtomicInteger payloadCount , TokenStream input) {
       super(input);
+      this.payloadCount = payloadCount;
       payloadAtt = addAttribute(PayloadAttribute.class);
     }
 
@@ -114,7 +134,7 @@ public class TestMultiLevelSkipList extends LuceneTestCase {
     public boolean incrementToken() throws IOException {
       boolean hasNext = input.incrementToken();
       if (hasNext) {
-        payloadAtt.setPayload(new Payload(new byte[] { (byte) count++ }));
+        payloadAtt.setPayload(new BytesRef(new byte[] { (byte) payloadCount.incrementAndGet() }));
       } 
       return hasNext;
     }
@@ -166,9 +186,13 @@ public class TestMultiLevelSkipList extends LuceneTestCase {
     }
 
     @Override
-    public Object clone() {
-      return new CountingStream((IndexInput) this.input.clone());
+    public CountingStream clone() {
+      return new CountingStream(this.input.clone());
     }
 
+    @Override
+    public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+      return new CountingStream(this.input.slice(sliceDescription, offset, length));
+    }
   }
 }

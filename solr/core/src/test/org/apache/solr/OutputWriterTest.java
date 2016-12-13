@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,18 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr;
 
 import java.io.IOException;
 import java.io.Writer;
 
+import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.util.NamedList;
-import org.apache.solr.core.SolrCore;
+import org.apache.solr.core.PluginBag;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.QueryResponseWriter;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.response.XMLResponseWriter;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -44,25 +43,21 @@ public class OutputWriterTest extends SolrTestCaseJ4 {
     }
     
     
-    /** responseHeader has changed in SOLR-59, check old and new variants */
+    /** 
+     * responseHeader has changed in SOLR-59, check old and new variants,
+     * In SOLR-2413, we removed support for the deprecated versions
+     */
     @Test
     public void testSOLR59responseHeaderVersions() {
         // default version is 2.2, with "new" responseHeader
-        lrf.args.remove("version");
+        lrf.args.remove(CommonParams.VERSION);
         lrf.args.put("wt", "standard");
         assertQ(req("foo"), "/response/lst[@name='responseHeader']/int[@name='status'][.='0']");
         lrf.args.remove("wt");
         assertQ(req("foo"), "/response/lst[@name='responseHeader']/int[@name='QTime']");
         
-        // version=2.1 reverts to old responseHeader
-        lrf.args.put("version", "2.1");
-        lrf.args.put("wt", "standard");
-        assertQ(req("foo"), "/response/responseHeader/status[.='0']");
-        lrf.args.remove("wt");
-        assertQ(req("foo"), "/response/responseHeader/QTime");
-
         // and explicit 2.2 works as default  
-        lrf.args.put("version", "2.2");
+        //lrf.args.put("version", "2.2");
         lrf.args.put("wt", "standard");
         assertQ(req("foo"), "/response/lst[@name='responseHeader']/int[@name='status'][.='0']");
         lrf.args.remove("wt");
@@ -95,11 +90,12 @@ public class OutputWriterTest extends SolrTestCaseJ4 {
     }
 
     public void testLazy() {
-      QueryResponseWriter qrw = h.getCore().getQueryResponseWriter("useless");
-      assertTrue("Should be a lazy class", qrw instanceof SolrCore.LazyQueryResponseWriterWrapper);
+        PluginBag.PluginHolder<QueryResponseWriter> qrw = h.getCore().getResponseWriters().getRegistry().get("useless");
+        assertTrue("Should be a lazy class", qrw instanceof PluginBag.LazyPluginHolder);
 
-      qrw = h.getCore().getQueryResponseWriter("xml");
-      assertTrue("Should not be a lazy class", qrw instanceof XMLResponseWriter);
+        qrw = h.getCore().getResponseWriters().getRegistry().get("xml");
+        assertTrue("Should not be a lazy class", qrw.isLoaded());
+        assertTrue("Should not be a lazy class", qrw.getClass() == PluginBag.PluginHolder.class);
 
     }
     
@@ -110,13 +106,16 @@ public class OutputWriterTest extends SolrTestCaseJ4 {
         
         public UselessOutputWriter() {}
 
+        @Override
         public void init(NamedList n) {}
         
+        @Override
         public void write(Writer writer, SolrQueryRequest request, SolrQueryResponse response)
         throws IOException {
             writer.write(USELESS_OUTPUT);
         }
 
+      @Override
       public String getContentType(SolrQueryRequest request, SolrQueryResponse response) {
         return CONTENT_TYPE_TEXT_UTF8;
       }

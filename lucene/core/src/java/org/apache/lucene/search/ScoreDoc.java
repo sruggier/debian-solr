@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,16 +14,18 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 /** Holds one hit in {@link TopDocs}. */
 
-public class ScoreDoc implements java.io.Serializable {
+public class ScoreDoc {
 
   /** The score of this document for the query. */
   public float score;
 
-  /** Expert: A hit document's number.
-   * @see Searcher#doc(int) */
+  /** A hit document's number.
+   * @see IndexSearcher#doc(int) */
   public int doc;
 
   /** Only set by {@link TopDocs#merge} */

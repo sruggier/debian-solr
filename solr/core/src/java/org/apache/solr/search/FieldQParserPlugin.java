@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +16,8 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.queryParser.ParseException;
-import org.apache.lucene.search.*;
+import org.apache.lucene.search.Query;
 import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.SchemaField;
@@ -33,16 +31,13 @@ import org.apache.solr.schema.SchemaField;
  * This is generally equivalent to the Lucene query parser expression <code>myfield:"Foo Bar"</code>
  */
 public class FieldQParserPlugin extends QParserPlugin {
-  public static String NAME = "field";
-
-  public void init(NamedList args) {
-  }
+  public static final String NAME = "field";
 
   @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
     return new QParser(qstr, localParams, params, req) {
       @Override
-      public Query parse() throws ParseException {
+      public Query parse() {
         String field = localParams.get(QueryParsing.F);
         String queryText = localParams.get(QueryParsing.V);
         SchemaField sf = req.getSchema().getField(field);

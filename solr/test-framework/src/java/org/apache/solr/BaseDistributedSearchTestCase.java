@@ -1,6 +1,4 @@
-package org.apache.solr;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,73 +14,241 @@ package org.apache.solr;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr;
+
+import javax.servlet.Filter;
+import java.io.File;
+import java.io.IOException;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.invoke.MethodHandles;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Random;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import junit.framework.Assert;
-import junit.framework.TestCase;
-import org.apache.solr.client.solrj.SolrServer;
+import org.apache.commons.io.FileUtils;
+import org.apache.lucene.util.Constants;
+import org.apache.lucene.util.TestUtil;
+import org.apache.solr.client.solrj.SolrClient;
+import org.apache.solr.client.solrj.SolrResponse;
 import org.apache.solr.client.solrj.SolrServerException;
+import org.apache.solr.client.solrj.embedded.JettyConfig;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
+import org.apache.solr.client.solrj.impl.HttpSolrClient;
+import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
+import org.apache.solr.client.solrj.response.UpdateResponse;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.params.ModifiableSolrParams;
+import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
-import org.apache.solr.schema.TrieDateField;
-import org.apache.solr.util.AbstractSolrTestCase;
-import org.junit.Test;
+import org.eclipse.jetty.servlet.ServletHolder;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Rule;
+import org.junit.rules.TestRule;
+import org.junit.runner.Description;
+import org.junit.runners.model.Statement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
 
 /**
  * Helper base class for distributed search test cases
  *
+ * By default, all tests in sub-classes will be executed with
+ * 1, 2, ... DEFAULT_MAX_SHARD_COUNT number of shards set up repeatedly.
+ *
+ * In general, it's preferable to annotate the tests in sub-classes with a
+ * {@literal @}ShardsFixed(num = N) or a {@literal @}ShardsRepeat(min = M, max = N)
+ * to indicate whether the test should be called once, with a fixed number of shards,
+ * or called repeatedly for number of shards = M to N.
+ *
+ * In some cases though, if the number of shards has to be fixed, but the number
+ * itself is dynamic, or if it has to be set as a default for all sub-classes
+ * of a sub-class, there's a fixShardCount(N) available, which is identical to
+ * {@literal @}ShardsFixed(num = N) for all tests without annotations in that class
+ * hierarchy. Ideally this function should be retired in favour of better annotations..
+ *
  * @since solr 1.5
  */
 public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
-  public static Random r = random;
-
-  protected int shardCount = 4;
+  // TODO: this shouldn't be static. get the random when you need it to avoid sharing.
+  public static Random r;
+  
+  private AtomicInteger nodeCnt = new AtomicInteger(0);
+  protected boolean useExplicitNodeNames;
+  
+  @BeforeClass
+  public static void initialize() {
+    assumeFalse("SOLR-4147: ibm 64bit has jvm bugs!", Constants.JRE_IS_64BIT && Constants.JAVA_VENDOR.startsWith("IBM"));
+    r = new Random(random().nextLong());
+  }
+  
   /**
-   * Sub classes can set this flag in their constructor to true if they
-   * want to fix the number of shards to 'shardCount'
-   *
-   * The default is false which means that test will be executed with
-   * 1, 2, 3, ....shardCount number of shards repeatedly
+   * Set's the value of the "hostContext" system property to a random path 
+   * like string (which may or may not contain sub-paths).  This is used 
+   * in the default constructor for this test to help ensure no code paths have
+   * hardcoded assumptions about the servlet context used to run solr.
+   * <p>
+   * Test configs may use the <code>${hostContext}</code> variable to access 
+   * this system property.
+   * </p>
+   * @see #BaseDistributedSearchTestCase()
+   * @see #clearHostContext
    */
-  protected boolean fixShardCount = false;
+  @BeforeClass
+  public static void initHostContext() {
+    // Can't use randomRealisticUnicodeString because unescaped unicode is 
+    // not allowed in URL paths
+    // Can't use URLEncoder.encode(randomRealisticUnicodeString) because
+    // Jetty freaks out and returns 404's when the context uses escapes
+
+    StringBuilder hostContext = new StringBuilder("/");
+    if (random().nextBoolean()) {
+      // half the time we use the root context, the other half...
+
+      // Remember: randomSimpleString might be the empty string
+      hostContext.append(TestUtil.randomSimpleString(random(), 2));
+      if (random().nextBoolean()) {
+        hostContext.append("_");
+      }
+      hostContext.append(TestUtil.randomSimpleString(random(), 3));
+      if ( ! "/".equals(hostContext.toString())) {
+        // if our random string is empty, this might add a trailing slash, 
+        // but our code should be ok with that
+        hostContext.append("/").append(TestUtil.randomSimpleString(random(), 2));
+      } else {
+        // we got 'lucky' and still just have the root context,
+        // NOOP: don't try to add a subdir to nothing (ie "//" is bad)
+      }
+    }
+    // paranoia, we *really* don't want to ever get "//" in a path...
+    final String hc = hostContext.toString().replaceAll("\\/+","/");
+
+    log.info("Setting hostContext system property: " + hc);
+    System.setProperty("hostContext", hc);
+  }
+  
+  /**
+   * Clears the "hostContext" system property
+   * @see #initHostContext
+   */
+  @AfterClass
+  public static void clearHostContext() throws Exception {
+    System.clearProperty("hostContext");
+  }
+
+  private static String getHostContextSuitableForServletContext() {
+    String ctx = System.getProperty("hostContext","/solr");
+    if ("".equals(ctx)) ctx = "/solr";
+    if (ctx.endsWith("/")) ctx = ctx.substring(0,ctx.length()-1);;
+    if (!ctx.startsWith("/")) ctx = "/" + ctx;
+    return ctx;
+  }
+
+  /**
+   * Constructs a test in which the jetty+solr instances as well as the 
+   * solr clients all use the value of the "hostContext" system property.
+   * <p>
+   * If the system property is not set, or is set to the empty string 
+   * (neither of which should normally happen unless a subclass explicitly 
+   * modifies the property set by {@link #initHostContext} prior to calling 
+   * this constructor) a servlet context of "/solr" is used. (this is for 
+   * consistency with the default behavior of solr.xml parsing when using 
+   * <code>hostContext="${hostContext:}"</code>
+   * </p>
+   * <p>
+   * If the system property is set to a value which does not begin with a 
+   * "/" (which should normally happen unless a subclass explicitly 
+   * modifies the property set by {@link #initHostContext} prior to calling 
+   * this constructor) a leading "/" will be prepended.
+   * </p>
+   *
+   * @see #initHostContext
+   */
+  protected BaseDistributedSearchTestCase() {
+    this(getHostContextSuitableForServletContext());
+  }
+
+  /**
+   * @param context explicit servlet context path to use (eg: "/solr")
+   */
+  protected BaseDistributedSearchTestCase(final String context) {
+    this.context = context;
+    this.deadServers = new String[] {"[ff01::114]:33332" + context, 
+                                     "[ff01::083]:33332" + context, 
+                                     "[ff01::213]:33332" + context};
+  }
+
+  private final static int DEFAULT_MAX_SHARD_COUNT = 3;
+
+  private int shardCount = -1;      // the actual number of solr cores that will be created in the cluster
+  public int getShardCount() {
+    return shardCount;
+  }
+
+  private boolean isShardCountFixed = false;
+
+  public void fixShardCount(int count) {
+    isShardCountFixed = true;
+    shardCount = count;
+  }
 
   protected JettySolrRunner controlJetty;
-  protected List<SolrServer> clients = new ArrayList<SolrServer>();
-  protected List<JettySolrRunner> jettys = new ArrayList<JettySolrRunner>();
-  protected String context = "/solr";
+  protected List<SolrClient> clients = new ArrayList<>();
+  protected List<JettySolrRunner> jettys = new ArrayList<>();
+  
+  protected String context;
+  protected String[] deadServers;
   protected String shards;
+  protected String[] shardsArr;
   protected File testDir;
-  protected SolrServer controlClient;
+  protected SolrClient controlClient;
 
   // to stress with higher thread counts and requests, make sure the junit
   // xml formatter is not being used (all output will be buffered before
   // transformation to xml and cause an OOM exception).
-  protected int stress = 2;
+  protected int stress = TEST_NIGHTLY ? 2 : 0;
   protected boolean verifyStress = true;
   protected int nThreads = 3;
 
+  protected int clientConnectionTimeout = DEFAULT_CONNECTION_TIMEOUT;
+  protected int clientSoTimeout = 90000;
 
   public static int ORDERED = 1;
   public static int SKIP = 2;
   public static int SKIPVAL = 4;
   public static int UNORDERED = 8;
+  
+  /**
+   * When this flag is set, Double values will be allowed a difference ratio of 1E-8
+   * between the non-distributed and the distributed returned values
+   */
+  public static int FUZZY = 16;
+  private static final double DOUBLE_RATIO_LIMIT = 1E-8;
 
   protected int flags;
-  protected Map<String, Integer> handle = new HashMap<String, Integer>();
+  protected Map<String, Integer> handle = new HashMap<>();
 
   protected String id = "id";
-  public static Logger log = LoggerFactory.getLogger(BaseDistributedSearchTestCase.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   
   public static RandVal rint = new RandVal() {
     @Override
@@ -114,13 +280,6 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
 
   public static RandVal rdate = new RandDate();
 
-  /**
-   * Perform the actual tests here
-   *
-   * @throws Exception on error
-   */
-  public abstract void doTest() throws Exception;
-
   public static String[] fieldNames = new String[]{"n_ti1", "n_f1", "n_tf1", "n_d1", "n_td1", "n_l1", "n_tl1", "n_dt1", "n_tdt1"};
   public static RandVal[] randVals = new RandVal[]{rint, rfloat, rfloat, rdouble, rdouble, rlong, rlong, rdate, rdate};
 
@@ -139,75 +298,164 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
   public String getSolrHome() {
     return SolrTestCaseJ4.TEST_HOME();
   }
-  
-  @Override
-  public void setUp() throws Exception {
+
+  private boolean distribSetUpCalled = false;
+  public void distribSetUp() throws Exception {
+    distribSetUpCalled = true;
     SolrTestCaseJ4.resetExceptionIgnores();  // ignore anything with ignore_exception in it
-    super.setUp();
     System.setProperty("solr.test.sys.prop1", "propone");
     System.setProperty("solr.test.sys.prop2", "proptwo");
-    System.setProperty("solr.solr.home", getSolrHome());
-    testDir = new File(TEMP_DIR,
-            getClass().getName() + "-" + System.currentTimeMillis());
-    testDir.mkdirs();
+    testDir = createTempDir().toFile();
   }
 
-  @Override
-  public void tearDown() throws Exception {
+  private boolean distribTearDownCalled = false;
+  public void distribTearDown() throws Exception {
+    distribTearDownCalled = true;
     destroyServers();
-    if (!AbstractSolrTestCase.recurseDelete(testDir)) {
-      System.err.println("!!!! WARNING: best effort to remove " + testDir.getAbsolutePath() + " FAILED !!!!!");
-    }
-    super.tearDown();
   }
 
-  private void createServers(int numShards) throws Exception {
-    controlJetty = createJetty(testDir, "control");
-    controlClient = createNewSolrServer(controlJetty.getLocalPort());
+  protected JettySolrRunner createControlJetty() throws Exception {
+    Path jettyHome = testDir.toPath().resolve("control");
+    File jettyHomeFile = jettyHome.toFile();
+    seedSolrHome(jettyHomeFile);
+    seedCoreRootDirWithDefaultTestCore(jettyHome.resolve("cores"));
+    JettySolrRunner jetty = createJetty(jettyHomeFile, null, null, getSolrConfigFile(), getSchemaFile());
+    return jetty;
+  }
 
+  protected void createServers(int numShards) throws Exception {
+
+    System.setProperty("configSetBaseDir", getSolrHome());
+
+    controlJetty = createControlJetty();
+    controlClient = createNewSolrClient(controlJetty.getLocalPort());
+
+    shardsArr = new String[numShards];
     StringBuilder sb = new StringBuilder();
-    for (int i = 1; i <= numShards; i++) {
+    for (int i = 0; i < numShards; i++) {
       if (sb.length() > 0) sb.append(',');
-      JettySolrRunner j = createJetty(testDir, "shard" + i);
+      final String shardname = "shard" + i;
+      Path jettyHome = testDir.toPath().resolve(shardname);
+      File jettyHomeFile = jettyHome.toFile();
+      seedSolrHome(jettyHomeFile);
+      seedCoreRootDirWithDefaultTestCore(jettyHome.resolve("cores"));
+      JettySolrRunner j = createJetty(jettyHomeFile, null, null, getSolrConfigFile(), getSchemaFile());
       jettys.add(j);
-      clients.add(createNewSolrServer(j.getLocalPort()));
-      sb.append("localhost:").append(j.getLocalPort()).append(context);
+      clients.add(createNewSolrClient(j.getLocalPort()));
+      String shardStr = buildUrl(j.getLocalPort()) + "/" + DEFAULT_TEST_CORENAME;
+      shardsArr[i] = shardStr;
+      sb.append(shardStr);
     }
 
     shards = sb.toString();
   }
 
+
+  protected void setDistributedParams(ModifiableSolrParams params) {
+    params.set("shards", getShardsString());
+  }
+
+  protected String getShardsString() {
+    if (deadServers == null) return shards;
+    
+    StringBuilder sb = new StringBuilder();
+    for (String shard : shardsArr) {
+      if (sb.length() > 0) sb.append(',');
+      int nDeadServers = r.nextInt(deadServers.length+1);
+      if (nDeadServers > 0) {
+        List<String> replicas = new ArrayList<>(Arrays.asList(deadServers));
+        Collections.shuffle(replicas, r);
+        replicas.add(r.nextInt(nDeadServers+1), shard);
+        for (int i=0; i<nDeadServers+1; i++) {
+          if (i!=0) sb.append('|');
+          sb.append(replicas.get(i));
+        }
+      } else {
+        sb.append(shard);
+      }
+    }
+
+    return sb.toString();
+  }
+
   protected void destroyServers() throws Exception {
-    controlJetty.stop();
+    if (controlJetty != null) controlJetty.stop();
+    if (controlClient != null)  controlClient.close();
     for (JettySolrRunner jetty : jettys) jetty.stop();
+    for (SolrClient client : clients) client.close();
     clients.clear();
     jettys.clear();
   }
-
-  public static JettySolrRunner createJetty(File baseDir, String dataDirName) throws Exception {
-    File subDir = new File(baseDir, dataDirName);
-    subDir.mkdirs();
-    System.setProperty("solr.data.dir", subDir.toString());
-
-    JettySolrRunner jetty = new JettySolrRunner("/solr", 0);
-
-    jetty.start();
-    return jetty;
+  
+  public JettySolrRunner createJetty(File solrHome, String dataDir) throws Exception {
+    return createJetty(solrHome, dataDir, null, null, null);
   }
 
-  protected SolrServer createNewSolrServer(int port) {
+  public JettySolrRunner createJetty(File solrHome, String dataDir, String shardId) throws Exception {
+    return createJetty(solrHome, dataDir, shardId, null, null);
+  }
+  
+  public JettySolrRunner createJetty(File solrHome, String dataDir, String shardList, String solrConfigOverride, String schemaOverride) throws Exception {
+    return createJetty(solrHome, dataDir, shardList, solrConfigOverride, schemaOverride, useExplicitNodeNames);
+  }
+  
+  public JettySolrRunner createJetty(File solrHome, String dataDir, String shardList, String solrConfigOverride, String schemaOverride, boolean explicitCoreNodeName) throws Exception {
+
+    Properties props = new Properties();
+    if (solrConfigOverride != null)
+      props.setProperty("solrconfig", solrConfigOverride);
+    if (schemaOverride != null)
+      props.setProperty("schema", schemaOverride);
+    if (shardList != null)
+      props.setProperty("shards", shardList);
+    if (dataDir != null) {
+      props.setProperty("solr.data.dir", dataDir);
+    }
+    if (explicitCoreNodeName) {
+      props.setProperty("coreNodeName", Integer.toString(nodeCnt.incrementAndGet()));
+    }
+    props.setProperty("coreRootDirectory", solrHome.toPath().resolve("cores").toAbsolutePath().toString());
+
+    JettySolrRunner jetty = new JettySolrRunner(solrHome.getAbsolutePath(), props, JettyConfig.builder()
+        .stopAtShutdown(true)
+        .setContext(context)
+        .withFilters(getExtraRequestFilters())
+        .withServlets(getExtraServlets())
+        .withSSLConfig(sslConfig)
+        .build());
+
+    jetty.start();
+    
+    return jetty;
+  }
+  
+  /** Override this method to insert extra servlets into the JettySolrRunners that are created using createJetty() */
+  public SortedMap<ServletHolder,String> getExtraServlets() {
+    return null;
+  }
+
+  /** Override this method to insert extra filters into the JettySolrRunners that are created using createJetty() */
+  public SortedMap<Class<? extends Filter>,String> getExtraRequestFilters() {
+    return null;
+  }
+
+  protected SolrClient createNewSolrClient(int port) {
     try {
-      // setup the server...
-      String url = "http://localhost:" + port + context;
-      CommonsHttpSolrServer s = new CommonsHttpSolrServer(url);
-      s.setConnectionTimeout(100); // 1/10th sec
-      s.setDefaultMaxConnectionsPerHost(100);
-      s.setMaxTotalConnections(100);
-      return s;
+      // setup the client...
+      HttpSolrClient client = getHttpSolrClient(buildUrl(port) + "/" + DEFAULT_TEST_CORENAME);
+      client.setConnectionTimeout(clientConnectionTimeout);
+      client.setSoTimeout(clientSoTimeout);
+      client.setDefaultMaxConnectionsPerHost(100);
+      client.setMaxTotalConnections(100);
+      return client;
     }
     catch (Exception ex) {
       throw new RuntimeException(ex);
     }
+  }
+  
+  protected String buildUrl(int port) {
+    return buildUrl(port, context);
   }
 
   protected void addFields(SolrInputDocument doc, Object... fields) {
@@ -220,8 +468,13 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
     SolrInputDocument doc = new SolrInputDocument();
     addFields(doc, fields);
     addFields(doc, "rnd_b", true);
-    addFields(doc, getRandFields(getFieldNames(), getRandValues()));
+    addRandFields(doc);
     indexDoc(doc);
+  }
+  
+  protected SolrInputDocument addRandFields(SolrInputDocument sdoc) {
+    addFields(sdoc, getRandFields(getFieldNames(), getRandValues()));
+    return sdoc;
   }
 
   protected void index(Object... fields) throws Exception {
@@ -230,12 +483,53 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
     indexDoc(doc);
   }
 
+  /**
+   * Indexes the document in both the control client, and a randomly selected client
+   */
   protected void indexDoc(SolrInputDocument doc) throws IOException, SolrServerException {
     controlClient.add(doc);
 
     int which = (doc.getField(id).toString().hashCode() & 0x7fffffff) % clients.size();
-    SolrServer client = clients.get(which);
+    SolrClient client = clients.get(which);
     client.add(doc);
+  }
+  
+  /**
+   * Indexes the document in both the control client and the specified client asserting
+   * that the respones are equivilent
+   */
+  protected UpdateResponse indexDoc(SolrClient client, SolrParams params, SolrInputDocument... sdocs) throws IOException, SolrServerException {
+    UpdateResponse controlRsp = add(controlClient, params, sdocs);
+    UpdateResponse specificRsp = add(client, params, sdocs);
+    compareSolrResponses(specificRsp, controlRsp);
+    return specificRsp;
+  }
+
+  protected UpdateResponse add(SolrClient client, SolrParams params, SolrInputDocument... sdocs) throws IOException, SolrServerException {
+    UpdateRequest ureq = new UpdateRequest();
+    ureq.setParams(new ModifiableSolrParams(params));
+    for (SolrInputDocument sdoc : sdocs) {
+      ureq.add(sdoc);
+    }
+    return ureq.process(client);
+  }
+
+  protected UpdateResponse del(SolrClient client, SolrParams params, Object... ids) throws IOException, SolrServerException {
+    UpdateRequest ureq = new UpdateRequest();
+    ureq.setParams(new ModifiableSolrParams(params));
+    for (Object id: ids) {
+      ureq.deleteById(id.toString());
+    }
+    return ureq.process(client);
+  }
+
+  protected UpdateResponse delQ(SolrClient client, SolrParams params, String... queries) throws IOException, SolrServerException {
+    UpdateRequest ureq = new UpdateRequest();
+    ureq.setParams(new ModifiableSolrParams(params));
+    for (String q: queries) {
+      ureq.deleteByQuery(q);
+    }
+    return ureq.process(client);
   }
 
   protected void index_specific(int serverNumber, Object... fields) throws Exception {
@@ -245,45 +539,76 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
     }
     controlClient.add(doc);
 
-    SolrServer client = clients.get(serverNumber);
+    SolrClient client = clients.get(serverNumber);
     client.add(doc);
   }
 
   protected void del(String q) throws Exception {
     controlClient.deleteByQuery(q);
-    for (SolrServer client : clients) {
+    for (SolrClient client : clients) {
       client.deleteByQuery(q);
     }
   }// serial commit...
 
   protected void commit() throws Exception {
     controlClient.commit();
-    for (SolrServer client : clients) client.commit();
+    for (SolrClient client : clients) {
+      client.commit();
+    }
   }
 
-  protected QueryResponse queryServer(ModifiableSolrParams params) throws SolrServerException {
+  protected QueryResponse queryServer(ModifiableSolrParams params) throws SolrServerException, IOException {
     // query a random server
     int which = r.nextInt(clients.size());
-    SolrServer client = clients.get(which);
+    SolrClient client = clients.get(which);
     QueryResponse rsp = client.query(params);
     return rsp;
   }
 
-  protected void query(Object... q) throws Exception {
+  /**
+   * Sets distributed params.
+   * Returns the QueryResponse from {@link #queryServer},
+   */
+  protected QueryResponse query(Object... q) throws Exception {
+    return query(true, q);
+  }
+
+  /**
+   * Sets distributed params.
+   * Returns the QueryResponse from {@link #queryServer},
+   */
+  protected QueryResponse query(SolrParams params) throws Exception {
+    return query(true, params);
+  }
+
+  /**
+   * Returns the QueryResponse from {@link #queryServer}  
+   */
+  protected QueryResponse query(boolean setDistribParams, Object[] q) throws Exception {
+    
     final ModifiableSolrParams params = new ModifiableSolrParams();
-    params.add("reqid",Integer.toString(random.nextInt())); // just to help correlate top-level requests w/ sub requests
 
     for (int i = 0; i < q.length; i += 2) {
       params.add(q[i].toString(), q[i + 1].toString());
     }
+    return query(setDistribParams, params);
+  }
 
-    params.add("controlClient","true"); // just to enable easier sorting through log files
+  /**
+   * Returns the QueryResponse from {@link #queryServer}  
+   */
+  protected QueryResponse query(boolean setDistribParams, SolrParams p) throws Exception {
+    
+    final ModifiableSolrParams params = new ModifiableSolrParams(p);
+
+    // TODO: look into why passing true causes fails
+    params.set("distrib", "false");
     final QueryResponse controlRsp = controlClient.query(params);
-    params.remove("controlClient");
     validateControlData(controlRsp);
 
-    // query a random server
-    params.set("shards", shards);
+    params.remove("distrib");
+    if (setDistribParams) setDistributedParams(params);
+
     QueryResponse rsp = queryServer(params);
 
     compareResponses(rsp, controlRsp);
@@ -297,13 +622,13 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
           public void run() {
             for (int j = 0; j < stress; j++) {
               int which = r.nextInt(clients.size());
-              SolrServer client = clients.get(which);
+              SolrClient client = clients.get(which);
               try {
                 QueryResponse rsp = client.query(new ModifiableSolrParams(params));
                 if (verifyStress) {
                   compareResponses(rsp, controlRsp);
                 }
-              } catch (SolrServerException e) {
+              } catch (SolrServerException | IOException e) {
                 throw new RuntimeException(e);
               }
             }
@@ -316,6 +641,24 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
         thread.join();
       }
     }
+    return rsp;
+  }
+  
+  public QueryResponse queryAndCompare(SolrParams params, SolrClient... clients) throws SolrServerException, IOException {
+    return queryAndCompare(params, Arrays.<SolrClient>asList(clients));
+  }
+  public QueryResponse queryAndCompare(SolrParams params, Iterable<SolrClient> clients) throws SolrServerException, IOException {
+    QueryResponse first = null;
+    for (SolrClient client : clients) {
+      QueryResponse rsp = client.query(new ModifiableSolrParams(params));
+      if (first == null) {
+        first = rsp;
+      } else {
+        compareResponses(first, rsp);
+      }
+    }
+
+    return first;
   }
 
   public static boolean eq(String a, String b) {
@@ -329,33 +672,48 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
   }
 
   public static String compare(NamedList a, NamedList b, int flags, Map<String, Integer> handle) {
+//    System.out.println("resp a:" + a);
+//    System.out.println("resp b:" + b);
     boolean ordered = (flags & UNORDERED) == 0;
+
+    if (!ordered) {
+      Map mapA = new HashMap(a.size());
+      for (int i=0; i<a.size(); i++) {
+        Object prev = mapA.put(a.getName(i), a.getVal(i));
+      }
+
+      Map mapB = new HashMap(b.size());
+      for (int i=0; i<b.size(); i++) {
+        Object prev = mapB.put(b.getName(i), b.getVal(i));
+      }
+
+      return compare(mapA, mapB, flags, handle);
+    }
 
     int posa = 0, posb = 0;
     int aSkipped = 0, bSkipped = 0;
 
     for (; ;) {
-      if (posa >= a.size() || posb >= b.size()) {
+      if (posa >= a.size() && posb >= b.size()) {
         break;
       }
 
-      String namea, nameb;
-      Object vala, valb = null;
+      String namea = null, nameb = null;
+      Object vala = null, valb = null;
 
-      int flagsa, flagsb;
-      for (; ;) {
+      int flagsa = 0, flagsb = 0;
+      while (posa < a.size()) {
         namea = a.getName(posa);
         vala = a.getVal(posa);
         posa++;
         flagsa = flags(handle, namea);
         if ((flagsa & SKIP) != 0) {
+          namea = null; vala = null;
           aSkipped++;
           continue;
         }
         break;
       }
-
-      if (!ordered) posb = 0;  // reset if not ordered
 
       while (posb < b.size()) {
         nameb = b.getName(posb);
@@ -363,15 +721,14 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
         posb++;
         flagsb = flags(handle, nameb);
         if ((flagsb & SKIP) != 0) {
+          nameb = null; valb = null;
           bSkipped++;
           continue;
         }
         if (eq(namea, nameb)) {
           break;
         }
-        if (ordered) {
-          return err("." + namea + "!=" + nameb + " (unordered or missing)");
-        }
+        return "." + namea + "!=" + nameb + " (unordered or missing)";
         // if unordered, continue until we find the right field.
       }
 
@@ -384,7 +741,7 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
 
 
     if (a.size() - aSkipped != b.size() - bSkipped) {
-      return err(".size()==" + a.size() + "," + b.size() + "skipped=" + aSkipped + "," + bSkipped);
+      return ".size()==" + a.size() + "," + b.size() + " skipped=" + aSkipped + "," + bSkipped;
     }
 
     return null;
@@ -398,7 +755,7 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
       int flagsa = flags(handle, keya);
       if ((flagsa & SKIP) != 0) continue;
       if (!b.containsKey(keya)) {
-        return err("[" + keya + "]==null");
+        return "[" + keya + "]==null";
       }
       if ((flagsa & SKIPVAL) != 0) continue;
       Object valb = b.get(keya);
@@ -424,13 +781,14 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
 
     String cmp;
     int f = flags(handle, "maxScore");
-    if ((f & SKIPVAL) == 0) {
+    if (f == 0) {
       cmp = compare(a.getMaxScore(), b.getMaxScore(), 0, handle);
       if (cmp != null) return ".maxScore" + cmp;
-    } else {
+    } else if ((f & SKIP) == 0) { // so we skip val but otherwise both should be present
+      assert (f & SKIPVAL) != 0;
       if (b.getMaxScore() != null) {
         if (a.getMaxScore() == null) {
-          return err(".maxScore missing");
+          return ".maxScore missing";
         }
       }
     }
@@ -476,7 +834,7 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
 
   public static String compare(Object[] a, Object[] b, int flags, Map<String, Integer> handle) {
     if (a.length != b.length) {
-      return err(".length:" + a.length + "!=" + b.length);
+      return ".length:" + a.length + "!=" + b.length;
     }
     for (int i = 0; i < a.length; i++) {
       String cmp = compare(a[i], b[i], flags, handle);
@@ -487,7 +845,7 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
 
   public static String compare(Object a, Object b, int flags, Map<String, Integer> handle) {
     if (a == b) return null;
-    if (a == null || b == null) return err(":" + a + "!=" + b);
+    if (a == null || b == null) return ":" + a + "!=" + b;
 
     if (a instanceof NamedList && b instanceof NamedList) {
       return compare((NamedList) a, (NamedList) b, flags, handle);
@@ -511,7 +869,7 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
 
     if (a instanceof byte[] && b instanceof byte[]) {
       if (!Arrays.equals((byte[]) a, (byte[]) b)) {
-        return err(":" + a + "!=" + b);
+        return ":" + a + "!=" + b;
       }
       return null;
     }
@@ -521,45 +879,170 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
 
     }
 
+    if ((flags & FUZZY) != 0) {
+      if ((a instanceof Double && b instanceof Double)) {
+        double aaa = ((Double) a).doubleValue();
+        double bbb = ((Double) b).doubleValue();
+        if (aaa == bbb || ((Double) a).isNaN() && ((Double) b).isNaN()) {
+          return null;
+        }
+        if ((aaa == 0.0) || (bbb == 0.0)) {
+            return ":" + a + "!=" + b;
+        }
+
+        double diff = Math.abs(aaa - bbb);
+        // When stats computations are done on multiple shards, there may
+        // be small differences in the results. Allow a small difference
+        // between the result of the computations.
+
+        double ratio = Math.max(Math.abs(diff / aaa), Math.abs(diff / bbb));
+        if (ratio > DOUBLE_RATIO_LIMIT) {
+          return ":" + a + "!=" + b;
+        } else {
+          return null;// close enough.
+        }
+      }
+    }
+
     if (!(a.equals(b))) {
-      return err(":" + a + "!=" + b);
+      return ":" + a + "!=" + b;
     }
 
     return null;
   }
 
-  /** This method is called for root level comparison errors and can be helpful to set a
-   * breakpoint in to debug comparison failures.
-   */
-  public static String err(String msg) {
-    return msg;
-  }
-
-  protected void compareResponses(QueryResponse a, QueryResponse b) {
-    String cmp;
-    cmp = compare(a.getResponse(), b.getResponse(), flags, handle);
+  protected void compareSolrResponses(SolrResponse a, SolrResponse b) {
+    // SOLR-3345: Checking QTime value can be skipped as there is no guarantee that the numbers will match.
+    handle.put("QTime", SKIPVAL);
+    String cmp = compare(a.getResponse(), b.getResponse(), flags, handle);
     if (cmp != null) {
-      log.info("Mismatched responses:\n" + a + "\n" + b);
+      log.error("Mismatched responses:\n" + a + "\n" + b);
       Assert.fail(cmp);
     }
   }
+  protected void compareResponses(QueryResponse a, QueryResponse b) {
+    if (System.getProperty("remove.version.field") != null) {
+      // we don't care if one has a version and the other doesnt -
+      // control vs distrib
+      // TODO: this should prob be done by adding an ignore on _version_ rather than mutating the responses?
+      if (a.getResults() != null) {
+        for (SolrDocument doc : a.getResults()) {
+          doc.removeFields("_version_");
+        }
+      }
+      if (b.getResults() != null) {
+        for (SolrDocument doc : b.getResults()) {
+          doc.removeFields("_version_");
+        }
+      }
+    }
+    compareSolrResponses(a, b);
+  }
 
-  @Test
-  public void testDistribSearch() throws Exception {
-    if (fixShardCount) {
-      createServers(shardCount);
-      RandVal.uniqueValues = new HashSet(); //reset random values
-      doTest();
-      destroyServers();
-    } else {
-      for (int nServers = 1; nServers < shardCount; nServers++) {
-        createServers(nServers);
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.METHOD)
+  public @interface ShardsRepeat {
+    public abstract int min() default 1;
+    public abstract int max() default DEFAULT_MAX_SHARD_COUNT;
+  }
+
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.METHOD)
+  public @interface ShardsFixed {
+    public abstract int num();
+  }
+
+  public class ShardsRepeatRule implements TestRule {
+
+    private abstract class ShardsStatement extends Statement {
+      abstract protected void callStatement() throws Throwable;
+
+      @Override
+      public void evaluate() throws Throwable {
+        distribSetUp();
+        if (! distribSetUpCalled) {
+          Assert.fail("One of the overrides of distribSetUp does not propagate the call.");
+        }
+        try {
+          callStatement();
+        } finally {
+          distribTearDown();
+          if (! distribTearDownCalled) {
+            Assert.fail("One of the overrides of distribTearDown does not propagate the call.");
+          }
+        }
+      }
+    }
+
+    private class ShardsFixedStatement extends ShardsStatement {
+
+      private final int numShards;
+      private final Statement statement;
+
+      private ShardsFixedStatement(int numShards, Statement statement) {
+        this.numShards = numShards;
+        this.statement = statement;
+      }
+
+      @Override
+      public void callStatement() throws Throwable {
+        fixShardCount(numShards);
+        createServers(numShards);
         RandVal.uniqueValues = new HashSet(); //reset random values
-        doTest();
-        destroyServers();
+        statement.evaluate();
+        try {
+          destroyServers();
+        } catch (Throwable t) {
+          log.error("Error while shutting down servers", t);
+        }
+      }
+    }
+
+    private class ShardsRepeatStatement extends ShardsStatement {
+
+      private final int min;
+      private final int max;
+      private final Statement statement;
+
+      private ShardsRepeatStatement(int min, int max, Statement statement) {
+        this.min = min;
+        this.max = max;
+        this.statement = statement;
+      }
+
+      @Override
+      public void callStatement() throws Throwable {
+        for (shardCount = min; shardCount <= max; shardCount++) {
+          createServers(shardCount);
+          RandVal.uniqueValues = new HashSet(); //reset random values
+          statement.evaluate();
+          destroyServers();
+        }
+      }
+    }
+
+    @Override
+    public Statement apply(Statement statement, Description description) {
+      ShardsFixed fixed = description.getAnnotation(ShardsFixed.class);
+      ShardsRepeat repeat = description.getAnnotation(ShardsRepeat.class);
+      if (fixed != null && repeat != null) {
+        throw new RuntimeException("ShardsFixed and ShardsRepeat annotations can't coexist");
+      }
+      else if (fixed != null) {
+        return new ShardsFixedStatement(fixed.num(), statement);
+      }
+      else if (repeat != null) {
+        return new ShardsRepeatStatement(repeat.min(), repeat.max(), statement);
+      }
+      else {
+        return (isShardCountFixed ? new ShardsFixedStatement(shardCount, statement) :
+          new ShardsRepeatStatement(1, DEFAULT_MAX_SHARD_COUNT, statement));
       }
     }
   }
+
+  @Rule
+  public ShardsRepeatRule repeatRule = new ShardsRepeatRule();
 
   public static Object[] getRandFields(String[] fields, RandVal[] randVals) {
     Object[] o = new Object[fields.length * 2];
@@ -573,18 +1056,15 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
   /**
    * Implementations can pre-test the control data for basic correctness before using it
    * as a check for the shard data.  This is useful, for instance, if a test bug is introduced
-   * causing a spelling index not to get built:  both control & shard data would have no results
+   * causing a spelling index not to get built:  both control &amp; shard data would have no results
    * but because they match the test would pass.  This method gives us a chance to ensure something
    * exists in the control data.
-   * 
-   * @throws Exception
    */
   public void validateControlData(QueryResponse control) throws Exception {
     /* no-op */
   }
 
   public static abstract class RandVal {
-    public static Random r = random;
     public static Set uniqueValues = new HashSet();
 
     public abstract Object val();
@@ -598,13 +1078,64 @@ public abstract class BaseDistributedSearchTestCase extends SolrTestCaseJ4 {
   }
 
   public static class RandDate extends RandVal {
-    public static TrieDateField df = new TrieDateField();
-
     @Override
     public Object val() {
       long v = r.nextLong();
       Date d = new Date(v);
-      return df.toExternal(d);
+      return d.toInstant().toString();
     }
   }
+  
+  protected String getSolrXml() {
+    return null;
+  }
+  
+  /**
+   * Given a directory that will be used as the SOLR_HOME for a jetty instance, seeds that 
+   * directory with the contents of {@link #getSolrHome} and ensures that the proper {@link #getSolrXml} 
+   * file is in place.
+   */
+  protected void seedSolrHome(File jettyHome) throws IOException {
+    FileUtils.copyDirectory(new File(getSolrHome()), jettyHome);
+    String solrxml = getSolrXml();
+    if (solrxml != null) {
+      FileUtils.copyFile(new File(getSolrHome(), solrxml), new File(jettyHome, "solr.xml"));
+    }
+  }
+
+  /**
+   * Given a directory that will be used as the <code>coreRootDirectory</code> for a jetty instance, 
+   * Creates a core directory named {@link #DEFAULT_TEST_CORENAME} using a trivial
+   * <code>core.properties</code> if this file does not already exist.
+   *
+   * @see #writeCoreProperties(Path,String)
+   * @see #CORE_PROPERTIES_FILENAME
+   */
+  private void seedCoreRootDirWithDefaultTestCore(Path coreRootDirectory) throws IOException {
+    // Kludgy and brittle with assumptions about writeCoreProperties, but i don't want to 
+    // try to change the semantics of that method to ignore existing files
+    Path coreDir = coreRootDirectory.resolve(DEFAULT_TEST_CORENAME);
+    if (Files.notExists(coreDir.resolve(CORE_PROPERTIES_FILENAME))) {
+      writeCoreProperties(coreDir, DEFAULT_TEST_CORENAME);
+    } // else nothing to do, DEFAULT_TEST_CORENAME already exists
+  }
+
+  protected void setupJettySolrHome(File jettyHome) throws IOException {
+    seedSolrHome(jettyHome);
+
+    Properties coreProperties = new Properties();
+    coreProperties.setProperty("name", "collection1");
+    coreProperties.setProperty("shard", "${shard:}");
+    coreProperties.setProperty("collection", "${collection:collection1}");
+    coreProperties.setProperty("config", "${solrconfig:solrconfig.xml}");
+    coreProperties.setProperty("schema", "${schema:schema.xml}");
+    coreProperties.setProperty("coreNodeName", "${coreNodeName:}");
+
+    writeCoreProperties(jettyHome.toPath().resolve("cores").resolve("collection1"), coreProperties, "collection1");
+
+     //   <core name="collection1" instanceDir="collection1" shard="${shard:}"
+     // collection="${collection:collection1}" config="${solrconfig:solrconfig.xml}" schema="${schema:schema.xml}"
+    //coreNodeName="${coreNodeName:}"/>
+  }
+
 }

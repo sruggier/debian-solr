@@ -1,5 +1,4 @@
-package org.apache.solr.client.solrj.request;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,22 +14,19 @@ package org.apache.solr.client.solrj.request;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.client.solrj.request;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrRequest;
-import org.apache.solr.client.solrj.SolrServer;
-import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.response.UpdateResponse;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.UpdateParams;
-
-import java.io.IOException;
 
 
 /**
  *
  *
  **/
-public abstract class AbstractUpdateRequest extends SolrRequest {
+public abstract class AbstractUpdateRequest extends SolrRequest<UpdateResponse> implements IsUpdateRequest {
   protected ModifiableSolrParams params;
   protected int commitWithin = -1;
 
@@ -48,7 +44,15 @@ public abstract class AbstractUpdateRequest extends SolrRequest {
     return setAction(action, waitFlush, waitSearcher, 1);
   }
 
+  public AbstractUpdateRequest setAction(ACTION action, boolean waitFlush, boolean waitSearcher, boolean softCommit ) {
+    return setAction(action, waitFlush, waitSearcher, softCommit, 1);
+  }
+
   public AbstractUpdateRequest setAction(ACTION action, boolean waitFlush, boolean waitSearcher, int maxSegments ) {
+    return setAction(action, waitFlush, waitSearcher, false, maxSegments);
+  }
+
+  public AbstractUpdateRequest setAction(ACTION action, boolean waitFlush, boolean waitSearcher, boolean softCommit, int maxSegments ) {
     if (params == null)
       params = new ModifiableSolrParams();
 
@@ -58,15 +62,25 @@ public abstract class AbstractUpdateRequest extends SolrRequest {
     }
     else if( action == ACTION.COMMIT ) {
       params.set( UpdateParams.COMMIT, "true" );
+      params.set( UpdateParams.SOFT_COMMIT, String.valueOf(softCommit));
     }
-    params.set( UpdateParams.WAIT_FLUSH, String.valueOf(waitFlush));
     params.set( UpdateParams.WAIT_SEARCHER, String.valueOf(waitSearcher));
     return this;
   }
 
-  public AbstractUpdateRequest setAction(ACTION action, boolean waitFlush, boolean waitSearcher, int maxSegments , boolean expungeDeletes) {
-    setAction(action, waitFlush, waitSearcher,maxSegments) ;
+  public AbstractUpdateRequest setAction(ACTION action, boolean waitFlush, boolean waitSearcher, int maxSegments , boolean softCommit, boolean expungeDeletes) {
+    setAction(action, waitFlush, waitSearcher,softCommit,maxSegments) ;
     params.set(UpdateParams.EXPUNGE_DELETES, String.valueOf(expungeDeletes));
+    return this;
+  }
+
+  public AbstractUpdateRequest setAction(ACTION action, boolean waitFlush, boolean waitSearcher, int maxSegments , boolean expungeDeletes) {
+    return setAction(action, waitFlush, waitSearcher,maxSegments,false,expungeDeletes);
+  }
+
+  public AbstractUpdateRequest setAction(ACTION action, boolean waitFlush, boolean waitSearcher, int maxSegments, boolean softCommit, boolean expungeDeletes, boolean openSearcher) {
+    setAction(action, waitFlush, waitSearcher, maxSegments, softCommit, expungeDeletes);
+    params.set(UpdateParams.OPEN_SEARCHER, String.valueOf(openSearcher));
     return this;
   }
 
@@ -98,17 +112,8 @@ public abstract class AbstractUpdateRequest extends SolrRequest {
   }
 
   @Override
-  public UpdateResponse process( SolrServer server ) throws SolrServerException, IOException
-  {
-    long startTime = System.currentTimeMillis();
-    UpdateResponse res = new UpdateResponse();
-    res.setResponse( server.request( this ) );
-    res.setElapsedTime( System.currentTimeMillis()-startTime );
-    return res;
-  }
-
-  public boolean isWaitFlush() {
-    return params != null && params.getBool(UpdateParams.WAIT_FLUSH, false);
+  protected UpdateResponse createResponse(SolrClient client) {
+    return new UpdateResponse();
   }
 
   public boolean isWaitSearcher() {
@@ -120,10 +125,6 @@ public abstract class AbstractUpdateRequest extends SolrRequest {
     if (params.getBool(UpdateParams.COMMIT, false)) return ACTION.COMMIT;
     if (params.getBool(UpdateParams.OPTIMIZE, false)) return ACTION.OPTIMIZE;
     return null;
-  }
-
-  public void setWaitFlush(boolean waitFlush) {
-    setParam( UpdateParams.WAIT_FLUSH, waitFlush+"" );
   }
 
   public void setWaitSearcher(boolean waitSearcher) {

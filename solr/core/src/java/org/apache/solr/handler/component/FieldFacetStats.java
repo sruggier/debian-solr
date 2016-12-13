@@ -1,5 +1,4 @@
-package org.apache.solr.handler.component;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,104 +14,107 @@ package org.apache.solr.handler.component;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.search.FieldCache;
-import org.apache.solr.schema.FieldType;
-
+package org.apache.solr.handler.component;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.util.BytesRef;
+import org.apache.solr.schema.SchemaField;
+import org.apache.solr.search.SolrIndexSearcher;
+
 
 /**
- * 9/10/2009 - Moved out of StatsComponent to allow open access to UnInvertedField
  * FieldFacetStats is a utility to accumulate statistics on a set of values in one field,
  * for facet values present in another field.
- * <p/>
+ * <p>
+ * 9/10/2009 - Moved out of StatsComponent to allow open access to UnInvertedField
  * @see org.apache.solr.handler.component.StatsComponent
  *
  */
 
 public class FieldFacetStats {
   public final String name;
-  final FieldCache.StringIndex si;
-  final FieldType ft;
-  final FieldType statFieldType;
-
-  final String[] terms;
-  final int[] termNum;
-
-  final int startTermIndex;
-  final int endTermIndex;
-  final int nTerms;
-
-  final int numStatsTerms;
+  final StatsField statsField;
+  final SchemaField facet_sf;
 
   public final Map<String, StatsValues> facetStatsValues;
+  private final Map<Integer, Integer> missingStats;
+  List<HashMap<String, Integer>> facetStatsTerms;
 
-  final List<HashMap<String, Integer>> facetStatsTerms;
+  final LeafReader topLevelReader;
+  LeafReaderContext leave;
+  final ValueSource valueSource;
+  LeafReaderContext context;
+  FunctionValues values;
 
-  public FieldFacetStats(String name, FieldCache.StringIndex si, FieldType facetFieldType, int numStatsTerms, FieldType statFieldType) {
-    this.name = name;
-    this.si = si;
-    this.ft = facetFieldType;
-    this.numStatsTerms = numStatsTerms;
-    this.statFieldType = statFieldType;
+  SortedDocValues topLevelSortedValues = null;
 
-    terms = si.lookup;
-    termNum = si.order;
-    startTermIndex = 1;
-    endTermIndex = terms.length;
-    nTerms = endTermIndex - startTermIndex;
+  public FieldFacetStats(SolrIndexSearcher searcher, SchemaField facet_sf, StatsField statsField) {
+    this.statsField = statsField;
+    this.facet_sf = facet_sf;
+    this.name = facet_sf.getName();
 
-    facetStatsValues = new HashMap<String, StatsValues>();
+    topLevelReader = searcher.getSlowAtomicReader();
+    valueSource = facet_sf.getType().getValueSource(facet_sf, null);
 
-    // for mv stats field, we'll want to keep track of terms
-    facetStatsTerms = new ArrayList<HashMap<String, Integer>>();
-    if (numStatsTerms == 0) return;
-    int i = 0;
-    for (; i < numStatsTerms; i++) {
-      facetStatsTerms.add(new HashMap<String, Integer>());
+    facetStatsValues = new HashMap<>();
+    facetStatsTerms = new ArrayList<>();
+    missingStats = new HashMap<>();
+  }
+
+  private StatsValues getStatsValues(String key) throws IOException {
+    StatsValues stats = facetStatsValues.get(key);
+    if (stats == null) {
+      stats = StatsValuesFactory.createStatsValues(statsField);
+      facetStatsValues.put(key, stats);
+      stats.setNextReader(context);
     }
+    return stats;
   }
 
-  String getTermText(int docID) {
-    return terms[termNum[docID]];
+  // docID is relative to the context
+  public void facet(int docID) throws IOException {
+    final String key = values.exists(docID)
+        ? values.strVal(docID)
+        : null;
+    final StatsValues stats = getStatsValues(key);
+    stats.accumulate(docID);
   }
-
-
-  public boolean facet(int docID, String v) {
-    int term = termNum[docID];
-    int arrIdx = term - startTermIndex;
-    if (arrIdx >= 0 && arrIdx < nTerms) {
-      String key = ft.indexedToReadable(terms[term]);
-      StatsValues stats = facetStatsValues.get(key);
-      if (stats == null) {
-        stats = StatsValuesFactory.createStatsValues(statFieldType);
-        facetStatsValues.put(key, stats);
-      }
-      if (v != null) {
-        stats.accumulate(v);
-      } else {
-        stats.missing();
-        return false;
-      }
-      return true;
-    }
-    return false;
-  }
-
 
   // Function to keep track of facet counts for term number.
   // Currently only used by UnInvertedField stats
-  public boolean facetTermNum(int docID, int statsTermNum) {
-
-    int term = termNum[docID];
-    int arrIdx = term - startTermIndex;
-    if (arrIdx >= 0 && arrIdx < nTerms) {
-      String key = ft.indexedToReadable(terms[term]);
-      HashMap<String, Integer> statsTermCounts = facetStatsTerms.get(statsTermNum);
+  public boolean facetTermNum(int docID, int statsTermNum) throws IOException {
+    if (topLevelSortedValues == null) {
+      topLevelSortedValues = DocValues.getSorted(topLevelReader, name);
+    }
+ 
+    
+    int term = topLevelSortedValues.getOrd(docID);
+    
+    int arrIdx = term;
+    if (arrIdx >= 0 && arrIdx < topLevelSortedValues.getValueCount()) {
+      final String key;
+      if (term == -1) {
+        key = null;
+      } else {
+        key = topLevelSortedValues.lookupOrd(term).utf8ToString();
+      }
+      while (facetStatsTerms.size() <= statsTermNum) {
+        facetStatsTerms.add(new HashMap<String, Integer>());
+      }
+      
+      
+      final Map<String, Integer> statsTermCounts = facetStatsTerms.get(statsTermNum);
       Integer statsTermCount = statsTermCounts.get(key);
       if (statsTermCount == null) {
         statsTermCounts.put(key, 1);
@@ -121,19 +123,22 @@ public class FieldFacetStats {
       }
       return true;
     }
+    
     return false;
   }
 
 
   //function to accumulate counts for statsTermNum to specified value
-  public boolean accumulateTermNum(int statsTermNum, String value) {
+  public boolean accumulateTermNum(int statsTermNum, BytesRef value) throws IOException {
     if (value == null) return false;
-    for (Map.Entry<String, Integer> stringIntegerEntry : facetStatsTerms.get(statsTermNum).entrySet()) {
-      Map.Entry pairs = (Map.Entry) stringIntegerEntry;
+    while (facetStatsTerms.size() <= statsTermNum) {
+      facetStatsTerms.add(new HashMap<String, Integer>());
+    }
+    for (Map.Entry<String, Integer> pairs : facetStatsTerms.get(statsTermNum).entrySet()) {
       String key = (String) pairs.getKey();
       StatsValues facetStats = facetStatsValues.get(key);
       if (facetStats == null) {
-        facetStats = StatsValuesFactory.createStatsValues(statFieldType);
+        facetStats = StatsValuesFactory.createStatsValues(statsField);
         facetStatsValues.put(key, facetStats);
       }
       Integer count = (Integer) pairs.getValue();
@@ -144,6 +149,43 @@ public class FieldFacetStats {
     return true;
   }
 
+  public void setNextReader(LeafReaderContext ctx) throws IOException {
+    this.context = ctx;
+    values = valueSource.getValues(Collections.emptyMap(), ctx);
+    for (StatsValues stats : facetStatsValues.values()) {
+      stats.setNextReader(ctx);
+    }
+  }
+
+  public void facetMissingNum(int docID) throws IOException {
+    if (topLevelSortedValues == null) {
+      topLevelSortedValues = DocValues.getSorted(topLevelReader, name);
+    }
+    
+    int ord = topLevelSortedValues.getOrd(docID);
+    if (ord != -1) {
+      Integer missingCount = missingStats.get(ord);
+      if (missingCount == null) {
+        missingStats.put(ord, 1);
+      } else {
+        missingStats.put(ord, missingCount + 1);
+      }
+    }
+  }
+  
+  public void accumulateMissing() throws IOException {
+    StatsValues statsValue;
+    
+    for (Map.Entry<Integer, Integer> entry : missingStats.entrySet()) {
+      if (entry.getKey() >= 0) {
+        String key = topLevelSortedValues.lookupOrd(entry.getKey()).utf8ToString();
+        if ((statsValue = facetStatsValues.get(key)) != null) {
+          statsValue.addMissing(entry.getValue());
+        }
+      }
+    }
+    return;
+  }
 }
 
 

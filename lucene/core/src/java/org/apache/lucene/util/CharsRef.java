@@ -1,8 +1,4 @@
-package org.apache.lucene.util;
-
-import java.util.Comparator;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -18,6 +14,11 @@ import java.util.Comparator;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
+
+import java.util.Arrays;
+import java.util.Comparator;
 
 /**
  * Represents char[], as a slice (offset + length) into an existing char[].
@@ -26,9 +27,13 @@ import java.util.Comparator;
  * @lucene.internal
  */
 public final class CharsRef implements Comparable<CharsRef>, CharSequence, Cloneable {
+  /** An empty character array for convenience */
   public static final char[] EMPTY_CHARS = new char[0];
+  /** The contents of the CharsRef. Should never be {@code null}. */
   public char[] chars;
+  /** Offset of first valid character. */
   public int offset;
+  /** Length of used characters. */
   public int length;
 
   /**
@@ -51,13 +56,10 @@ public final class CharsRef implements Comparable<CharsRef>, CharSequence, Clone
    * length
    */
   public CharsRef(char[] chars, int offset, int length) {
-    assert chars != null;
-    assert offset >= 0;
-    assert length >= 0;
-    assert chars.length >= offset + length;
     this.chars = chars;
     this.offset = offset;
     this.length = length;
+    assert isValid();
   }
 
   /**
@@ -70,6 +72,13 @@ public final class CharsRef implements Comparable<CharsRef>, CharSequence, Clone
     this.length = chars.length;
   }
 
+  /**
+   * Returns a shallow clone of this instance (the underlying characters are
+   * <b>not</b> copied and will be shared by both the returned object and this
+   * object.
+   * 
+   * @see #deepCopyOf
+   */  
   @Override
   public CharsRef clone() {
     return new CharsRef(chars, offset, length);
@@ -114,6 +123,7 @@ public final class CharsRef implements Comparable<CharsRef>, CharSequence, Clone
   }
 
   /** Signed int order comparison */
+  @Override
   public int compareTo(CharsRef other) {
     if (this == other)
       return 0;
@@ -138,65 +148,18 @@ public final class CharsRef implements Comparable<CharsRef>, CharSequence, Clone
     // One is a prefix of the other, or, they are equal:
     return this.length - other.length;
   }
-  
-  /**
-   * Copies the given {@link CharsRef} referenced content into this instance.
-   * 
-   * @param other
-   *          the {@link CharsRef} to copy
-   */
-  public void copyChars(CharsRef other) {
-    copyChars(other.chars, other.offset, other.length);
-  }
-
-  /** 
-   * Used to grow the reference array. 
-   * 
-   * In general this should not be used as it does not take the offset into account.
-   * @lucene.internal */
-  public void grow(int newLength) {
-    assert offset == 0;
-    if (chars.length < newLength) {
-      chars = ArrayUtil.grow(chars, newLength);
-    }
-  }
-
-  /**
-   * Copies the given array into this CharsRef.
-   */
-  public void copyChars(char[] otherChars, int otherOffset, int otherLength) {
-    if (chars.length - offset < otherLength) {
-      chars = new char[otherLength];
-      offset = 0;
-    }
-    System.arraycopy(otherChars, otherOffset, chars, offset, otherLength);
-    length = otherLength;
-  }
-
-  /**
-   * Appends the given array to this CharsRef
-   */
-  public void append(char[] otherChars, int otherOffset, int otherLength) {
-    int newLen = length + otherLength;
-    if (chars.length - offset < newLen) {
-      char[] newChars = new char[newLen];
-      System.arraycopy(chars, offset, newChars, 0, length);
-      offset = 0;
-      chars = newChars;
-    }
-    System.arraycopy(otherChars, otherOffset, chars, length+offset, otherLength);
-    length = newLen;
-  }
 
   @Override
   public String toString() {
     return new String(chars, offset, length);
   }
 
+  @Override
   public int length() {
     return length;
   }
 
+  @Override
   public char charAt(int index) {
     // NOTE: must do a real check here to meet the specs of CharSequence
     if (index < 0 || index >= length) {
@@ -205,24 +168,32 @@ public final class CharsRef implements Comparable<CharsRef>, CharSequence, Clone
     return chars[offset + index];
   }
 
+  @Override
   public CharSequence subSequence(int start, int end) {
     // NOTE: must do a real check here to meet the specs of CharSequence
     if (start < 0 || end > length || start > end) {
       throw new IndexOutOfBoundsException();
     }
-    return new CharsRef(chars, offset + start, offset + end);
+    return new CharsRef(chars, offset + start, end - start);
   }
   
+  /** @deprecated This comparator is only a transition mechanism */
+  @Deprecated
   private final static Comparator<CharsRef> utf16SortedAsUTF8SortOrder = new UTF16SortedAsUTF8Comparator();
   
+  /** @deprecated This comparator is only a transition mechanism */
+  @Deprecated
   public static Comparator<CharsRef> getUTF16SortedAsUTF8Comparator() {
     return utf16SortedAsUTF8SortOrder;
   }
   
+  /** @deprecated This comparator is only a transition mechanism */
+  @Deprecated
   private static class UTF16SortedAsUTF8Comparator implements Comparator<CharsRef> {
     // Only singleton
     private UTF16SortedAsUTF8Comparator() {};
 
+    @Override
     public int compare(CharsRef a, CharsRef b) {
       if (a == b)
         return 0;
@@ -273,8 +244,35 @@ public final class CharsRef implements Comparable<CharsRef>, CharSequence, Clone
    * and an offset of zero.
    */
   public static CharsRef deepCopyOf(CharsRef other) {
-    CharsRef clone = new CharsRef();
-    clone.copyChars(other);
-    return clone;
+    return new CharsRef(Arrays.copyOfRange(other.chars, other.offset, other.offset + other.length), 0, other.length);
+  }
+  
+  /** 
+   * Performs internal consistency checks.
+   * Always returns true (or throws IllegalStateException) 
+   */
+  public boolean isValid() {
+    if (chars == null) {
+      throw new IllegalStateException("chars is null");
+    }
+    if (length < 0) {
+      throw new IllegalStateException("length is negative: " + length);
+    }
+    if (length > chars.length) {
+      throw new IllegalStateException("length is out of bounds: " + length + ",chars.length=" + chars.length);
+    }
+    if (offset < 0) {
+      throw new IllegalStateException("offset is negative: " + offset);
+    }
+    if (offset > chars.length) {
+      throw new IllegalStateException("offset out of bounds: " + offset + ",chars.length=" + chars.length);
+    }
+    if (offset + length < 0) {
+      throw new IllegalStateException("offset+length is negative: offset=" + offset + ",length=" + length);
+    }
+    if (offset + length > chars.length) {
+      throw new IllegalStateException("offset+length out of bounds: offset=" + offset + ",length=" + length + ",chars.length=" + chars.length);
+    }
+    return true;
   }
 }

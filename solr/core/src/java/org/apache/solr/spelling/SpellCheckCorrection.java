@@ -1,5 +1,4 @@
-package org.apache.solr.spelling;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,36 +14,45 @@ package org.apache.solr.spelling;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.spelling;
 import org.apache.lucene.analysis.Token;
 
 public class SpellCheckCorrection {
-	private Token original;
-	private String correction;
-	private int numberOfOccurences;
+  private Token original;
+  private String originalAsString = null;
+  private String correction;
+  private int numberOfOccurences;
 
-	public Token getOriginal() {
-		return original;
-	}
+  public Token getOriginal() {
+    return original;
+  }
+  
+  public String getOriginalAsString() {
+    if (originalAsString == null && original != null) {
+      originalAsString = original.toString();
+    }
+    return originalAsString;
+  }
 
-	public void setOriginal(Token original) {
-		this.original = original;
-	}
+  public void setOriginal(Token original) {
+    this.original = original;
+    this.originalAsString = null;
+  }
 
-	public String getCorrection() {
-		return correction;
-	}
+  public String getCorrection() {
+    return correction;
+  }
 
-	public void setCorrection(String correction) {
-		this.correction = correction;
-	}
+  public void setCorrection(String correction) {
+    this.correction = correction;
+  }
 
-	public int getNumberOfOccurences() {
-		return numberOfOccurences;
-	}
+  public int getNumberOfOccurences() {
+    return numberOfOccurences;
+  }
 
-	public void setNumberOfOccurences(int numberOfOccurences) {
-		this.numberOfOccurences = numberOfOccurences;
-	}
+  public void setNumberOfOccurences(int numberOfOccurences) {
+    this.numberOfOccurences = numberOfOccurences;
+  }
 
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,134 +14,118 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.schema;
 
-import java.util.regex.Pattern;
-import java.util.LinkedList;
-import java.util.List;
+import org.apache.solr.core.AbstractBadConfigTestBase;
 
-import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.common.SolrException;
-import org.apache.solr.common.SolrException.ErrorCode;
-import org.apache.solr.core.SolrConfig;
-
-import org.apache.solr.search.SolrIndexSearcher;
-import org.junit.Test;
-
-/**
- */
-public class BadIndexSchemaTest extends SolrTestCaseJ4 {
+public class BadIndexSchemaTest extends AbstractBadConfigTestBase {
 
   private void doTest(final String schema, final String errString) 
     throws Exception {
-
-    ignoreException(Pattern.quote(errString));
-    try {
-      initCore( "solrconfig.xml", schema );
-    } catch (SolrException e) {
-      // short circuit out if we found what we expected
-      if (-1 != e.getMessage().indexOf(errString)) return;
-      // Test the cause too in case the expected error is wrapped
-      if (-1 != e.getCause().getMessage().indexOf(errString)) return;
-
-      // otherwise, rethrow it, possibly completley unrelated
-      throw new SolrException
-        (ErrorCode.SERVER_ERROR, 
-         "Unexpected error, expected error matching: " + errString, e);
-    } finally {
-      SolrConfig.severeErrors.clear();
-    }
-    fail("Did not encounter any exception from: " + schema);
+    assertConfigs("solrconfig-basic.xml", schema, errString);
   }
 
-  @Test
   public void testSevereErrorsForInvalidFieldOptions() throws Exception {
     doTest("bad-schema-not-indexed-but-norms.xml", "bad_field");
     doTest("bad-schema-not-indexed-but-tf.xml", "bad_field");
     doTest("bad-schema-not-indexed-but-pos.xml", "bad_field");
     doTest("bad-schema-omit-tf-but-not-pos.xml", "bad_field");
   }
-  
-  private Throwable findErrorWithSubstring( List<Throwable> err, String v )
-  {
-    for( Throwable t : err ) {
-      if( t.getMessage().indexOf( v ) > -1 ) {
-        return t;
-      }
-    }
-    return null;
+
+  public void testSevereErrorsForDuplicateFields() throws Exception {
+    doTest("bad-schema-dup-field.xml", "fAgain");
   }
 
-  @Test
-  public void testSevereErrors() throws Exception {
-    final String bad_type = "StrField (bad_type)";
-    try {
-      initCore( "solrconfig.xml", "bad-schema.xml" );
-
-      ignoreException("_twice");
-      ignoreException("ftAgain");
-      ignoreException("fAgain");
-      ignoreException(Pattern.quote(bad_type));
-
-      for( Throwable t : SolrConfig.severeErrors ) {
-        log.info( "got ex:"+t.getMessage() );
-      }
-
-      assertEquals( 4, SolrConfig.severeErrors.size() );
-
-      List<Throwable> err = new LinkedList<Throwable>();
-      err.addAll( SolrConfig.severeErrors );
-
-      Throwable t = findErrorWithSubstring( err, "*_twice" );
-      assertNotNull( t );
-      err.remove( t );
-
-      t = findErrorWithSubstring( err, "ftAgain" );
-      assertNotNull( t );
-      err.remove( t );
-
-      t = findErrorWithSubstring( err, "fAgain" );
-      assertNotNull( t );
-      err.remove( t );
-
-      t = findErrorWithSubstring( err, bad_type );
-      assertNotNull( t );
-      err.remove( t );
-
-      // make sure that's all of them
-      assertTrue( err.isEmpty() );
-    } finally {
-      SolrConfig.severeErrors.clear();
-      deleteCore();
-    }
+  public void testSevereErrorsForDuplicateDynamicField() throws Exception {
+    doTest("bad-schema-dup-dynamicField.xml", "_twice");
+  }
+  public void testSevereErrorsForUnsupportedAttributesOnDynamicField() throws Exception {
+    doTest("bad-schema-dynamicfield-default-val.xml", "default");
+    doTest("bad-schema-dynamicfield-required.xml", "required");
   }
 
-  @Test
+  public void testSevereErrorsForDuplicateFieldType() throws Exception {
+    doTest("bad-schema-dup-fieldType.xml", "ftAgain");
+  }
+
+  public void testSevereErrorsForUnexpectedAnalyzer() throws Exception {
+    doTest("bad-schema-nontext-analyzer.xml", "StrField (bad_type)");
+    doTest("bad-schema-analyzer-class-and-nested.xml", "bad_type");
+  }
+
   public void testBadExternalFileField() throws Exception {
-    try {
-      initCore( "solrconfig.xml", "bad-schema-external-filefield.xml" );
-
-      ignoreException("Only float and pfloat");
-
-      for( Throwable t : SolrConfig.severeErrors ) {
-        log.info( "got ex:"+t.getMessage() );
-      }
-
-      assertEquals( 1, SolrConfig.severeErrors.size() );
-
-      List<Throwable> err = new LinkedList<Throwable>();
-      err.addAll( SolrConfig.severeErrors );
-
-      Throwable t = findErrorWithSubstring( err, "Only float and pfloat" );
-      assertNotNull( t );
-      err.remove( t );
-
-      // make sure thats all of them
-      assertTrue( err.isEmpty() );
-    } finally {
-      SolrConfig.severeErrors.clear();
-      deleteCore();
-    }
+    doTest("bad-schema-external-filefield.xml",
+           "Only float (TrieFloatField) is currently supported as external field type.");
   }
+
+  public void testUniqueKeyRules() throws Exception {
+    doTest("bad-schema-uniquekey-is-copyfield-dest.xml", 
+           "can not be the dest of a copyField");
+    doTest("bad-schema-uniquekey-uses-default.xml", 
+           "can not be configured with a default value");
+    doTest("bad-schema-uniquekey-multivalued.xml", 
+           "can not be configured to be multivalued");
+  }
+
+  public void testMultivaluedCurrency() throws Exception {
+    doTest("bad-schema-currency-ft-multivalued.xml", 
+           "types can not be multiValued: currency");
+    doTest("bad-schema-currency-multivalued.xml", 
+           "Fields can not be multiValued: money");
+    doTest("bad-schema-currency-dynamic-multivalued.xml", 
+           "Fields can not be multiValued: *_c");
+  }
+
+  public void testCurrencyOERNoRates() throws Exception {
+    doTest("bad-schema-currency-ft-oer-norates.xml", 
+           "ratesFileLocation");
+  }
+
+  public void testCurrencyBogusCode() throws Exception {
+    doTest("bad-schema-currency-ft-bogus-default-code.xml", 
+           "HOSS");
+    doTest("bad-schema-currency-ft-bogus-code-in-xml.xml", 
+           "HOSS");
+  }
+
+  public void testPerFieldtypeSimButNoSchemaSimFactory() throws Exception {
+    doTest("bad-schema-sim-global-vs-ft-mismatch.xml", "global similarity does not support it");
+  }
+  
+  public void testPerFieldtypePostingsFormatButNoSchemaCodecFactory() throws Exception {
+    doTest("bad-schema-codec-global-vs-ft-mismatch.xml", "codec does not support");
+  }
+
+  public void testDocValuesUnsupported() throws Exception {
+    doTest("bad-schema-unsupported-docValues.xml", "does not support doc values");
+  }
+
+  public void testSweetSpotSimBadConfig() throws Exception {
+    doTest("bad-schema-sweetspot-both-tf.xml", "Can not mix");
+    doTest("bad-schema-sweetspot-partial-baseline.xml", 
+           "Overriding default baselineTf");
+    doTest("bad-schema-sweetspot-partial-hyperbolic.xml", 
+           "Overriding default hyperbolicTf");
+    doTest("bad-schema-sweetspot-partial-norms.xml", 
+           "Overriding default lengthNorm");
+  }
+  
+  public void testBogusParameters() throws Exception {
+    doTest("bad-schema-bogus-field-parameters.xml", "Invalid field property");
+  }
+  
+  public void testBogusAnalysisParameters() throws Exception {
+    doTest("bad-schema-bogus-analysis-parameters.xml", "Unknown parameters");
+  }
+
+  public void testSimDefaultFieldTypeHasNoExplicitSim() throws Exception {
+    doTest("bad-schema-sim-default-has-no-explicit-sim.xml",
+           "ft-has-no-sim");
+  }
+  
+  public void testSimDefaultFieldTypeDoesNotExist() throws Exception {
+    doTest("bad-schema-sim-default-does-not-exist.xml",
+           "ft-does-not-exist");
+  }
+  
 }

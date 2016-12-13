@@ -17,10 +17,16 @@
    under the License.    
 -->
 <ivy-module version="2.0">
-    <info organisation="org.apache.solr" module="dataimporthandler"/>
-    <dependencies>
-      <dependency org="javax.activation" name="activation" rev="1.1" transitive="false"/>
-      <dependency org="javax.mail" name="mail" rev="1.4.1" transitive="false"/>
-      <exclude org="*" ext="*" matcher="regexp" type="${ivy.exclude.types}"/> 
-    </dependencies>
+  <info organisation="org.apache.solr" module="dataimporthandler"/>
+  <configurations defaultconfmapping="compile->master;test->master">
+    <conf name="compile" transitive="false"/> <!-- keep unused 'compile' configuration to allow build to succeed -->
+    <conf name="test" transitive="false"/>
+  </configurations>
+  <dependencies>
+    <dependency org="hsqldb" name="hsqldb" rev="${/hsqldb/hsqldb}" conf="test"/>
+    <dependency org="org.apache.derby" name="derby" rev="${/org.apache.derby/derby}" conf="test"/>
+    <dependency org="org.easymock" name="easymock" rev="${/org.easymock/easymock}" conf="test"/>
+
+    <exclude org="*" ext="*" matcher="regexp" type="${ivy.exclude.types}"/> 
+  </dependencies>
 </ivy-module>

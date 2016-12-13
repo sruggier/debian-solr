@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,23 +14,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.request;
 
-import org.apache.solr.core.SolrCore;
+import java.io.Closeable;
+import java.lang.invoke.MethodHandles;
+import java.util.Date;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.TimeZone;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.util.ExecutorUtil;
 import org.apache.solr.handler.component.ResponseBuilder;
 import org.apache.solr.response.SolrQueryResponse;
-
-import java.util.Date;
+import org.apache.solr.util.TimeZoneUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public class SolrRequestInfo {
-  protected final static ThreadLocal<SolrRequestInfo> threadLocal = new ThreadLocal<SolrRequestInfo>();
+  protected final static ThreadLocal<SolrRequestInfo> threadLocal = new ThreadLocal<>();
 
   protected SolrQueryRequest req;
   protected SolrQueryResponse rsp;
   protected Date now;
+  protected TimeZone tz;
   protected ResponseBuilder rb;
+  protected List<Closeable> closeHooks;
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   public static SolrRequestInfo getRequestInfo() {
     return threadLocal.get();
@@ -40,7 +54,8 @@ public class SolrRequestInfo {
     // TODO: temporary sanity check... this can be changed to just an assert in the future
     SolrRequestInfo prev = threadLocal.get();
     if (prev != null) {
-      SolrCore.log.error("Previous SolrRequestInfo was not closed!  req=" + prev.req.getOriginalParams().toString());  
+      log.error("Previous SolrRequestInfo was not closed!  req=" + prev.req.getOriginalParams().toString());
+      log.error("prev == info : {}", prev.req == info.req);
     }
     assert prev == null;
 
@@ -48,7 +63,20 @@ public class SolrRequestInfo {
   }
 
   public static void clearRequestInfo() {
-    threadLocal.remove();
+    try {
+      SolrRequestInfo info = threadLocal.get();
+      if (info != null && info.closeHooks != null) {
+        for (Closeable hook : info.closeHooks) {
+          try {
+            hook.close();
+          } catch (Exception e) {
+            SolrException.log(log, "Exception during close hook", e);
+          }
+        }
+      }
+    } finally {
+      threadLocal.remove();
+    }
   }
 
   public SolrRequestInfo(SolrQueryRequest req, SolrQueryResponse rsp) {
@@ -60,7 +88,7 @@ public class SolrRequestInfo {
     if (now != null) return now;
 
     long ms = 0;
-    String nowStr = req.getParams().get("NOW");
+    String nowStr = req.getParams().get(CommonParams.NOW);
 
     if (nowStr != null) {
       ms = Long.parseLong(nowStr);
@@ -70,6 +98,22 @@ public class SolrRequestInfo {
 
     now = new Date(ms);
     return now;
+  }
+
+  /** The TimeZone specified by the request, or null if none was specified */
+  public TimeZone getClientTimeZone() {    
+
+    if (tz == null)  {
+      String tzStr = req.getParams().get(CommonParams.TZ);
+      if (tzStr != null) {
+        tz = TimeZoneUtils.getTimeZone(tzStr);
+        if (null == tz) {
+          throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+                                  "Solr JVM does not support TZ: " + tzStr);
+        }
+      } 
+    }
+    return tz;
   }
 
   public SolrQueryRequest getReq() {
@@ -87,5 +131,39 @@ public class SolrRequestInfo {
 
   public void setResponseBuilder(ResponseBuilder rb) {
     this.rb = rb;
+  }
+
+  public void addCloseHook(Closeable hook) {
+    // is this better here, or on SolrQueryRequest?
+    synchronized (this) {
+      if (closeHooks == null) {
+        closeHooks = new LinkedList<>();
+      }
+      closeHooks.add(hook);
+    }
+  }
+
+  public static ExecutorUtil.InheritableThreadLocalProvider getInheritableThreadLocalProvider() {
+    return new ExecutorUtil.InheritableThreadLocalProvider() {
+      @Override
+      public void store(AtomicReference ctx) {
+        SolrRequestInfo me = SolrRequestInfo.getRequestInfo();
+        if (me != null) ctx.set(me);
+      }
+
+      @Override
+      public void set(AtomicReference ctx) {
+        SolrRequestInfo me = (SolrRequestInfo) ctx.get();
+        if (me != null) {
+          ctx.set(null);
+          SolrRequestInfo.setRequestInfo(me);
+        }
+      }
+
+      @Override
+      public void clean(AtomicReference ctx) {
+        SolrRequestInfo.clearRequestInfo();
+      }
+    };
   }
 }

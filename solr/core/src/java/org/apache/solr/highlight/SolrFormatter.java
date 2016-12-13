@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.highlight;
 
 import org.apache.lucene.search.highlight.Formatter;
@@ -30,6 +29,7 @@ public interface SolrFormatter extends SolrInfoMBean, NamedListInitializedPlugin
    * may be specified when declaring a request handler in
    * solrconfig.xml
    */
+  @Override
   public void init(NamedList args);
 
   /**
@@ -37,7 +37,7 @@ public interface SolrFormatter extends SolrInfoMBean, NamedListInitializedPlugin
    * 
    * @param fieldName The name of the field
    * @param params The params controlling Highlighting
-   * @return An appropriate {@link org.apache.lucene.search.highlight.Formatter}.
+   * @return An appropriate {@link org.apache.lucene.search.highlight.Formatter}
    */
   public Formatter getFormatter(String fieldName, SolrParams params );
 }

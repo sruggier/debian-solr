@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,34 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.lucene.analysis;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 
+import org.apache.lucene.analysis.CharArrayMap;
+import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.util.LuceneTestCase;
 
 public class TestCharArrayMap extends LuceneTestCase {
-
   public void doRandom(int iter, boolean ignoreCase) {
-    CharArrayMap<Integer> map = new CharArrayMap<Integer>(TEST_VERSION_CURRENT, 1, ignoreCase);
-    HashMap<String,Integer> hmap = new HashMap<String,Integer>();
+    CharArrayMap<Integer> map = new CharArrayMap<>(1, ignoreCase);
+    HashMap<String,Integer> hmap = new HashMap<>();
 
     char[] key;
     for (int i=0; i<iter; i++) {
-      int len = random.nextInt(5);
+      int len = random().nextInt(5);
       key = new char[len];
       for (int j=0; j<key.length; j++) {
-        key[j] = (char)random.nextInt(127);
+        key[j] = (char)random().nextInt(127);
       }
       String keyStr = new String(key);
-      String hmapKey = ignoreCase ? keyStr.toLowerCase(Locale.ENGLISH) : keyStr; 
+      String hmapKey = ignoreCase ? keyStr.toLowerCase(Locale.ROOT) : keyStr; 
 
-      int val = random.nextInt();
+      int val = random().nextInt();
 
       Object o1 = map.put(key, val);
       Object o2 = hmap.put(hmapKey,val);
@@ -67,8 +63,8 @@ public class TestCharArrayMap extends LuceneTestCase {
   }
 
   public void testMethods() {
-    CharArrayMap<Integer> cm = new CharArrayMap<Integer>(TEST_VERSION_CURRENT, 2, false);
-    HashMap<String,Integer> hm = new HashMap<String,Integer>();
+    CharArrayMap<Integer> cm = new CharArrayMap<>(2, false);
+    HashMap<String,Integer> hm = new HashMap<>();
     hm.put("foo",1);
     hm.put("bar",2);
     cm.putAll(hm);
@@ -91,12 +87,11 @@ public class TestCharArrayMap extends LuceneTestCase {
     cs.clear();
     assertEquals(0, cs.size());
     assertEquals(0, cm.size());
-    try {
+    // keySet() should not allow adding new keys
+    expectThrows(UnsupportedOperationException.class, () -> {
       cs.add("test");
-      fail("keySet() allows adding new keys");
-    } catch (UnsupportedOperationException ue) {
-      // pass
-    }
+    });
+
     cm.putAll(hm);
     assertEquals(hm.size(), cs.size());
     assertEquals(cm.size(), cs.size());
@@ -135,8 +130,9 @@ public class TestCharArrayMap extends LuceneTestCase {
     assertTrue(cm.isEmpty());
   }
 
+  // TODO: break this up into simpler test methods vs. "telling a story"
   public void testModifyOnUnmodifiable(){
-    CharArrayMap<Integer> map = new CharArrayMap<Integer>(TEST_VERSION_CURRENT, 2, false);
+    CharArrayMap<Integer> map = new CharArrayMap<>(2, false);
     map.put("foo",1);
     map.put("bar",2);
     final int size = map.size();
@@ -233,7 +229,7 @@ public class TestCharArrayMap extends LuceneTestCase {
   }
   
   public void testToString() {
-    CharArrayMap<Integer> cm = new CharArrayMap<Integer>(TEST_VERSION_CURRENT, Collections.singletonMap("test",1), false);
+    CharArrayMap<Integer> cm = new CharArrayMap<>(Collections.singletonMap("test",1), false);
     assertEquals("[test]",cm.keySet().toString());
     assertEquals("[1]",cm.values().toString());
     assertEquals("[test=1]",cm.entrySet().toString());

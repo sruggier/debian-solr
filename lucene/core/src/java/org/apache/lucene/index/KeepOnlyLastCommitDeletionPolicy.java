@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.util.List;
 
@@ -26,11 +26,16 @@ import java.util.List;
  * the default deletion policy.
  */
 
-public final class KeepOnlyLastCommitDeletionPolicy implements IndexDeletionPolicy {
+public final class KeepOnlyLastCommitDeletionPolicy extends IndexDeletionPolicy {
+
+  /** Sole constructor. */
+  public KeepOnlyLastCommitDeletionPolicy() {
+  }
 
   /**
    * Deletes all commits except the most recent one.
    */
+  @Override
   public void onInit(List<? extends IndexCommit> commits) {
     // Note that commits.size() should normally be 1:
     onCommit(commits);
@@ -39,6 +44,7 @@ public final class KeepOnlyLastCommitDeletionPolicy implements IndexDeletionPoli
   /**
    * Deletes all commits except the most recent one.
    */
+  @Override
   public void onCommit(List<? extends IndexCommit> commits) {
     // Note that commits.size() should normally be 2 (if not
     // called by onInit above):

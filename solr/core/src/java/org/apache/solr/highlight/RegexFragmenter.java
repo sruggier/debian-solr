@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -63,6 +63,7 @@ public class RegexFragmenter extends HighlightingPluginBase implements SolrFragm
     defaultPattern = Pattern.compile(defaultPatternRaw);
   }
 
+  @Override
   public Fragmenter getFragmenter(String fieldName, SolrParams params )
   { 
     numRequests++;
@@ -91,21 +92,6 @@ public class RegexFragmenter extends HighlightingPluginBase implements SolrFragm
   @Override
   public String getDescription() {
     return "RegexFragmenter (" + defaultPatternRaw + ")";
-  }
-
-  @Override
-  public String getVersion() {
-      return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 }
 
@@ -197,6 +183,7 @@ class LuceneRegexFragmenter implements Fragmenter
   /* (non-Javadoc)
    * @see org.apache.lucene.search.highlight.TextFragmenter#start(java.lang.String)
    */
+  @Override
   public void start(String originalText, TokenStream tokenStream) {
     currentNumFrags = 1;
     currentOffset = 0;
@@ -211,7 +198,7 @@ class LuceneRegexFragmenter implements Fragmenter
 
   protected void addHotSpots(String text) {
     //System.out.println("hot spotting");
-    ArrayList<Integer> temphs = new ArrayList<Integer>(
+    ArrayList<Integer> temphs = new ArrayList<>(
                               text.length() / targetFragChars);
     Matcher match = textRE.matcher(text);
     int cur = 0;
@@ -237,6 +224,7 @@ class LuceneRegexFragmenter implements Fragmenter
   /* (non-Javadoc)
    * @see org.apache.lucene.search.highlight.TextFragmenter#isNewFragment(org.apache.lucene.analysis.Token)
    */
+  @Override
   public boolean isNewFragment()
   {
     boolean isNewFrag = false;

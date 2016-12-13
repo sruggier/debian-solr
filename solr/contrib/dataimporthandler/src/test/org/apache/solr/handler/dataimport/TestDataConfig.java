@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +16,7 @@
  */
 package org.apache.solr.handler.dataimport;
 
+import org.apache.solr.handler.dataimport.config.DIHConfiguration;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.w3c.dom.Document;
@@ -31,7 +32,7 @@ import java.util.List;
  * Test for DataConfig
  * </p>
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TestDataConfig extends AbstractDataImportHandlerTestCase {
@@ -57,10 +58,9 @@ public class TestDataConfig extends AbstractDataImportHandlerTestCase {
     javax.xml.parsers.DocumentBuilder builder = DocumentBuilderFactory
             .newInstance().newDocumentBuilder();
     Document doc = builder.parse(new InputSource(new StringReader(xml)));
-
-    DataConfig dc = new DataConfig();
-    dc.readFromXml(doc.getDocumentElement());
-    assertEquals("atrimlisting", dc.document.entities.get(0).name);
+    DataImporter di = new DataImporter();
+    DIHConfiguration dc = di.readFromXml(doc);
+    assertEquals("atrimlisting", dc.getEntities().get(0).getName());
   }
 
   private static final String xml = "<dataConfig>\n"

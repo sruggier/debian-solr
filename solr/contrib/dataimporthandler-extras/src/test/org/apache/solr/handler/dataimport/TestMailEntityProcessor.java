@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,6 +17,7 @@
 package org.apache.solr.handler.dataimport;
 
 import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.handler.dataimport.config.Entity;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -40,7 +41,7 @@ import java.util.Map;
  *
  * TODO: Find a way to make the tests actually test code
  *
- * @version $Id$
+ *
  * @see org.apache.solr.handler.dataimport.MailEntityProcessor
  * @since solr 1.4
  */
@@ -52,7 +53,7 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
   private static final String host = "host";
   private static final String protocol = "imaps";
 
-  private static Map<String, String> paramMap = new HashMap<String, String>();
+  private static Map<String, String> paramMap = new HashMap<>();
 
   @Test
   @Ignore("Needs a Mock Mail Server to work")
@@ -63,10 +64,8 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
     paramMap.put("processAttachement", "false");
     DataImporter di = new DataImporter();
     di.loadAndInit(getConfigFromMap(paramMap));
-    DataConfig.Entity ent = di.getConfig().document.entities.get(0);
-    ent.isDocRoot = true;
-    DataImporter.RequestParams rp = new DataImporter.RequestParams();
-    rp.command = "full-import";
+    Entity ent = di.getConfig().getEntities().get(0);
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
     SolrWriterImpl swi = new SolrWriterImpl();
     di.runCmd(rp, swi);
     assertEquals("top1 did not return 2 messages", swi.docs.size(), 2);
@@ -80,10 +79,8 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
     paramMap.put("processAttachement", "false");
     DataImporter di = new DataImporter();
     di.loadAndInit(getConfigFromMap(paramMap));
-    DataConfig.Entity ent = di.getConfig().document.entities.get(0);
-    ent.isDocRoot = true;
-    DataImporter.RequestParams rp = new DataImporter.RequestParams();
-    rp.command = "full-import";
+    Entity ent = di.getConfig().getEntities().get(0);
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
     SolrWriterImpl swi = new SolrWriterImpl();
     di.runCmd(rp, swi);
     assertEquals("top2 and its children did not return 8 messages", swi.docs.size(), 8);
@@ -98,10 +95,8 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
     paramMap.put("exclude", ".*grandchild.*");
     DataImporter di = new DataImporter();
     di.loadAndInit(getConfigFromMap(paramMap));
-    DataConfig.Entity ent = di.getConfig().document.entities.get(0);
-    ent.isDocRoot = true;
-    DataImporter.RequestParams rp = new DataImporter.RequestParams();
-    rp.command = "full-import";
+    Entity ent = di.getConfig().getEntities().get(0);
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
     SolrWriterImpl swi = new SolrWriterImpl();
     di.runCmd(rp, swi);
     assertEquals("top2 and its direct children did not return 5 messages", swi.docs.size(), 5);
@@ -116,10 +111,8 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
     paramMap.put("include", ".*grandchild.*");
     DataImporter di = new DataImporter();
     di.loadAndInit(getConfigFromMap(paramMap));
-    DataConfig.Entity ent = di.getConfig().document.entities.get(0);
-    ent.isDocRoot = true;
-    DataImporter.RequestParams rp = new DataImporter.RequestParams();
-    rp.command = "full-import";
+    Entity ent = di.getConfig().getEntities().get(0);
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
     SolrWriterImpl swi = new SolrWriterImpl();
     di.runCmd(rp, swi);
     assertEquals("top2 and its direct children did not return 3 messages", swi.docs.size(), 3);
@@ -135,10 +128,8 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
     paramMap.put("include", ".*grandchild.*");
     DataImporter di = new DataImporter();
     di.loadAndInit(getConfigFromMap(paramMap));
-    DataConfig.Entity ent = di.getConfig().document.entities.get(0);
-    ent.isDocRoot = true;
-    DataImporter.RequestParams rp = new DataImporter.RequestParams();
-    rp.command = "full-import";
+    Entity ent = di.getConfig().getEntities().get(0);
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
     SolrWriterImpl swi = new SolrWriterImpl();
     di.runCmd(rp, swi);
     assertEquals("top2 and its direct children did not return 3 messages", swi.docs.size(), 3);
@@ -153,10 +144,8 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
     paramMap.put("fetchMailsSince", "2008-12-26 00:00:00");
     DataImporter di = new DataImporter();
     di.loadAndInit(getConfigFromMap(paramMap));
-    DataConfig.Entity ent = di.getConfig().document.entities.get(0);
-    ent.isDocRoot = true;
-    DataImporter.RequestParams rp = new DataImporter.RequestParams();
-    rp.command = "full-import";
+    Entity ent = di.getConfig().getEntities().get(0);
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
     SolrWriterImpl swi = new SolrWriterImpl();
     di.runCmd(rp, swi);
     assertEquals("top2 and its direct children did not return 3 messages", swi.docs.size(), 3);
@@ -183,18 +172,19 @@ public class TestMailEntityProcessor extends AbstractDataImportHandlerTestCase {
   }
 
   static class SolrWriterImpl extends SolrWriter {
-    List<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+    List<SolrInputDocument> docs = new ArrayList<>();
     Boolean deleteAllCalled;
     Boolean commitCalled;
 
     public SolrWriterImpl() {
-      super(null);
+      super(null, null);
     }
 
     @Override
     public boolean upload(SolrInputDocument doc) {
       return docs.add(doc);
     }
+
 
     @Override
     public void doDeleteAll() {

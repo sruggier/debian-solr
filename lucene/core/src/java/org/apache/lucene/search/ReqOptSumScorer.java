@@ -1,5 +1,4 @@
-package org.apache.lucene.search;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,20 +14,22 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
 
 /** A Scorer for queries with a required part and an optional part.
  * Delays skipTo() on the optional part until a score() is needed.
- * <br>
- * This <code>Scorer</code> implements {@link Scorer#skipTo(int)}.
  */
 class ReqOptSumScorer extends Scorer {
   /** The scorers passed from the constructor.
    * These are set to null as soon as their next() or skipTo() returns false.
    */
-  private Scorer reqScorer;
-  private Scorer optScorer;
+  protected final Scorer reqScorer;
+  protected final Scorer optScorer;
+  protected final DocIdSetIterator optIterator;
 
   /** Construct a <code>ReqOptScorer</code>.
    * @param reqScorer The required scorer. This must match.
@@ -39,52 +40,65 @@ class ReqOptSumScorer extends Scorer {
       Scorer optScorer)
   {
     super(reqScorer.weight);
+    assert reqScorer != null;
+    assert optScorer != null;
     this.reqScorer = reqScorer;
     this.optScorer = optScorer;
+    this.optIterator = optScorer.iterator();
   }
 
   @Override
-  public int nextDoc() throws IOException {
-    return reqScorer.nextDoc();
+  public TwoPhaseIterator twoPhaseIterator() {
+    return reqScorer.twoPhaseIterator();
   }
-  
+
   @Override
-  public int advance(int target) throws IOException {
-    return reqScorer.advance(target);
+  public DocIdSetIterator iterator() {
+    return reqScorer.iterator();
   }
-  
+
   @Override
   public int docID() {
     return reqScorer.docID();
   }
-  
+
   /** Returns the score of the current document matching the query.
-   * Initially invalid, until {@link #nextDoc()} is called the first time.
+   * Initially invalid, until the {@link #iterator()} is advanced the first time.
    * @return The score of the required scorer, eventually increased by the score
    * of the optional scorer when it also matches the current document.
    */
   @Override
   public float score() throws IOException {
+    // TODO: sum into a double and cast to float if we ever send required clauses to BS1
     int curDoc = reqScorer.docID();
-    float reqScore = reqScorer.score();
-    if (optScorer == null) {
-      return reqScore;
+    float score = reqScorer.score();
+
+    int optScorerDoc = optIterator.docID();
+    if (optScorerDoc < curDoc) {
+      optScorerDoc = optIterator.advance(curDoc);
     }
     
-    int optScorerDoc = optScorer.docID();
-    if (optScorerDoc < curDoc && (optScorerDoc = optScorer.advance(curDoc)) == NO_MORE_DOCS) {
-      optScorer = null;
-      return reqScore;
+    if (optScorerDoc == curDoc) {
+      score += optScorer.score();
     }
     
-    return optScorerDoc == curDoc ? reqScore + optScorer.score() : reqScore;
+    return score;
   }
 
   @Override
-  public float freq() throws IOException {
+  public int freq() throws IOException {
     // we might have deferred advance()
     score();
-    return (optScorer != null && optScorer.docID() == reqScorer.docID()) ? 2 : 1;
+    return optIterator.docID() == reqScorer.docID() ? 2 : 1;
   }
+
+  @Override
+  public Collection<ChildScorer> getChildren() {
+    ArrayList<ChildScorer> children = new ArrayList<>(2);
+    children.add(new ChildScorer(reqScorer, "MUST"));
+    children.add(new ChildScorer(optScorer, "SHOULD"));
+    return children;
+  }
+
 }
 

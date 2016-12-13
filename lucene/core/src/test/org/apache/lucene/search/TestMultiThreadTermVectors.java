@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,17 +14,22 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.document.*;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.TermFreqVector;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.English;
 
 import java.io.IOException;
+
+import org.apache.lucene.analysis.MockAnalyzer;
+import org.apache.lucene.document.*;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.English;
+import org.apache.lucene.util.LuceneTestCase;
 
 public class TestMultiThreadTermVectors extends LuceneTestCase {
   private Directory directory;
@@ -37,12 +40,15 @@ public class TestMultiThreadTermVectors extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     directory = newDirectory();
-    IndexWriter writer = new IndexWriter(directory, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)).setMergePolicy(newLogMergePolicy()));
-    //writer.setUseCompoundFile(false);
+    IndexWriter writer = new IndexWriter(directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
+    //writer.setNoCFSRatio(0.0);
     //writer.infoStream = System.out;
+    FieldType customType = new FieldType(TextField.TYPE_STORED);
+    customType.setTokenized(false);
+    customType.setStoreTermVectors(true);
     for (int i = 0; i < numDocs; i++) {
       Document doc = new Document();
-      Fieldable fld = newField("field", English.intToEnglish(i), Field.Store.YES, Field.Index.NOT_ANALYZED, Field.TermVector.YES);
+      Field fld = newField("field", English.intToEnglish(i), customType);
       doc.add(fld);
       writer.addDocument(doc);
     }
@@ -61,7 +67,7 @@ public class TestMultiThreadTermVectors extends LuceneTestCase {
     IndexReader reader = null;
     
     try {
-      reader = IndexReader.open(directory, true);
+      reader = DirectoryReader.open(directory);
       for(int i = 1; i <= numThreads; i++)
         testTermPositionVectors(reader, i);
       
@@ -139,6 +145,7 @@ class MultiThreadTermVectorsReader implements Runnable {
     return t.isAlive();
   }
   
+  @Override
   public void run() {
       try {
         // run the test 100 times
@@ -157,34 +164,33 @@ class MultiThreadTermVectorsReader implements Runnable {
     long start = 0L;
     for (int docId = 0; docId < numDocs; docId++) {
       start = System.currentTimeMillis();
-      TermFreqVector [] vectors = reader.getTermFreqVectors(docId);
+      Fields vectors = reader.getTermVectors(docId);
       timeElapsed += System.currentTimeMillis()-start;
       
       // verify vectors result
       verifyVectors(vectors, docId);
       
       start = System.currentTimeMillis();
-      TermFreqVector vector = reader.getTermFreqVector(docId, "field");
+      Terms vector = reader.getTermVectors(docId).terms("field");
       timeElapsed += System.currentTimeMillis()-start;
       
-      vectors = new TermFreqVector[1];
-      vectors[0] = vector;
-      
-      verifyVectors(vectors, docId);
-      
+      verifyVector(vector.iterator(), docId);
     }
   }
   
-  private void verifyVectors(TermFreqVector[] vectors, int num) {
-    StringBuilder temp = new StringBuilder();
-    String[] terms = null;
-    for (int i = 0; i < vectors.length; i++) {
-      terms = vectors[i].getTerms();
-      for (int z = 0; z < terms.length; z++) {
-        temp.append(terms[z]);
-      }
+  private void verifyVectors(Fields vectors, int num) throws IOException {
+    for (String field : vectors) {
+      Terms terms = vectors.terms(field);
+      assert terms != null;
+      verifyVector(terms.iterator(), num);
     }
-    
+  }
+
+  private void verifyVector(TermsEnum vector, int num) throws IOException {
+    StringBuilder temp = new StringBuilder();
+    while(vector.next() != null) {
+      temp.append(vector.term().utf8ToString());
+    }
     if (!English.intToEnglish(num).trim().equals(temp.toString().trim()))
         System.out.println("wrong term result");
   }

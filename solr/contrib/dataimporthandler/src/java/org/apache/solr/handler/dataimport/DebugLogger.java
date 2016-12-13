@@ -1,5 +1,4 @@
-package org.apache.solr.handler.dataimport;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,13 +14,14 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.handler.dataimport;
 import org.apache.solr.common.util.NamedList;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.MessageFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Stack;
@@ -39,7 +39,6 @@ import java.util.Stack;
  * <p/>
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 class DebugLogger {
@@ -51,7 +50,7 @@ class DebugLogger {
   private static final String LINE = "---------------------------------------------";
 
   private MessageFormat fmt = new MessageFormat(
-          "----------- row #{0}-------------");
+          "----------- row #{0}-------------", Locale.ROOT);
 
   boolean enabled = true;
 
@@ -144,7 +143,7 @@ class DebugLogger {
 
   private void popAllTransformers() {
     while (true) {
-    	DIHLogLevels type = debugStack.peek().type;
+      DIHLogLevels type = debugStack.peek().type;
       if (type == DIHLogLevels.START_DOC || type == DIHLogLevels.START_ENTITY)
         break;
       debugStack.pop();
@@ -183,7 +182,7 @@ class DebugLogger {
       @Override
       public Object getData(String query) {
         log(DIHLogLevels.ENTITY_META, "query", query);
-        long start = System.currentTimeMillis();
+        long start = System.nanoTime();
         try {
           return ds.getData(query);
         } catch (DataImportHandlerException de) {

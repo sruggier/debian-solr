@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
+
 
 import org.apache.lucene.util.Attribute;
 
@@ -38,13 +38,17 @@ public interface CharTermAttribute extends Attribute, CharSequence, Appendable {
    *  #resizeBuffer(int)} to increase it.  After
    *  altering the buffer be sure to call {@link
    *  #setLength} to record the number of valid
-   *  characters that were placed into the termBuffer. */
+   *  characters that were placed into the termBuffer. 
+   *  <p>
+   *  <b>NOTE</b>: The returned buffer may be larger than
+   *  the valid {@link #length()}.
+   */
   public char[] buffer();
 
   /** Grows the termBuffer to at least size newSize, preserving the
    *  existing content.
    *  @param newSize minimum size of the new termBuffer
-   *  @return newly created termBuffer with length >= newSize
+   *  @return newly created termBuffer with {@code length >= newSize}
    */
   public char[] resizeBuffer(int newSize);
 
@@ -64,8 +68,11 @@ public interface CharTermAttribute extends Attribute, CharSequence, Appendable {
   public CharTermAttribute setEmpty();
   
   // the following methods are redefined to get rid of IOException declaration:
+  @Override
   public CharTermAttribute append(CharSequence csq);
+  @Override
   public CharTermAttribute append(CharSequence csq, int start, int end);
+  @Override
   public CharTermAttribute append(char c);
 
   /** Appends the specified {@code String} to this character sequence. 

@@ -18,17 +18,21 @@
  -->
 
 <project name="core" default="default">
-  <description>Lucene Core</description>
+  <description>Lucene core library</description>
 
   <property name="build.dir" location="../build/core"/>
 
-  <property name="rat.excludes" value="**/TODO,**/*.txt,**/*LuceneResourcesWikiPage.html"/>
-
+  <!-- lucene core can use the minimal JDK profile -->
+  <property name="javac.profile.args" value="-profile compact1"/>
   <import file="../common-build.xml"/>
+
+  <property name="moman.commit-hash" value="5c5c2a1e4dea" />
+  <property name="moman.url" value="https://bitbucket.org/jpbarrette/moman/get/${moman.commit-hash}.zip" />
 
   <path id="classpath"/>
   
   <path id="test.classpath">
+    <pathelement location="${common.dir}/build/codecs/classes/java"/>
     <pathelement location="${common.dir}/build/test-framework/classes/java"/>
     <path refid="junit-path"/>
     <pathelement location="${build.dir}/classes/java"/>
@@ -40,13 +44,12 @@
     <pathelement path="${java.class.path}"/>
   </path>
 
-  <target name="compile-core" depends="jflex-notice, javacc-notice, common.compile-core"/>
-  
   <target name="test-core" depends="common.test"/>
 
   <target name="javadocs-core" depends="javadocs"/>
-  <target name="javadocs" description="Generate javadoc for core classes">
-  	<sequential>
+  <target name="javadocs" description="Generate javadoc for core classes" 
+          depends="check-javadocs-uptodate" unless="javadocs-uptodate-${name}">
+     <sequential>
       <mkdir dir="${javadoc.dir}/core"/>
       <invoke-javadoc destdir="${javadoc.dir}/core" title="${Name} ${version} core API">
         <sources>
@@ -59,62 +62,166 @@
     </sequential>
   </target>
 
-  <target name="jflex" depends="jflex-check,clean-jflex,gen-uax29-supp-macros,
-                                jflex-StandardAnalyzer,jflex-UAX29URLEmailTokenizer"/>
+  <target name="-dist-maven" depends="-dist-maven-src-java"/>
 
-  <target name="gen-uax29-supp-macros">
-    <subant target="gen-uax29-supp-macros">
-       <fileset dir="../contrib/icu" includes="build.xml"/>
-    </subant>
+  <macrodef name="createLevAutomaton">
+      <attribute name="n"/>
+      <sequential>
+      <exec dir="src/java/org/apache/lucene/util/automaton"
+            executable="${python.exe}" failonerror="true">
+        <!-- Tell Python not to write any bytecode cache into the filesystem: -->
+        <arg value="-B"/>
+        <arg value="createLevAutomata.py"/>
+        <arg value="@{n}"/>
+        <arg value="True"/>
+      </exec>
+      <exec dir="src/java/org/apache/lucene/util/automaton"
+            executable="${python.exe}" failonerror="true">
+        <!-- Tell Python not to write any bytecode cache into the filesystem: -->
+        <arg value="-B"/>
+        <arg value="createLevAutomata.py"/>
+        <arg value="@{n}"/>
+        <arg value="False"/>
+      </exec>
+      <fixcrlf srcdir="src/java/org/apache/lucene/util/automaton" includes="*ParametricDescription.java" encoding="UTF-8"/>
+    </sequential>
+  </macrodef>
+
+  <target name="createPackedIntSources">
+    <exec dir="src/java/org/apache/lucene/util/packed"
+          executable="${python.exe}" failonerror="true">
+      <!-- Tell Python not to write any bytecode cache into the filesystem: -->
+      <arg value="-B"/>
+      <arg value="gen_BulkOperation.py"/>
+    </exec>
+    <exec dir="src/java/org/apache/lucene/util/packed"
+          executable="${python.exe}" failonerror="true">
+      <!-- Tell Python not to write any bytecode cache into the filesystem: -->
+      <arg value="-B"/>
+      <arg value="gen_Direct.py"/>
+    </exec>
+    <exec dir="src/java/org/apache/lucene/util/packed"
+          executable="${python.exe}" failonerror="true">
+      <!-- Tell Python not to write any bytecode cache into the filesystem: -->
+      <arg value="-B"/>
+      <arg value="gen_Packed64SingleBlock.py"/>
+    </exec>
+    <exec dir="src/java/org/apache/lucene/util/packed"
+          executable="${python.exe}" failonerror="true">
+      <!-- Tell Python not to write any bytecode cache into the filesystem: -->
+      <arg value="-B"/>
+      <arg value="gen_PackedThreeBlocks.py"/>
+    </exec>
+    <fixcrlf srcdir="src/java/org/apache/lucene/util/packed" includes="BulkOperation*.java,Direct*.java,Packed64SingleBlock.java,Packed*ThreeBlocks.py" encoding="UTF-8"/>
   </target>
 
-  <target name="jflex-StandardAnalyzer" depends="init,jflex-check" if="jflex.present">
-    <taskdef classname="jflex.anttask.JFlexTask" name="jflex">
-			<classpath refid="jflex.classpath"/>
-    </taskdef>
-
-    <jflex file="src/java/org/apache/lucene/analysis/standard/StandardTokenizerImpl.jflex"
-           outdir="src/java/org/apache/lucene/analysis/standard"
-           nobak="on" />
-    <jflex file="src/java/org/apache/lucene/analysis/standard/ClassicTokenizerImpl.jflex"
-           outdir="src/java/org/apache/lucene/analysis/standard"
-           nobak="on" />
-    <jflex file="src/java/org/apache/lucene/analysis/standard/std31/StandardTokenizerImpl31.jflex"
-           outdir="src/java/org/apache/lucene/analysis/standard/std31"
-           nobak="on" />
+  <target name="createLevAutomata" depends="check-moman,download-moman">
+    <createLevAutomaton n="1"/>
+    <createLevAutomaton n="2"/>
+  </target>
+  
+  <target name="check-moman">
+    <available file="${build.dir}/moman" property="moman.downloaded"/>
   </target>
 
-  <target name="jflex-UAX29URLEmailTokenizer" depends="jflex-check" if="jflex.present">
-    <taskdef classname="jflex.anttask.JFlexTask" name="jflex">
-			<classpath refid="jflex.classpath"/>
-    </taskdef>
-    <jflex file="src/java/org/apache/lucene/analysis/standard/UAX29URLEmailTokenizerImpl.jflex"
-           outdir="src/java/org/apache/lucene/analysis/standard"
-           nobak="on" />
-    <jflex file="src/java/org/apache/lucene/analysis/standard/std31/UAX29URLEmailTokenizerImpl31.jflex"
-           outdir="src/java/org/apache/lucene/analysis/standard/std31"
-           nobak="on" />
-    <jflex file="src/java/org/apache/lucene/analysis/standard/std34/UAX29URLEmailTokenizerImpl34.jflex"
-           outdir="src/java/org/apache/lucene/analysis/standard/std34"
-           nobak="on" />
+  <target name="download-moman" unless="moman.downloaded">
+    <mkdir dir="${build.dir}/moman"/>
+    <get src="${moman.url}" dest="${build.dir}/moman.zip"/>
+    <unzip dest="${build.dir}/moman" src="${build.dir}/moman.zip">
+      <cutdirsmapper dirs="1"/>
+    </unzip>
+    <delete file="${build.dir}/moman.zip"/>
   </target>
 
-  <property name="tld.zones" value="http://www.internic.net/zones/root.zone"/>
-  <property name="tld.output" location="src/java/org/apache/lucene/analysis/standard/ASCIITLD.jflex-macro"/>
-
-  <target name="gen-tlds" depends="compile-tools">
-    <java
-      classname="org.apache.lucene.analysis.standard.GenerateJflexTLDMacros"
-      dir="."
-      fork="true"
-      failonerror="true">
-      <classpath>
-      	<pathelement location="${common.dir}/build/tools/classes/java"/>
-      </classpath>
-      <arg value="${tld.zones}"/>
-      <arg value="${tld.output}"/>
-    </java>
+  <target name="regenerate" depends="createLevAutomata,createPackedIntSources,jflex"/>
+  
+  <macrodef name="startLockStressTestClient">
+    <attribute name="clientId"/>
+    <attribute name="lockFactoryImpl"/>
+    <attribute name="lockFactoryDir"/>
+    <sequential>
+      <local name="lockverifyserver.port"/>
+      <groovy><![CDATA[
+        String port;
+        while ((port = System.getProperty("lockverifyserver.port")) == null) {
+          Thread.sleep(10L);
+        }
+        properties["lockverifyserver.port"] = port;
+      ]]></groovy>
+      <java taskname="lockStressTest@{clientId}" fork="true" classpathref="test-lock.classpath" classname="org.apache.lucene.store.LockStressTest" failOnError="true"> 
+        <arg value="@{clientId}"/>
+        <arg value="${lockverifyserver.host}"/>
+        <arg value="${lockverifyserver.port}"/>
+        <arg value="@{lockFactoryImpl}"/>
+        <arg value="@{lockFactoryDir}"/>
+        <arg value="${lockverify.delay}"/>
+        <arg value="${lockverify.count}"/>
+      </java>
+    </sequential>
+  </macrodef>
+  
+  <macrodef name="testLockFactory">
+    <attribute name="lockFactoryImpl"/>
+    <attribute name="lockFactoryDir"/>
+    <sequential>
+      <echo taskname="testLockFactory" message="Testing @{lockFactoryImpl}..."/>
+      <mkdir dir="@{lockFactoryDir}"/>
+      <parallel threadCount="3" failonany="false">
+        <sequential>
+          <!-- the server runs in-process, so we can wait for the sysproperty -->
+          <java taskname="lockVerifyServer" fork="false" classpathref="test-lock.classpath" classname="org.apache.lucene.store.LockVerifyServer" failOnError="true">
+            <arg value="${lockverifyserver.host}"/>
+            <arg value="2"/>
+          </java>
+        </sequential>
+        <sequential>
+          <startLockStressTestClient clientId="1" lockFactoryImpl="@{lockFactoryImpl}" lockFactoryDir="@{lockFactoryDir}" />
+        </sequential>
+        <sequential>
+          <startLockStressTestClient clientId="2" lockFactoryImpl="@{lockFactoryImpl}" lockFactoryDir="@{lockFactoryDir}" />
+        </sequential>
+      </parallel>
+    </sequential>
+  </macrodef>
+  
+  <condition property="-ignore-test-lock-factory">
+    <or>
+      <!-- We ignore our ant-based lock factory test, if user applies test filtering: -->
+      <isset property="tests.class" />
+      <isset property="tests.method" />
+      <!-- Clover seems to deadlock if running instrumented code inside the Ant JVM: -->
+      <isset property="run.clover" />
+    </or>
+  </condition>
+  
+  <target name="test-lock-factory" depends="resolve-groovy,compile-core" unless="-ignore-test-lock-factory"
+    description="Run LockStressTest with multiple JVMs">
+    <property name="lockverifyserver.host" value="127.0.0.1"/>
+    <property name="lockverify.delay" value="1"/>
+    <groovy taskname="lockVerifySetup"><![CDATA[
+      System.clearProperty("lockverifyserver.port"); // make sure it is undefined
+      
+      if (!properties["lockverify.count"]) {
+        int count = Boolean.parseBoolean(properties["tests.nightly"]) ?
+          30000 : 500;
+        count *= Integer.parseInt(properties["tests.multiplier"]);
+        properties["lockverify.count"] = count;
+      }
+      
+      task.log("Configuration properties:");
+      ["lockverify.delay", "lockverify.count"].each {
+        k -> task.log(" " + k + "=" + properties[k]);
+      }
+    ]]></groovy>
+    <path id="test-lock.classpath">
+      <path refid="classpath"/>
+      <pathelement location="${build.dir}/classes/java"/>
+    </path>
+    <testLockFactory lockFactoryImpl="org.apache.lucene.store.NativeFSLockFactory" lockFactoryDir="${build.dir}/lockfactorytest/native" />
+    <testLockFactory lockFactoryImpl="org.apache.lucene.store.SimpleFSLockFactory" lockFactoryDir="${build.dir}/lockfactorytest/simple" />
   </target>
+  
+  <target name="test" depends="common.test, test-lock-factory"/>
 
   <target name="clean-jflex">
     <delete>
@@ -123,4 +230,13 @@
       </fileset>
     </delete>
   </target>
+
+  <target name="jflex" depends="-install-jflex,clean-jflex,-jflex-StandardAnalyzer"/>
+  
+  <target name="-jflex-StandardAnalyzer" depends="init,-install-jflex">
+    <run-jflex-and-disable-buffer-expansion 
+        dir="src/java/org/apache/lucene/analysis/standard" name="StandardTokenizerImpl"/>
+  </target>
+
+
 </project>

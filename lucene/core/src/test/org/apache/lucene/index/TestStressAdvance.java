@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -34,31 +34,37 @@ public class TestStressAdvance extends LuceneTestCase {
         System.out.println("\nTEST: iter=" + iter);
       }
       Directory dir = newDirectory();
-      RandomIndexWriter w = new RandomIndexWriter(random, dir);
-      final Set<Integer> aDocs = new HashSet<Integer>();
+      RandomIndexWriter w = new RandomIndexWriter(random(), dir);
+      final Set<Integer> aDocs = new HashSet<>();
       final Document doc = new Document();
-      final Field f = newField("field", "", Field.Index.NOT_ANALYZED_NO_NORMS);
+      final Field f = newStringField("field", "", Field.Store.NO);
       doc.add(f);
-      final Field idField = newField("id", "", Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS);
+      final Field idField = newStringField("id", "", Field.Store.YES);
       doc.add(idField);
       int num = atLeast(4097);
+      if (VERBOSE) {
+        System.out.println("\nTEST: numDocs=" + num);
+      }
       for(int id=0;id<num;id++) {
-        if (random.nextInt(4) == 3) {
-          f.setValue("a");
+        if (random().nextInt(4) == 3) {
+          f.setStringValue("a");
           aDocs.add(id);
         } else {
-          f.setValue("b");
+          f.setStringValue("b");
         }
-        idField.setValue(""+id);
+        idField.setStringValue(""+id);
         w.addDocument(doc);
+        if (VERBOSE) {
+          System.out.println("\nTEST: doc upto " + id);
+        }
       }
 
       w.forceMerge(1);
 
-      final List<Integer> aDocIDs = new ArrayList<Integer>();
-      final List<Integer> bDocIDs = new ArrayList<Integer>();
+      final List<Integer> aDocIDs = new ArrayList<>();
+      final List<Integer> bDocIDs = new ArrayList<>();
 
-      final IndexReader r = w.getReader();
+      final DirectoryReader r = w.getReader();
       final int[] idToDocID = new int[r.maxDoc()];
       for(int docID=0;docID<idToDocID.length;docID++) {
         int id = Integer.parseInt(r.document(docID).get("id"));
@@ -68,16 +74,19 @@ public class TestStressAdvance extends LuceneTestCase {
           bDocIDs.add(docID);
         }
       }
-      final TermDocs de = r.termDocs();
+      final TermsEnum te = getOnlyLeafReader(r).fields().terms("field").iterator();
       
+      PostingsEnum de = null;
       for(int iter2=0;iter2<10;iter2++) {
         if (VERBOSE) {
           System.out.println("\nTEST: iter=" + iter + " iter2=" + iter2);
         }
-        de.seek(new Term("field", "a"));
+        assertEquals(TermsEnum.SeekStatus.FOUND, te.seekCeil(new BytesRef("a")));
+        de = TestUtil.docs(random(), te, de, PostingsEnum.NONE);
         testOne(de, aDocIDs);
 
-        de.seek(new Term("field", "b"));
+        assertEquals(TermsEnum.SeekStatus.FOUND, te.seekCeil(new BytesRef("b")));
+        de = TestUtil.docs(random(), te, de, PostingsEnum.NONE);
         testOne(de, bDocIDs);
       }
 
@@ -87,7 +96,7 @@ public class TestStressAdvance extends LuceneTestCase {
     }
   }
 
-  private void testOne(TermDocs docs, List<Integer> expected) throws Exception {
+  private void testOne(PostingsEnum docs, List<Integer> expected) throws Exception {
     if (VERBOSE) {
       System.out.println("test");
     }
@@ -97,40 +106,32 @@ public class TestStressAdvance extends LuceneTestCase {
         System.out.println("  cycle upto=" + upto + " of " + expected.size());
       }
       final int docID;
-      if (random.nextInt(4) == 1 || upto == expected.size()-1) {
+      if (random().nextInt(4) == 1 || upto == expected.size()-1) {
         // test nextDoc()
         if (VERBOSE) {
           System.out.println("    do nextDoc");
         }
         upto++;
-        if (docs.next()) {
-          docID = docs.doc();
-        } else {
-          docID = -1;
-        }
+        docID = docs.nextDoc();
       } else {
         // test advance()
-        final int inc = _TestUtil.nextInt(random, 1, expected.size()-1-upto);
+        final int inc = TestUtil.nextInt(random(), 1, expected.size() - 1 - upto);
         if (VERBOSE) {
           System.out.println("    do advance inc=" + inc);
         }
         upto += inc;
-        if (docs.skipTo(expected.get(upto))) {
-          docID = docs.doc();
-        } else {
-          docID = -1;
-        }
+        docID = docs.advance(expected.get(upto));
       }
       if (upto == expected.size()) {
         if (VERBOSE) {
-          System.out.println("  expect docID=" + -1 + " actual=" + docID);
+          System.out.println("  expect docID=" + DocIdSetIterator.NO_MORE_DOCS + " actual=" + docID);
         }
-        assertEquals(-1, docID);
+        assertEquals(DocIdSetIterator.NO_MORE_DOCS, docID);
       } else {
         if (VERBOSE) {
           System.out.println("  expect docID=" + expected.get(upto) + " actual=" + docID);
         }
-        assertTrue(docID != -1);
+        assertTrue(docID != DocIdSetIterator.NO_MORE_DOCS);
         assertEquals(expected.get(upto).intValue(), docID);
       }
     }

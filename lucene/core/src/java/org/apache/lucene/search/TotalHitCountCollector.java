@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,14 +14,14 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.index.IndexReader;
 
 /**
  * Just counts the total number of hits.
  */
 
-public class TotalHitCountCollector extends Collector {
+public class TotalHitCountCollector extends SimpleCollector {
   private int totalHits;
 
   /** Returns how many hits matched the search. */
@@ -32,20 +30,12 @@ public class TotalHitCountCollector extends Collector {
   }
 
   @Override
-  public void setScorer(Scorer scorer) {
-  }
-
-  @Override
   public void collect(int doc) {
     totalHits++;
   }
 
   @Override
-  public void setNextReader(IndexReader reader, int docBase) {
-  }
-
-  @Override
-  public boolean acceptsDocsOutOfOrder() {
-    return true;
+  public boolean needsScores() {
+    return false;
   }
 }

@@ -15,47 +15,72 @@
     See the License for the specific language governing permissions and
     limitations under the License.
  -->
-<project name="solr-solrj" default="default">
+<project name="solr-solrj" default="default" xmlns:ivy="antlib:org.apache.ivy.ant">
   <description>Solrj - Solr Java Client</description>
 
-  <property name="ivy.retrieve.pattern" value="${common-solr.dir}/lib/[artifact]-[revision].[ext]"/>
+  <property name="test.lib.dir" location="test-lib"/>
 
   <import file="../common-build.xml"/>
 
+  <!-- Specialized compile classpath: to only depend on what solrj should depend on (e.g. not lucene) -->
+  <path id="classpath">
+    <fileset dir="${common-solr.dir}/solrj/lib" excludes="${common.classpath.excludes}"/>
+  </path>
+
   <!-- Specialized common-solr.test.classpath, to remove the Solr core test output -->
   <path id="test.classpath">
+    <fileset dir="${test.lib.dir}" includes="*.jar"/>
     <pathelement path="${common-solr.dir}/build/solr-test-framework/classes/java"/>
-  	<pathelement path="${tests.userdir}"/>
-  	<path refid="test.base.classpath"/>
+    <pathelement path="${tests.userdir}"/>
+    <path refid="test.base.classpath"/>
+    <path refid="solr.base.classpath"/>
+    <pathelement path="${example}/resources"/>
   </path>
+
+  <target name="resolve" depends="ivy-availability-check,ivy-fail,ivy-configure">
+    <sequential>
+      <ivy:retrieve conf="compile" type="jar,bundle" sync="${ivy.sync}" log="download-only" symlink="${ivy.symlink}"/>
+      <ivy:retrieve conf="test" type="jar,bundle,test" sync="${ivy.sync}" log="download-only" symlink="${ivy.symlink}"
+                    pattern="${test.lib.dir}/[artifact]-[revision](-[classifier]).[ext]"/>
+    </sequential>
+  </target>
+
+  <!-- Specialized to depend on nothing -->
+  <target name="javadocs" depends="compile-core,define-lucene-javadoc-url,check-javadocs-uptodate"
+          unless="javadocs-uptodate-${name}">
+    <sequential>
+      <mkdir dir="${javadoc.dir}/${name}"/>
+      <solr-invoke-javadoc>
+        <solrsources>
+          <packageset dir="${src.dir}"/>
+        </solrsources>
+      </solr-invoke-javadoc>
+      <solr-jarify basedir="${javadoc.dir}/${name}" destfile="${build.dir}/${final.name}-javadoc.jar"/>
+     </sequential>
+  </target>
+
+  <!-- Specialized to use lucene's classpath too, because it refs e.g. qp syntax 
+       (even though it doesnt compile with it) 
+       TODO: would be nice to fix this up better, but it's hard because of
+       the different ways solr links to lucene javadocs -->
+  <target name="-ecj-javadoc-lint-src" depends="-ecj-resolve">
+    <ecj-macro srcdir="${src.dir}" configuration="${common.dir}/tools/javadoc/ecj.javadocs.prefs">
+      <classpath>
+        <path refid="classpath"/>
+        <path refid="solr.lucene.libs"/>
+      </classpath>
+    </ecj-macro>
+  </target>
+
 
   <target name="dist" depends="common-solr.dist">
     <mkdir  dir="${dist}/solrj-lib" />
     <copy todir="${dist}/solrj-lib">
-      <fileset dir="${common-solr.dir}/lib">
-        <include name="commons-codec-*.jar"/>
-        <include name="commons-io-*.jar"/>
-        <include name="commons-httpclient-*.jar"/>
-        <include name="*stax-*.jar" />
-        <include name="wstx-*.jar" />
-        <include name="jcl-over-slf4j-*.jar" />
-        <include name="slf4j-api-*.jar" />
-      </fileset>
-    </copy>
-  	<mkdir  dir="${dist}/solrj-lib/optional" />
-    <copy todir="${dist}/solrj-lib/optional">
-      <fileset dir="${common-solr.dir}/lib">
-        <include name="httpcore-*.jar"/>
-        <include name="httpmime-*.jar"/>
-        <include name="httpclient-*.jar"/>
+      <fileset dir="${common-solr.dir}/solrj/lib">
+        <include name="*.jar"/>
       </fileset>
     </copy>
   </target>
 
-  <target name="javadocs" depends="common-solr.javadocs">
-    <mkdir dir="${dest}/docs/api/solrj"/>
-    <copy todir="${dest}/docs/api/solrj">
-      <fileset dir="${javadoc.dir}"/>
-    </copy>
-  </target>
+  <target name="-dist-maven" depends="-dist-maven-src-java"/>
 </project>

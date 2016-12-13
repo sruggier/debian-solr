@@ -1,6 +1,4 @@
-package org.apache.solr.spelling.suggest.jaspell;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,9 @@ package org.apache.solr.spelling.suggest.jaspell;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.spelling.suggest.jaspell;
+
+import java.lang.invoke.MethodHandles;
 
 import org.apache.lucene.search.suggest.Lookup;
 import org.apache.lucene.search.suggest.jaspell.JaspellLookup;
@@ -27,9 +28,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Factory for {@link JaspellLookup}
+ * <b>Note:</b> This Suggester is not very RAM efficient.
  */
 public class JaspellLookupFactory extends LookupFactory {
-  private static final Logger LOG = LoggerFactory.getLogger(JaspellLookup.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final String FILENAME = "jaspell.dat";
 
   @Override

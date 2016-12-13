@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update.processor;
 
 import java.io.IOException;
@@ -28,10 +27,10 @@ import org.apache.solr.update.RollbackUpdateCommand;
 
 public class BufferingRequestProcessor extends UpdateRequestProcessor
 {
-  public List<AddUpdateCommand> addCommands = new ArrayList<AddUpdateCommand>();
-  public List<DeleteUpdateCommand> deleteCommands = new ArrayList<DeleteUpdateCommand>();
-  public List<CommitUpdateCommand> commitCommands = new ArrayList<CommitUpdateCommand>();
-  public List<RollbackUpdateCommand> rollbackCommands = new ArrayList<RollbackUpdateCommand>();
+  public List<AddUpdateCommand> addCommands = new ArrayList<>();
+  public List<DeleteUpdateCommand> deleteCommands = new ArrayList<>();
+  public List<CommitUpdateCommand> commitCommands = new ArrayList<>();
+  public List<RollbackUpdateCommand> rollbackCommands = new ArrayList<>();
   
   public BufferingRequestProcessor(UpdateRequestProcessor next) {
     super(next);

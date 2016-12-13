@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,17 +14,19 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
-
-import org.apache.lucene.search.BooleanClause.Occur;
+import java.util.Collection;
+import java.util.Collections;
 
 /**
  * Expert: Common scoring functionality for different types of queries.
  *
  * <p>
- * A <code>Scorer</code> iterates over documents matching a
- * query in increasing order of doc Id.
+ * A <code>Scorer</code> exposes an {@link #iterator()} over documents
+ * matching a query in increasing order of doc Id.
  * </p>
  * <p>
  * Document scores are computed using a given <code>Similarity</code>
@@ -39,8 +39,9 @@ import org.apache.lucene.search.BooleanClause.Occur;
  * TopScoreDocCollector}) will not properly collect hits
  * with these scores.
  */
-public abstract class Scorer extends DocIdSetIterator {
-  private final Similarity similarity;
+public abstract class Scorer {
+  /** the Scorer's parent Weight. in some cases this may be null */
+  // TODO can we clean this up?
   protected final Weight weight;
 
   /**
@@ -48,172 +49,95 @@ public abstract class Scorer extends DocIdSetIterator {
    * @param weight The scorers <code>Weight</code>.
    */
   protected Scorer(Weight weight) {
-    this(null, weight);
-  }
-  
-  /** Constructs a Scorer.
-   * @param similarity The <code>Similarity</code> implementation used by this scorer.
-   * @deprecated Use {@link #Scorer(Weight)} instead.
-   */
-  @Deprecated
-  protected Scorer(Similarity similarity) {
-    this(similarity, null);
-  }
-  
-  /**
-   * Constructs a Scorer
-   * @param similarity The <code>Similarity</code> implementation used by this scorer.
-   * @param weight The scorers <code>Weight</code>
-   * @deprecated Use {@link #Scorer(Weight)} instead.
-   */
-  @Deprecated
-  protected Scorer(Similarity similarity, Weight weight) {
-    this.similarity = similarity;
     this.weight = weight;
   }
 
-  /** Returns the Similarity implementation used by this scorer. 
-   * @deprecated Store any Similarity you might need privately in your implementation instead.
-   */
-  @Deprecated
-  public Similarity getSimilarity() {
-    return this.similarity;
-  }
-
-  /** Scores and collects all matching documents.
-   * @param collector The collector to which all matching documents are passed.
-   */
-  public void score(Collector collector) throws IOException {
-    collector.setScorer(this);
-    int doc;
-    while ((doc = nextDoc()) != NO_MORE_DOCS) {
-      collector.collect(doc);
-    }
-  }
-
   /**
-   * Expert: Collects matching documents in a range. Hook for optimization.
-   * Note, <code>firstDocID</code> is added to ensure that {@link #nextDoc()}
-   * was called before this method.
-   *
-   * <p><b>NOTE:</b> Because of backwards compatibility, this method is still
-   * declared as <b>protected</b>, but it is intended to be <b>public</b>,
-   * because it's called from other classes (like BooleanScorer).
-   * If you subclass {@code Scorer}, you should declare the overridden method
-   * as public to ease transition to Lucene 4.0, where it will be public.</p>
-   * 
-   * @param collector
-   *          The collector to which all matching documents are passed.
-   * @param max
-   *          Do not score documents past this.
-   * @param firstDocID
-   *          The first document ID (ensures {@link #nextDoc()} is called before
-   *          this method.
-   * @return true if more matching documents may remain.
+   * Returns the doc ID that is currently being scored.
+   * This will return {@code -1} if the {@link #iterator()} is not positioned
+   * or {@link DocIdSetIterator#NO_MORE_DOCS} if it has been entirely consumed.
+   * @see DocIdSetIterator#docID()
    */
-  protected boolean score(Collector collector, int max, int firstDocID) throws IOException {
-    collector.setScorer(this);
-    int doc = firstDocID;
-    while (doc < max) {
-      collector.collect(doc);
-      doc = nextDoc();
-    }
-    return doc != NO_MORE_DOCS;
-  }
-  
+  public abstract int docID();
+
   /** Returns the score of the current document matching the query.
-   * Initially invalid, until {@link #nextDoc()} or {@link #advance(int)}
-   * is called the first time, or when called from within
-   * {@link Collector#collect}.
+   * Initially invalid, until {@link DocIdSetIterator#nextDoc()} or
+   * {@link DocIdSetIterator#advance(int)} is called on the {@link #iterator()}
+   * the first time, or when called from within {@link LeafCollector#collect}.
    */
   public abstract float score() throws IOException;
 
-  /** Returns number of matches for the current document.
-   *  This returns a float (not int) because
-   *  SloppyPhraseScorer discounts its freq according to how
-   *  "sloppy" the match was.
-   *
+  /** Returns the freq of this Scorer on the current document */
+  public abstract int freq() throws IOException;
+
+  /** returns parent Weight
+   * @lucene.experimental
+   */
+  public Weight getWeight() {
+    return weight;
+  }
+  
+  /** Returns child sub-scorers
    * @lucene.experimental */
-  public float freq() throws IOException {
-    throw new UnsupportedOperationException(this + " does not implement freq()");
+  public Collection<ChildScorer> getChildren() {
+    return Collections.emptyList();
   }
-
-  /**
-   * A callback to gather information from a scorer and its sub-scorers. Each
-   * the top-level scorer as well as each of its sub-scorers are passed to
-   * either one of the visit methods depending on their boolean relationship in
-   * the query.
-   * @lucene.experimental
-   */
-  public static abstract class ScorerVisitor<P extends Query, C extends Query, S extends Scorer> {
+  
+  /** A child Scorer and its relationship to its parent.
+   * the meaning of the relationship depends upon the parent query. 
+   * @lucene.experimental */
+  public static class ChildScorer {
     /**
-     * Invoked for all optional scorer 
-     * 
-     * @param parent the parent query of the child query or <code>null</code> if the child is a top-level query
-     * @param child the query of the currently visited scorer
-     * @param scorer the current scorer
+     * Child Scorer. (note this is typically a direct child, and may
+     * itself also have children).
      */
-    public void visitOptional(P parent, C child, S scorer) {}
+    public final Scorer child;
+    /**
+     * An arbitrary string relating this scorer to the parent.
+     */
+    public final String relationship;
     
     /**
-     * Invoked for all required scorer 
-     * 
-     * @param parent the parent query of the child query or <code>null</code> if the child is a top-level query
-     * @param child the query of the currently visited scorer
-     * @param scorer the current scorer
+     * Creates a new ChildScorer node with the specified relationship.
+     * <p>
+     * The relationship can be any be any string that makes sense to 
+     * the parent Scorer. 
      */
-    public void visitRequired(P parent, C child, S scorer) {}
-    
-    /**
-     * Invoked for all prohibited scorer 
-     * 
-     * @param parent the parent query of the child query or <code>null</code> if the child is a top-level query
-     * @param child the query of the currently visited scorer
-     * @param scorer the current scorer
-     */
-    public void visitProhibited(P parent, C child, S scorer) {}
-  } 
-
-  /**
-   * Expert: call this to gather details for all sub-scorers for this query.
-   * This can be used, in conjunction with a custom {@link Collector} to gather
-   * details about how each sub-query matched the current hit.
-   * 
-   * @param visitor a callback executed for each sub-scorer
-   * @lucene.experimental
-   */
-  public void visitScorers(ScorerVisitor<Query, Query, Scorer> visitor) {
-    visitSubScorers(null, Occur.MUST/*must id default*/, visitor);
-  }
-
-  /**
-   * {@link Scorer} subclasses should implement this method if the subclass
-   * itself contains multiple scorers to support gathering details for
-   * sub-scorers via {@link ScorerVisitor}
-   * <p>
-   * Note: this method will throw {@link UnsupportedOperationException} if no
-   * associated {@link Weight} instance is provided to
-   * {@link #Scorer(Weight)}
-   * </p>
-   * 
-   * @lucene.experimental
-   */
-  public void visitSubScorers(Query parent, Occur relationship,
-      ScorerVisitor<Query, Query, Scorer> visitor) {
-    if (weight == null)
-      throw new UnsupportedOperationException();
-
-    final Query q = weight.getQuery();
-    switch (relationship) {
-    case MUST:
-      visitor.visitRequired(parent, q, this);
-      break;
-    case MUST_NOT:
-      visitor.visitProhibited(parent, q, this);
-      break;
-    case SHOULD:
-      visitor.visitOptional(parent, q, this);
-      break;
+    public ChildScorer(Scorer child, String relationship) {
+      this.child = child;
+      this.relationship = relationship;
     }
+  }
+
+  /**
+   * Return a {@link DocIdSetIterator} over matching documents.
+   *
+   * The returned iterator will either be positioned on {@code -1} if no
+   * documents have been scored yet, {@link DocIdSetIterator#NO_MORE_DOCS}
+   * if all documents have been scored already, or the last document id that
+   * has been scored otherwise.
+   *
+   * The returned iterator is a view: calling this method several times will
+   * return iterators that have the same state.
+   */
+  public abstract DocIdSetIterator iterator();
+
+  /**
+   * Optional method: Return a {@link TwoPhaseIterator} view of this
+   * {@link Scorer}. A return value of {@code null} indicates that
+   * two-phase iteration is not supported.
+   *
+   * Note that the returned {@link TwoPhaseIterator}'s
+   * {@link TwoPhaseIterator#approximation() approximation} must
+   * advance synchronously with the {@link #iterator()}: advancing the
+   * approximation must advance the iterator and vice-versa.
+   *
+   * Implementing this method is typically useful on {@link Scorer}s
+   * that have a high per-document overhead in order to confirm matches.
+   *
+   * The default implementation returns {@code null}.
+   */
+  public TwoPhaseIterator twoPhaseIterator() {
+    return null;
   }
 }

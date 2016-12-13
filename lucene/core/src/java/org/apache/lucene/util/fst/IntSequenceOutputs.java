@@ -1,6 +1,4 @@
-package org.apache.lucene.util.fst;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,15 @@ package org.apache.lucene.util.fst;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.fst;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.RamUsageEstimator;
 
 /**
  * An FST {@link Outputs} implementation where each output
@@ -131,6 +132,17 @@ public final class IntSequenceOutputs extends Outputs<IntsRef> {
       return output;
     }
   }
+  
+  @Override
+  public void skipOutput(DataInput in) throws IOException {
+    final int len = in.readVInt();
+    if (len == 0) {
+      return;
+    }
+    for(int idx=0;idx<len;idx++) {
+      in.readVInt();
+    }
+  }
 
   @Override
   public IntsRef getNoOutput() {
@@ -140,5 +152,17 @@ public final class IntSequenceOutputs extends Outputs<IntsRef> {
   @Override
   public String outputToString(IntsRef output) {
     return output.toString();
+  }
+
+  private static final long BASE_NUM_BYTES = RamUsageEstimator.shallowSizeOf(NO_OUTPUT);
+
+  @Override
+  public long ramBytesUsed(IntsRef output) {
+    return BASE_NUM_BYTES + RamUsageEstimator.sizeOf(output.ints);
+  }
+  
+  @Override
+  public String toString() {
+    return "IntSequenceOutputs";
   }
 }

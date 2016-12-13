@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -21,7 +21,7 @@ import org.apache.solr.core.PluginInfo;
 /**
  * A plugin that can be initialized with a PluginInfo
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public interface PluginInfoInitialized {

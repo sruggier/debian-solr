@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +14,11 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
@@ -32,9 +31,13 @@ import org.apache.lucene.store.IndexInput;
  *
  * @lucene.internal
  **/
-public final class PagedBytes {
-  private final List<byte[]> blocks = new ArrayList<byte[]>();
-  private final List<Integer> blockEnd = new ArrayList<Integer>();
+// TODO: refactor this, byteblockpool, fst.bytestore, and any
+// other "shift/mask big arrays". there are too many of these classes!
+public final class PagedBytes implements Accountable {
+  private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(PagedBytes.class);
+  private byte[][] blocks = new byte[16][];
+  private int numBlocks;
+  // TODO: these are unused?
   private final int blockSize;
   private final int blockBits;
   private final int blockMask;
@@ -42,6 +45,7 @@ public final class PagedBytes {
   private boolean frozen;
   private int upto;
   private byte[] currentBlock;
+  private final long bytesUsedPerBlock;
 
   private static final byte[] EMPTY_BYTES = new byte[0];
 
@@ -49,25 +53,20 @@ public final class PagedBytes {
    *  PagedBytes.
    *
    * @see #freeze */
-  public final static class Reader {
+  public final static class Reader implements Accountable {
+    private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(Reader.class);
     private final byte[][] blocks;
-    private final int[] blockEnds;
     private final int blockBits;
     private final int blockMask;
     private final int blockSize;
+    private final long bytesUsedPerBlock;
 
-    public Reader(PagedBytes pagedBytes) {
-      blocks = new byte[pagedBytes.blocks.size()][];
-      for(int i=0;i<blocks.length;i++) {
-        blocks[i] = pagedBytes.blocks.get(i);
-      }
-      blockEnds = new int[blocks.length];
-      for(int i=0;i< blockEnds.length;i++) {
-        blockEnds[i] = pagedBytes.blockEnd.get(i);
-      }
+    private Reader(PagedBytes pagedBytes) {
+      blocks = Arrays.copyOf(pagedBytes.blocks, pagedBytes.numBlocks);
       blockBits = pagedBytes.blockBits;
       blockMask = pagedBytes.blockMask;
       blockSize = pagedBytes.blockSize;
+      bytesUsedPerBlock = pagedBytes.bytesUsedPerBlock;
     }
 
     /**
@@ -75,16 +74,19 @@ public final class PagedBytes {
      * given length. Iff the slice spans across a block border this method will
      * allocate sufficient resources and copy the paged data.
      * <p>
-     * Slices spanning more than one block are not supported.
+     * Slices spanning more than two blocks are not supported.
      * </p>
      * @lucene.internal 
      **/
-    public BytesRef fillSlice(BytesRef b, long start, int length) {
+    public void fillSlice(BytesRef b, long start, int length) {
       assert length >= 0: "length=" + length;
-      assert length <= blockSize+1;
+      assert length <= blockSize+1: "length=" + length;
+      b.length = length;
+      if (length == 0) {
+        return;
+      }
       final int index = (int) (start >> blockBits);
       final int offset = (int) (start & blockMask);
-      b.length = length;
       if (blockSize - offset >= length) {
         // Within block
         b.bytes = blocks[index];
@@ -96,7 +98,6 @@ public final class PagedBytes {
         System.arraycopy(blocks[index], offset, b.bytes, 0, blockSize-offset);
         System.arraycopy(blocks[1+index], 0, b.bytes, blockSize-offset, length-(blockSize-offset));
       }
-      return b;
     }
     
     /**
@@ -106,11 +107,10 @@ public final class PagedBytes {
      * borders.
      * </p>
      * 
-     * @return the given {@link BytesRef}
-     * 
      * @lucene.internal
      **/
-    public BytesRef fill(BytesRef b, long start) {
+    // TODO: this really needs to be refactored into fieldcacheimpl
+    public void fill(BytesRef b, long start) {
       final int index = (int) (start >> blockBits);
       final int offset = (int) (start & blockMask);
       final byte[] block = b.bytes = blocks[index];
@@ -123,131 +123,41 @@ public final class PagedBytes {
         b.offset = offset+2;
         assert b.length > 0;
       }
-      return b;
     }
 
-    /**
-     * Reads length as 1 or 2 byte vInt prefix, starting at <i>start</i>. *
-     * <p>
-     * <b>Note:</b> this method does not support slices spanning across block
-     * borders.
-     * </p>
-     * 
-     * @return the internal block number of the slice.
-     * @lucene.internal
-     **/
-    public int fillAndGetIndex(BytesRef b, long start) {
-      final int index = (int) (start >> blockBits);
-      final int offset = (int) (start & blockMask);
-      final byte[] block = b.bytes = blocks[index];
-
-      if ((block[offset] & 128) == 0) {
-        b.length = block[offset];
-        b.offset = offset+1;
-      } else {
-        b.length = ((block[offset] & 0x7f) << 8) | (block[1+offset] & 0xff);
-        b.offset = offset+2;
-        assert b.length > 0;
+    @Override
+    public long ramBytesUsed() {
+      long size = BASE_RAM_BYTES_USED + RamUsageEstimator.shallowSizeOf(blocks);
+      if (blocks.length > 0) {
+        size += (blocks.length - 1) * bytesUsedPerBlock;
+        size += RamUsageEstimator.sizeOf(blocks[blocks.length - 1]);
       }
-      return index;
+      return size;
     }
 
-    /**
-     * Reads length as 1 or 2 byte vInt prefix, starting at <i>start</i> and
-     * returns the start offset of the next part, suitable as start parameter on
-     * next call to sequentially read all {@link BytesRef}.
-     * 
-     * <p>
-     * <b>Note:</b> this method does not support slices spanning across block
-     * borders.
-     * </p>
-     * 
-     * @return the start offset of the next part, suitable as start parameter on
-     *         next call to sequentially read all {@link BytesRef}.
-     * @lucene.internal
-     **/
-    public long fillAndGetStart(BytesRef b, long start) {
-      final int index = (int) (start >> blockBits);
-      final int offset = (int) (start & blockMask);
-      final byte[] block = b.bytes = blocks[index];
-
-      if ((block[offset] & 128) == 0) {
-        b.length = block[offset];
-        b.offset = offset+1;
-        start += 1L + b.length;
-      } else {
-        b.length = ((block[offset] & 0x7f) << 8) | (block[1+offset] & 0xff);
-        b.offset = offset+2;
-        start += 2L + b.length;
-        assert b.length > 0;
-      }
-      return start;
-    }
-    
-  
-    /**
-     * Gets a slice out of {@link PagedBytes} starting at <i>start</i>, the
-     * length is read as 1 or 2 byte vInt prefix. Iff the slice spans across a
-     * block border this method will allocate sufficient resources and copy the
-     * paged data.
-     * <p>
-     * Slices spanning more than one block are not supported.
-     * </p>
-     * 
-     * @lucene.internal
-     **/
-    public BytesRef fillSliceWithPrefix(BytesRef b, long start) {
-      final int index = (int) (start >> blockBits);
-      int offset = (int) (start & blockMask);
-      final byte[] block = blocks[index];
-      final int length;
-      if ((block[offset] & 128) == 0) {
-        length = block[offset];
-        offset = offset+1;
-      } else {
-        length = ((block[offset] & 0x7f) << 8) | (block[1+offset] & 0xff);
-        offset = offset+2;
-        assert length > 0;
-      }
-      assert length >= 0: "length=" + length;
-      b.length = length;
-
-      // NOTE: even though copyUsingLengthPrefix always
-      // allocs a new block if the byte[] to be added won't
-      // fit in current block, callers can write their own
-      // prefix that may span two blocks:
-      if (blockSize - offset >= length) {
-        // Within block
-        b.offset = offset;
-        b.bytes = blocks[index];
-      } else {
-        // Split
-        b.bytes = new byte[length];
-        b.offset = 0;
-        System.arraycopy(blocks[index], offset, b.bytes, 0, blockSize-offset);
-        System.arraycopy(blocks[1+index], 0, b.bytes, blockSize-offset, length-(blockSize-offset));
-      }
-      return b;
-    }
-
-    /** @lucene.internal */
-    public byte[][] getBlocks() {
-      return blocks;
-    }
-
-    /** @lucene.internal */
-    public int[] getBlockEnds() {
-      return blockEnds;
+    @Override
+    public String toString() {
+      return "PagedBytes(blocksize=" + blockSize + ")";
     }
   }
 
-  /** 1<<blockBits must be bigger than biggest single
+  /** 1&lt;&lt;blockBits must be bigger than biggest single
    *  BytesRef slice that will be pulled */
   public PagedBytes(int blockBits) {
+    assert blockBits > 0 && blockBits <= 31 : blockBits;
     this.blockSize = 1 << blockBits;
     this.blockBits = blockBits;
     blockMask = blockSize-1;
     upto = blockSize;
+    bytesUsedPerBlock = RamUsageEstimator.alignObjectSize(blockSize + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER);
+    numBlocks = 0;
+  }
+
+  private void addBlock(byte[] block) {
+    if (blocks.length == numBlocks) {
+      blocks = Arrays.copyOf(blocks, ArrayUtil.oversize(numBlocks, RamUsageEstimator.NUM_BYTES_OBJECT_REF));
+    }
+    blocks[numBlocks++] = block;
   }
 
   /** Read this many bytes from in */
@@ -256,8 +166,7 @@ public final class PagedBytes {
       int left = blockSize - upto;
       if (left == 0) {
         if (currentBlock != null) {
-          blocks.add(currentBlock);
-          blockEnd.add(upto);
+          addBlock(currentBlock);
         }
         currentBlock = new byte[blockSize];
         upto = 0;
@@ -275,43 +184,14 @@ public final class PagedBytes {
     }
   }
 
-  /** Copy BytesRef in */
-  public void copy(BytesRef bytes) throws IOException {
-    int byteCount = bytes.length;
-    int bytesUpto = bytes.offset;
-    while (byteCount > 0) {
-      int left = blockSize - upto;
-      if (left == 0) {
-        if (currentBlock != null) {
-          blocks.add(currentBlock);
-          blockEnd.add(upto);          
-        }
-        currentBlock = new byte[blockSize];
-        upto = 0;
-        left = blockSize;
-      }
-      if (left < byteCount) {
-        System.arraycopy(bytes.bytes, bytesUpto, currentBlock, upto, left);
-        upto = blockSize;
-        byteCount -= left;
-        bytesUpto += left;
-      } else {
-        System.arraycopy(bytes.bytes, bytesUpto, currentBlock, upto, byteCount);
-        upto += byteCount;
-        break;
-      }
-    }
-  }
-
   /** Copy BytesRef in, setting BytesRef out to the result.
    * Do not use this if you will use freeze(true).
-   * This only supports bytes.length <= blockSize */
-  public void copy(BytesRef bytes, BytesRef out) throws IOException {
+   * This only supports bytes.length &lt;= blockSize */
+  public void copy(BytesRef bytes, BytesRef out) {
     int left = blockSize - upto;
     if (bytes.length > left || currentBlock==null) {
       if (currentBlock != null) {
-        blocks.add(currentBlock);
-        blockEnd.add(upto);
+        addBlock(currentBlock);
         didSkipBytes = true;
       }
       currentBlock = new byte[blockSize];
@@ -345,24 +225,37 @@ public final class PagedBytes {
     if (currentBlock == null) {
       currentBlock = EMPTY_BYTES;
     }
-    blocks.add(currentBlock);
-    blockEnd.add(upto); 
+    addBlock(currentBlock);
     frozen = true;
     currentBlock = null;
-    return new Reader(this);
+    return new PagedBytes.Reader(this);
   }
 
   public long getPointer() {
     if (currentBlock == null) {
       return 0;
     } else {
-      return (blocks.size() * ((long) blockSize)) + upto;
+      return (numBlocks * ((long) blockSize)) + upto;
     }
+  }
+
+  @Override
+  public long ramBytesUsed() {
+    long size = BASE_RAM_BYTES_USED + RamUsageEstimator.shallowSizeOf(blocks);;
+    if (numBlocks > 0) {
+      size += (numBlocks - 1) * bytesUsedPerBlock;
+      size += RamUsageEstimator.sizeOf(blocks[numBlocks - 1]);
+    }
+    if (currentBlock != null) {
+      size += RamUsageEstimator.sizeOf(currentBlock);
+    }
+    return size;
   }
 
   /** Copy bytes in, writing the length as a 1 or 2 byte
    *  vInt prefix. */
-  public long copyUsingLengthPrefix(BytesRef bytes) throws IOException {
+  // TODO: this really needs to be refactored into fieldcacheimpl!
+  public long copyUsingLengthPrefix(BytesRef bytes) {
     if (bytes.length >= 32768) {
       throw new IllegalArgumentException("max length is 32767 (got " + bytes.length + ")");
     }
@@ -372,8 +265,7 @@ public final class PagedBytes {
         throw new IllegalArgumentException("block size " + blockSize + " is too small to store length " + bytes.length + " bytes");
       }
       if (currentBlock != null) {
-        blocks.add(currentBlock);
-        blockEnd.add(upto);        
+        addBlock(currentBlock);     
       }
       currentBlock = new byte[blockSize];
       upto = 0;
@@ -399,11 +291,11 @@ public final class PagedBytes {
     private byte[] currentBlock;
 
     PagedBytesDataInput() {
-      currentBlock = blocks.get(0);
+      currentBlock = blocks[0];
     }
 
     @Override
-    public Object clone() {
+    public PagedBytesDataInput clone() {
       PagedBytesDataInput clone = getDataInput();
       clone.setPosition(getPosition());
       return clone;
@@ -411,14 +303,14 @@ public final class PagedBytes {
 
     /** Returns the current byte position. */
     public long getPosition() {
-      return ((long) currentBlockIndex * blockSize) + currentBlockUpto;
+      return (long) currentBlockIndex * blockSize + currentBlockUpto;
     }
   
     /** Seek to a position previously obtained from
      *  {@link #getPosition}. */
     public void setPosition(long pos) {
       currentBlockIndex = (int) (pos >> blockBits);
-      currentBlock = blocks.get(currentBlockIndex);
+      currentBlock = blocks[currentBlockIndex];
       currentBlockUpto = (int) (pos & blockMask);
     }
 
@@ -457,7 +349,7 @@ public final class PagedBytes {
     private void nextBlock() {
       currentBlockIndex++;
       currentBlockUpto = 0;
-      currentBlock = blocks.get(currentBlockIndex);
+      currentBlock = blocks[currentBlockIndex];
     }
   }
 
@@ -466,8 +358,7 @@ public final class PagedBytes {
     public void writeByte(byte b) {
       if (upto == blockSize) {
         if (currentBlock != null) {
-          blocks.add(currentBlock);
-          blockEnd.add(upto);
+          addBlock(currentBlock);
         }
         currentBlock = new byte[blockSize];
         upto = 0;
@@ -476,7 +367,7 @@ public final class PagedBytes {
     }
 
     @Override
-    public void writeBytes(byte[] b, int offset, int length) throws IOException {
+    public void writeBytes(byte[] b, int offset, int length) {
       assert b.length >= offset + length;
       if (length == 0) {
         return;
@@ -484,8 +375,7 @@ public final class PagedBytes {
 
       if (upto == blockSize) {
         if (currentBlock != null) {
-          blocks.add(currentBlock);
-          blockEnd.add(upto);
+          addBlock(currentBlock);
         }
         currentBlock = new byte[blockSize];
         upto = 0;
@@ -497,8 +387,7 @@ public final class PagedBytes {
         final int blockLeft = blockSize - upto;
         if (blockLeft < left) {
           System.arraycopy(b, offset, currentBlock, upto, blockLeft);
-          blocks.add(currentBlock);
-          blockEnd.add(blockSize);
+          addBlock(currentBlock);
           currentBlock = new byte[blockSize];
           upto = 0;
           offset += blockLeft;
@@ -513,11 +402,7 @@ public final class PagedBytes {
 
     /** Return the current byte position. */
     public long getPosition() {
-      if (currentBlock == null) {
-        return 0;
-      } else {
-        return ((long) blocks.size() * blockSize) + upto;
-      }
+      return getPointer();
     }
   }
 

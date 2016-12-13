@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,71 +14,102 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj;
 
+import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.client.solrj.request.AbstractUpdateRequest;
 import org.apache.solr.client.solrj.request.CoreAdminRequest;
 import org.apache.solr.client.solrj.request.QueryRequest;
 import org.apache.solr.client.solrj.request.UpdateRequest;
-import org.apache.solr.client.solrj.request.UpdateRequest.ACTION;
 import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.common.params.CoreAdminParams;
+import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.core.CoreContainer;
-import org.apache.solr.core.SolrCore;
-import org.apache.solr.util.ExternalPaths;
+import org.junit.BeforeClass;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.Arrays;
 
 /**
  * Abstract base class for testing merge indexes command
  *
  * @since solr 1.4
- * @version $Id$
+ *
  */
 public abstract class MergeIndexesExampleTestBase extends SolrExampleTestBase {
-  // protected static final CoreContainer cores = new CoreContainer();
-  protected static CoreContainer cores;
+
+  protected CoreContainer cores;
+  private String saveProp;
+  private File dataDir1;
+  private File dataDir2;
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   @Override
   public String getSolrHome() {
-    return ExternalPaths.EXAMPLE_MULTICORE_HOME;
+    return SolrTestCaseJ4.getFile("solrj/solr/multicore").getAbsolutePath();
   }
 
-  @Override
-  public String getSchemaFile() {
-    return getSolrHome() + "/core0/conf/schema.xml";
+  @BeforeClass
+  public static void beforeClass2() throws Exception {
+
   }
 
-  @Override
-  public String getSolrConfigFile() {
-    return getSolrHome() + "/core0/conf/solrconfig.xml";
+  protected void setupCoreContainer() {
+    cores = new CoreContainer(getSolrHome());
+    cores.load();
+    //cores = CoreContainer.createAndLoad(getSolrHome(), new File(TEMP_DIR, "solr.xml"));
   }
-
+  
   @Override
   public void setUp() throws Exception {
+    saveProp = System.getProperty("solr.directoryFactory");
+    System.setProperty("solr.directoryFactory", "solr.StandardDirectoryFactory");
     super.setUp();
-    cores = h.getCoreContainer();
-    SolrCore.log.info("CORES=" + cores + " : " + cores.getCoreNames());
-    cores.setPersistent(false);
+    File dataDir1 = createTempDir().toFile();
+    // setup datadirs
+    System.setProperty( "solr.core0.data.dir", dataDir1.getCanonicalPath() );
+
+    dataDir2 = createTempDir().toFile();
+
+    System.setProperty( "solr.core1.data.dir", this.dataDir2.getCanonicalPath() );
+
+    setupCoreContainer();
+    log.info("CORES=" + cores + " : " + cores.getCoreNames());
+
   }
 
   @Override
-  protected final SolrServer getSolrServer() {
+  public void tearDown() throws Exception {
+    super.tearDown();
+
+    cores.shutdown();
+    
+    if (saveProp == null) System.clearProperty("solr.directoryFactory");
+    else System.setProperty("solr.directoryFactory", saveProp);
+  }
+
+  @Override
+  protected final SolrClient getSolrClient() {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  protected final SolrServer createNewSolrServer() {
+  protected final SolrClient createNewSolrClient() {
     throw new UnsupportedOperationException();
   }
 
-  protected abstract SolrServer getSolrCore0();
+  protected abstract SolrClient getSolrCore0();
 
-  protected abstract SolrServer getSolrCore1();
+  protected abstract SolrClient getSolrCore1();
 
-  protected abstract SolrServer getSolrAdmin();
+  protected abstract SolrClient getSolrAdmin();
 
-  protected abstract SolrServer getSolrCore(String name);
+  protected abstract SolrClient getSolrCore(String name);
 
   protected abstract String getIndexDirCore1();
 
@@ -153,5 +184,15 @@ public abstract class MergeIndexesExampleTestBase extends SolrExampleTestBase {
         getSolrCore0().query(new SolrQuery("id:AAA")).getResults().size());
     assertEquals(1,
         getSolrCore0().query(new SolrQuery("id:BBB")).getResults().size());
+  }
+
+  public void testMergeMultipleRequest() throws Exception {
+    CoreAdminRequest.MergeIndexes req = new CoreAdminRequest.MergeIndexes();
+    req.setCoreName("core0");
+    req.setIndexDirs(Arrays.asList("/path/1", "/path/2"));
+    req.setSrcCores(Arrays.asList("core1", "core2"));
+    SolrParams params = req.getParams();
+    assertEquals(2, params.getParams(CoreAdminParams.SRC_CORE).length);
+    assertEquals(2, params.getParams(CoreAdminParams.INDEX_DIR).length);
   }
 }

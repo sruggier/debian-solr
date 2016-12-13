@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,29 +14,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
 
+import java.lang.invoke.MethodHandles;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.document.Field.Index;
-import org.apache.lucene.document.Field.Store;
-
+import org.apache.lucene.index.TieredMergePolicy;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.store.Directory;
 import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.MapSolrParams;
+import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
+import org.apache.solr.core.SolrEventListener;
+import org.apache.solr.index.TieredMergePolicyFactory;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.search.SolrIndexReader;
-
+import org.apache.solr.search.SolrIndexSearcher;
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 
@@ -44,9 +49,28 @@ import org.junit.Test;
  */
 public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
 
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+  static String savedFactory;
   @BeforeClass
   public static void beforeClass() throws Exception {
+    savedFactory = System.getProperty("solr.DirectoryFactory");
+    System.setProperty("solr.directoryFactory", "org.apache.solr.core.MockFSDirectoryFactory");
+    System.setProperty("enable.update.log", "false"); // schema12 doesn't support _version_
+    systemSetPropertySolrTestsMergePolicy(TieredMergePolicy.class.getName());
+    systemSetPropertySolrTestsMergePolicyFactory(TieredMergePolicyFactory.class.getName());
     initCore("solrconfig.xml", "schema12.xml");
+  }
+  
+  @AfterClass
+  public static void afterClass() {
+    systemClearPropertySolrTestsMergePolicy();
+    systemClearPropertySolrTestsMergePolicyFactory();
+    if (savedFactory == null) {
+      System.clearProperty("solr.directoryFactory");
+    } else {
+      System.setProperty("solr.directoryFactory", savedFactory);
+    }
   }
 
   @Override
@@ -56,126 +80,69 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
     clearIndex();
     assertU(commit());
   }
-  
+
   @Test
-  public void testRequireUniqueKey() throws Exception 
-  {
-    SolrCore core = h.getCore();
-    
-    UpdateHandler updater = core.getUpdateHandler();
-    
-    AddUpdateCommand cmd = new AddUpdateCommand();
-    cmd.overwriteCommitted = true;
-    cmd.overwritePending = true;
-    cmd.allowDups = false;
-    
+  public void testRequireUniqueKey() throws Exception {
     // Add a valid document
-    cmd.doc = new Document();
-    cmd.doc.add( new Field( "id", "AAA", Store.YES, Index.NOT_ANALYZED ) );
-    cmd.doc.add( new Field( "subject", "xxxxx", Store.YES, Index.NOT_ANALYZED ) );
-    updater.addDoc( cmd );
+    assertU(adoc("id","1"));
+
+    // More than one id should fail
+    assertFailedU(adoc("id","2", "id","ignore_exception", "text","foo"));
+
+    // No id should fail
+    ignoreException("id");
+    assertFailedU(adoc("text","foo"));
+    resetExceptionIgnores();
+  }
+
+
+
+  @Test
+  public void testBasics() throws Exception {
     
-    // Add a document with multiple ids
-    cmd.indexedId = null;  // reset the id for this add
-    cmd.doc = new Document();
-    cmd.doc.add( new Field( "id", "AAA", Store.YES, Index.NOT_ANALYZED ) );
-    cmd.doc.add( new Field( "id", "BBB", Store.YES, Index.NOT_ANALYZED ) );
-    cmd.doc.add( new Field( "subject", "xxxxx", Store.YES, Index.NOT_ANALYZED ) );
-    try {
-      updater.addDoc( cmd );
-      fail( "added a document with multiple ids" );
-    }
-    catch( SolrException ex ) { } // expected
+    assertNull("This test requires a schema that has no version field, " +
+               "it appears the schema file in use has been edited to violate " +
+               "this requirement",
+               h.getCore().getLatestSchema().getFieldOrNull(VersionInfo.VERSION_FIELD));
 
-    // Add a document without an id
-    cmd.indexedId = null;  // reset the id for this add
-    cmd.doc = new Document();
-    cmd.doc.add( new Field( "subject", "xxxxx", Store.YES, Index.NOT_ANALYZED ) );
-    try {
-      updater.addDoc( cmd );
-      fail( "added a document without an ids" );
-    }
-    catch( SolrException ex ) { } // expected
-  }
+    assertU(adoc("id","5"));
+    assertU(adoc("id","6"));
 
-  @Test
-  public void testUncommit() throws Exception {
-    addSimpleDoc("A");
+    // search - not committed - docs should not be found.
+    assertQ(req("q","id:5"), "//*[@numFound='0']");
+    assertQ(req("q","id:6"), "//*[@numFound='0']");
 
-    // search - not committed - "A" should not be found.
-    Map<String,String> args = new HashMap<String, String>();
-    args.put( CommonParams.Q, "id:A" );
-    args.put( "indent", "true" );
-    SolrQueryRequest req = new LocalSolrQueryRequest( h.getCore(), new MapSolrParams( args) );
-    assertQ("\"A\" should not be found.", req
-            ,"//*[@numFound='0']"
-            );
-  }
+    assertU(commit());
 
-  @Test
-  public void testAddCommit() throws Exception {
-    addSimpleDoc("A");
+    // now they should be there
+    assertQ(req("q","id:5"), "//*[@numFound='1']");
+    assertQ(req("q","id:6"), "//*[@numFound='1']");
 
-    // commit "A"
-    SolrCore core = h.getCore();
-    UpdateHandler updater = core.getUpdateHandler();
-    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(false);
-    cmtCmd.waitSearcher = true;
-    updater.commit(cmtCmd);
+    // now delete one
+    assertU(delI("5"));
 
-    // search - "A" should be found.
-    Map<String,String> args = new HashMap<String, String>();
-    args.put( CommonParams.Q, "id:A" );
-    args.put( "indent", "true" );
-    SolrQueryRequest req = new LocalSolrQueryRequest( core, new MapSolrParams( args) );
-    assertQ("\"A\" should be found.", req
-            ,"//*[@numFound='1']"
-            ,"//result/doc[1]/str[@name='id'][.='A']"
-            );
-  }
+    // not committed yet
+    assertQ(req("q","id:5"), "//*[@numFound='1']");
 
-  @Test
-  public void testDeleteCommit() throws Exception {
-    addSimpleDoc("A");
-    addSimpleDoc("B");
-
-    // commit "A", "B"
-    SolrCore core = h.getCore();
-    UpdateHandler updater = core.getUpdateHandler();
-    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(false);
-    cmtCmd.waitSearcher = true;
-    updater.commit(cmtCmd);
-
-    // search - "A","B" should be found.
-    Map<String,String> args = new HashMap<String, String>();
-    args.put( CommonParams.Q, "id:A OR id:B" );
-    args.put( "indent", "true" );
-    SolrQueryRequest req = new LocalSolrQueryRequest( core, new MapSolrParams( args) );
-    assertQ("\"A\" and \"B\" should be found.", req
-            ,"//*[@numFound='2']"
-            ,"//result/doc[1]/str[@name='id'][.='A']"
-            ,"//result/doc[2]/str[@name='id'][.='B']"
-            );
-
-    // delete "B"
-    deleteSimpleDoc("B");
-
-    // search - "A","B" should be found.
-    assertQ("\"A\" and \"B\" should be found.", req
-            ,"//*[@numFound='2']"
-            ,"//result/doc[1]/str[@name='id'][.='A']"
-            ,"//result/doc[2]/str[@name='id'][.='B']"
-            );
- 
-    // commit
-    updater.commit(cmtCmd);
+    assertU(commit());
     
-    // search - "B" should not be found.
-    assertQ("\"B\" should not be found.", req
-        ,"//*[@numFound='1']"
-        ,"//result/doc[1]/str[@name='id'][.='A']"
-        );
+    // 5 should be gone
+    assertQ(req("q","id:5"), "//*[@numFound='0']");
+    assertQ(req("q","id:6"), "//*[@numFound='1']");
+
+    // now delete all
+    assertU(delQ("*:*"));
+
+    // not committed yet
+    assertQ(req("q","id:6"), "//*[@numFound='1']");
+
+    assertU(commit());
+
+    // 6 should be gone
+    assertQ(req("q","id:6"), "//*[@numFound='0']");
+
   }
+
 
   @Test
   public void testAddRollback() throws Exception {
@@ -183,37 +150,41 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
     deleteCore();
     initCore("solrconfig.xml", "schema12.xml");
 
-    addSimpleDoc("A");
+    assertU(adoc("id","A"));
 
     // commit "A"
     SolrCore core = h.getCore();
     UpdateHandler updater = core.getUpdateHandler();
     assertTrue( updater instanceof DirectUpdateHandler2 );
     DirectUpdateHandler2 duh2 = (DirectUpdateHandler2)updater;
-    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(false);
+    SolrQueryRequest ureq = req();
+    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(ureq, false);
     cmtCmd.waitSearcher = true;
-    assertEquals( 1, duh2.addCommands.get() );
-    assertEquals( 1, duh2.addCommandsCumulative.get() );
-    assertEquals( 0, duh2.commitCommands.get() );
+    assertEquals( 1, duh2.addCommands.longValue() );
+    assertEquals( 1, duh2.addCommandsCumulative.longValue() );
+    assertEquals( 0, duh2.commitCommands.longValue() );
     updater.commit(cmtCmd);
-    assertEquals( 0, duh2.addCommands.get() );
-    assertEquals( 1, duh2.addCommandsCumulative.get() );
-    assertEquals( 1, duh2.commitCommands.get() );
+    assertEquals( 0, duh2.addCommands.longValue() );
+    assertEquals( 1, duh2.addCommandsCumulative.longValue() );
+    assertEquals( 1, duh2.commitCommands.longValue() );
+    ureq.close();
 
-    addSimpleDoc("B");
+    assertU(adoc("id","B"));
 
     // rollback "B"
-    RollbackUpdateCommand rbkCmd = new RollbackUpdateCommand();
-    assertEquals( 1, duh2.addCommands.get() );
-    assertEquals( 2, duh2.addCommandsCumulative.get() );
-    assertEquals( 0, duh2.rollbackCommands.get() );
+    ureq = req();
+    RollbackUpdateCommand rbkCmd = new RollbackUpdateCommand(ureq);
+    assertEquals( 1, duh2.addCommands.longValue() );
+    assertEquals( 2, duh2.addCommandsCumulative.longValue() );
+    assertEquals( 0, duh2.rollbackCommands.longValue() );
     updater.rollback(rbkCmd);
-    assertEquals( 0, duh2.addCommands.get() );
-    assertEquals( 1, duh2.addCommandsCumulative.get() );
-    assertEquals( 1, duh2.rollbackCommands.get() );
+    assertEquals( 0, duh2.addCommands.longValue() );
+    assertEquals( 1, duh2.addCommandsCumulative.longValue() );
+    assertEquals( 1, duh2.rollbackCommands.longValue() );
+    ureq.close();
     
     // search - "B" should not be found.
-    Map<String,String> args = new HashMap<String, String>();
+    Map<String,String> args = new HashMap<>();
     args.put( CommonParams.Q, "id:A OR id:B" );
     args.put( "indent", "true" );
     SolrQueryRequest req = new LocalSolrQueryRequest( core, new MapSolrParams( args) );
@@ -224,7 +195,7 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
 
     // Add a doc after the rollback to make sure we can continue to add/delete documents
     // after a rollback as normal
-    addSimpleDoc("ZZZ");
+    assertU(adoc("id","ZZZ"));
     assertU(commit());
     assertQ("\"ZZZ\" must be found.", req("q", "id:ZZZ")
             ,"//*[@numFound='1']"
@@ -238,26 +209,28 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
     deleteCore();
     initCore("solrconfig.xml", "schema12.xml");
 
-    addSimpleDoc("A");
-    addSimpleDoc("B");
+    assertU(adoc("id","A"));
+    assertU(adoc("id","B"));
 
     // commit "A", "B"
     SolrCore core = h.getCore();
     UpdateHandler updater = core.getUpdateHandler();
     assertTrue( updater instanceof DirectUpdateHandler2 );
     DirectUpdateHandler2 duh2 = (DirectUpdateHandler2)updater;
-    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(false);
+    SolrQueryRequest ureq = req();
+    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(ureq, false);
     cmtCmd.waitSearcher = true;
-    assertEquals( 2, duh2.addCommands.get() );
-    assertEquals( 2, duh2.addCommandsCumulative.get() );
-    assertEquals( 0, duh2.commitCommands.get() );
+    assertEquals( 2, duh2.addCommands.longValue() );
+    assertEquals( 2, duh2.addCommandsCumulative.longValue() );
+    assertEquals( 0, duh2.commitCommands.longValue() );
     updater.commit(cmtCmd);
-    assertEquals( 0, duh2.addCommands.get() );
-    assertEquals( 2, duh2.addCommandsCumulative.get() );
-    assertEquals( 1, duh2.commitCommands.get() );
+    assertEquals( 0, duh2.addCommands.longValue() );
+    assertEquals( 2, duh2.addCommandsCumulative.longValue() );
+    assertEquals( 1, duh2.commitCommands.longValue() );
+    ureq.close();
 
     // search - "A","B" should be found.
-    Map<String,String> args = new HashMap<String, String>();
+    Map<String,String> args = new HashMap<>();
     args.put( CommonParams.Q, "id:A OR id:B" );
     args.put( "indent", "true" );
     SolrQueryRequest req = new LocalSolrQueryRequest( core, new MapSolrParams( args) );
@@ -268,8 +241,8 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
             );
 
     // delete "B"
-    deleteSimpleDoc("B");
-    
+    assertU(delI("B"));
+
     // search - "A","B" should be found.
     assertQ("\"A\" and \"B\" should be found.", req
         ,"//*[@numFound='2']"
@@ -278,14 +251,16 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
         );
 
     // rollback "B"
-    RollbackUpdateCommand rbkCmd = new RollbackUpdateCommand();
-    assertEquals( 1, duh2.deleteByIdCommands.get() );
-    assertEquals( 1, duh2.deleteByIdCommandsCumulative.get() );
-    assertEquals( 0, duh2.rollbackCommands.get() );
+    ureq = req();
+    RollbackUpdateCommand rbkCmd = new RollbackUpdateCommand(ureq);
+    assertEquals( 1, duh2.deleteByIdCommands.longValue() );
+    assertEquals( 1, duh2.deleteByIdCommandsCumulative.longValue() );
+    assertEquals( 0, duh2.rollbackCommands.longValue() );
     updater.rollback(rbkCmd);
-    assertEquals( 0, duh2.deleteByIdCommands.get() );
-    assertEquals( 0, duh2.deleteByIdCommandsCumulative.get() );
-    assertEquals( 1, duh2.rollbackCommands.get() );
+    ureq.close();
+    assertEquals( 0, duh2.deleteByIdCommands.longValue() );
+    assertEquals( 0, duh2.deleteByIdCommandsCumulative.longValue() );
+    assertEquals( 1, duh2.rollbackCommands.longValue() );
     
     // search - "B" should be found.
     assertQ("\"B\" should be found.", req
@@ -296,7 +271,7 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
 
     // Add a doc after the rollback to make sure we can continue to add/delete documents
     // after a rollback as normal
-    addSimpleDoc("ZZZ");
+    assertU(adoc("id","ZZZ"));
     assertU(commit());
     assertQ("\"ZZZ\" must be found.", req("q", "id:ZZZ")
             ,"//*[@numFound='1']"
@@ -311,53 +286,111 @@ public class DirectUpdateHandlerTest extends SolrTestCaseJ4 {
     assertU(commit());
 
     assertU(adoc("id","3"));
-    assertU(adoc("id","2"));
+    assertU(adoc("id","2")); // dup, triggers delete
     assertU(adoc("id","4"));
     assertU(commit());
 
     SolrQueryRequest sr = req("q","foo");
-    SolrIndexReader r = sr.getSearcher().getReader();
-    assertTrue(r.maxDoc() > r.numDocs());   // should have deletions
-    assertTrue(r.getLeafReaders().length > 1);  // more than 1 segment
+    DirectoryReader r = sr.getSearcher().getIndexReader();
+    assertTrue("maxDoc !> numDocs ... expected some deletions",
+               r.maxDoc() > r.numDocs());
     sr.close();
 
     assertU(commit("expungeDeletes","true"));
 
     sr = req("q","foo");
-    r = sr.getSearcher().getReader();
+    r = sr.getSearcher().getIndexReader();
     assertEquals(r.maxDoc(), r.numDocs());  // no deletions
     assertEquals(4,r.maxDoc());             // no dups
-    assertTrue(r.getLeafReaders().length > 1);  // still more than 1 segment
     sr.close();
   }
   
-  private void addSimpleDoc(String id) throws Exception {
-    SolrCore core = h.getCore();
+  @Test
+  public void testPrepareCommit() throws Exception {
+    assertU(adoc("id", "999"));
+    assertU(optimize());     // make sure there's just one segment
+    assertU(commit());       // commit a second time to make sure index files aren't still referenced by the old searcher
+
+    SolrQueryRequest sr = req();
+    DirectoryReader r = sr.getSearcher().getIndexReader();
+    Directory d = r.directory();
+
+    log.info("FILES before addDoc="+ Arrays.asList(d.listAll()));
+    assertU(adoc("id", "1"));
+
+    int nFiles = d.listAll().length;
+    log.info("FILES before prepareCommit="+ Arrays.asList(d.listAll()));
+
+    updateJ("", params("prepareCommit", "true"));
+
+    log.info("FILES after prepareCommit="+Arrays.asList(d.listAll()));
+    assertTrue( d.listAll().length > nFiles);  // make sure new index files were actually written
     
-    UpdateHandler updater = core.getUpdateHandler();
-    
-    AddUpdateCommand cmd = new AddUpdateCommand();
-    cmd.overwriteCommitted = true;
-    cmd.overwritePending = true;
-    cmd.allowDups = false;
-    
-    // Add a document
-    cmd.doc = new Document();
-    cmd.doc.add( new Field( "id", id, Store.YES, Index.NOT_ANALYZED ) );
-    updater.addDoc( cmd );
+    assertJQ(req("q", "id:1")
+        , "/response/numFound==0"
+    );
+
+    updateJ("", params("rollback","true"));
+    assertU(commit());
+
+    assertJQ(req("q", "id:1")
+        , "/response/numFound==0"
+    );
+
+    assertU(adoc("id","1"));
+    updateJ("", params("prepareCommit","true"));
+
+    assertJQ(req("q", "id:1")
+        , "/response/numFound==0"
+    );
+
+    assertU(commit());
+
+    assertJQ(req("q", "id:1")
+        , "/response/numFound==1"
+    );
+
+    sr.close();
   }
-  
-  private void deleteSimpleDoc(String id) throws Exception {
+
+  @Test
+  public void testPostSoftCommitEvents() throws Exception {
     SolrCore core = h.getCore();
-    
-    UpdateHandler updater = core.getUpdateHandler();
-    
-    // Delete the document
-    DeleteUpdateCommand cmd = new DeleteUpdateCommand();
-    cmd.id = id;
-    cmd.fromCommitted = true;
-    cmd.fromPending = true;
-    
-    updater.delete(cmd);
+    assert core != null;
+    DirectUpdateHandler2 updater = (DirectUpdateHandler2) core.getUpdateHandler();
+    MySolrEventListener listener = new MySolrEventListener();
+    core.registerNewSearcherListener(listener);
+    updater.registerSoftCommitCallback(listener);
+    assertU(adoc("id", "999"));
+    assertU(commit("softCommit", "true"));
+    assertEquals("newSearcher was called more than once", 1, listener.newSearcherCount.get());
+    assertFalse("postSoftCommit was not called", listener.postSoftCommitAt.get() == Long.MAX_VALUE);
+    assertTrue("newSearcher was called after postSoftCommitCallback", listener.postSoftCommitAt.get() >= listener.newSearcherOpenedAt.get());
+  }
+
+  static class MySolrEventListener implements SolrEventListener {
+    AtomicInteger newSearcherCount = new AtomicInteger(0);
+    AtomicLong newSearcherOpenedAt = new AtomicLong(Long.MAX_VALUE);
+    AtomicLong postSoftCommitAt = new AtomicLong(Long.MAX_VALUE);
+
+    @Override
+    public void postCommit() {
+    }
+
+    @Override
+    public void postSoftCommit() {
+      postSoftCommitAt.set(System.nanoTime());
+    }
+
+    @Override
+    public void newSearcher(SolrIndexSearcher newSearcher, SolrIndexSearcher currentSearcher) {
+      newSearcherCount.incrementAndGet();
+      newSearcherOpenedAt.set(newSearcher.getOpenNanoTime());
+    }
+
+    @Override
+    public void init(NamedList args) {
+
+    }
   }
 }

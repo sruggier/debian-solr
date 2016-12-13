@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
 /**
@@ -24,11 +23,11 @@ package org.apache.solr.common.params;
  */
 public class AppendedSolrParams extends DefaultSolrParams {
 
-  /**
-   * @deprecated (3.6) Use {@link SolrParams#wrapAppended(SolrParams, SolrParams)} instead.
-   */
-  @Deprecated
-  public AppendedSolrParams(SolrParams main, SolrParams extra) {
+  public static AppendedSolrParams wrapAppended(SolrParams params, SolrParams extra) {
+    return new AppendedSolrParams(params, extra);
+  }
+
+  private AppendedSolrParams(SolrParams main, SolrParams extra) {
     super(main, extra);
   }
 

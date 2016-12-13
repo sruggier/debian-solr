@@ -1,5 +1,4 @@
-/**
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,27 +14,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
 import java.util.Locale;
 
+import org.apache.solr.common.SolrException;
+
 /**
  * @since solr 1.3
  */
-public interface CoreAdminParams 
+public abstract class CoreAdminParams
 {
   /** What Core are we talking about **/
   public final static String CORE = "core";
 
-  /** Persistent -- should it save the cores state? **/
-  public final static String PERSISTENT = "persistent";
+  /** Should the STATUS request include index info **/
+  public final static String INDEX_INFO = "indexInfo";
   
   /** If you rename something, what is the new name **/
   public final static String NAME = "name";
 
-  /** If you rename something, what is the new name **/
+  /** Core data directory **/
   public final static String DATA_DIR = "dataDir";
+
+  /** Core updatelog directory **/
+  public final static String ULOG_DIR = "ulogDir";
 
   /** Name of the other core in actions involving 2 cores **/
   public final static String OTHER = "other";
@@ -45,6 +48,9 @@ public interface CoreAdminParams
   
   /** If you specify a schema, what is its name **/
   public final static String SCHEMA = "schema";
+
+  /** If you specify a configset, what is its name **/
+  public final static String CONFIGSET = "configSet";
   
   /** If you specify a config, what is its name **/
   public final static String CONFIG = "config";
@@ -66,8 +72,24 @@ public interface CoreAdminParams
   /** The collection name in solr cloud */
   public final static String COLLECTION = "collection";
 
+  /** The replica name in solr cloud */
+  public final static String REPLICA = "replica";
+  
   /** The shard id in solr cloud */
   public final static String SHARD = "shard";
+
+  /** The target core to which a split index should be written to
+   * Multiple targetCores can be specified by multiple targetCore parameters */
+  public final static String TARGET_CORE = "targetCore";
+
+  /** The hash ranges to be used to split a shard or an index */
+  public final static String RANGES = "ranges";
+  
+  public static final String ROLES = "roles";
+
+  public static final String REQUESTID = "requestid";
+
+  public static final String CORE_NODE_NAME = "coreNodeName";
   
   /** Prefix for core property name=value pair **/
   public final static String PROPERTY_PREFIX = "property.";
@@ -75,26 +97,82 @@ public interface CoreAdminParams
   /** If you unload a core, delete the index too */
   public final static String DELETE_INDEX = "deleteIndex";
 
+  public static final String DELETE_DATA_DIR = "deleteDataDir";
+
+  public static final String DELETE_INSTANCE_DIR = "deleteInstanceDir";
+
+  public static final String LOAD_ON_STARTUP = "loadOnStartup";
+  
+  public static final String TRANSIENT = "transient";
+
+  // Node to create a replica on for ADDREPLICA at least.
+  public static final String NODE = "node";
+
+  /**
+   * A parameter to specify the name of the backup repository to be used.
+   */
+  public static final String BACKUP_REPOSITORY = "repository";
+
+  /**
+   * A parameter to specify the location where the backup should be stored.
+   */
+  public static final String BACKUP_LOCATION = "location";
+
+  /**
+   * A parameter to specify the name of the commit to be stored during the backup operation.
+   */
+  public static final String COMMIT_NAME = "commitName";
+
+  /**
+   * A boolean parameter specifying if a core is being created as part of a new collection
+   */
+  public static final String NEW_COLLECTION = "newCollection";
+
   public enum CoreAdminAction {
-    STATUS,  
-    LOAD,
+    STATUS(true),
     UNLOAD,
     RELOAD,
     CREATE,
-    PERSIST,
     SWAP,
     RENAME,
-    @Deprecated
-    ALIAS,
-    MERGEINDEXES;
-    
-    public static CoreAdminAction get( String p )
-    {
-      if( p != null ) {
+    MERGEINDEXES,
+    SPLIT,
+    PREPRECOVERY,
+    REQUESTRECOVERY,
+    REQUESTSYNCSHARD,
+    DELETEALIAS,
+    REQUESTBUFFERUPDATES,
+    REQUESTAPPLYUPDATES,
+    OVERSEEROP,
+    REQUESTSTATUS(true),
+    REJOINLEADERELECTION,
+    //internal API used by force shard leader election
+    FORCEPREPAREFORLEADERSHIP,
+    INVOKE,
+    //Internal APIs to backup and restore a core
+    BACKUPCORE,
+    RESTORECORE,
+    CREATESNAPSHOT,
+    DELETESNAPSHOT,
+    LISTSNAPSHOTS;
+
+    public final boolean isRead;
+
+    CoreAdminAction(boolean isRead) {
+      this.isRead = isRead;
+    }
+
+    CoreAdminAction() {
+      this.isRead = false;
+    }
+
+    public static CoreAdminAction get( String p ) {
+      if (p != null) {
         try {
-          return CoreAdminAction.valueOf( p.toUpperCase(Locale.ENGLISH) );
+          return CoreAdminAction.valueOf(p.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+          throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Wrong core admin action");
         }
-        catch( Exception ex ) {}
       }
       return null; 
     }

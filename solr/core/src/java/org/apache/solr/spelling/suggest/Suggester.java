@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,16 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.spelling.suggest;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
-import java.util.Collection;
+import java.lang.invoke.MethodHandles;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 
@@ -31,12 +32,16 @@ import org.apache.lucene.analysis.Token;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.spell.Dictionary;
 import org.apache.lucene.search.spell.HighFrequencyDictionary;
+import org.apache.lucene.search.spell.SuggestMode;
 import org.apache.lucene.search.suggest.FileDictionary;
 import org.apache.lucene.search.suggest.Lookup;
 import org.apache.lucene.search.suggest.Lookup.LookupResult;
+import org.apache.lucene.search.suggest.analyzing.AnalyzingSuggester;
+import org.apache.lucene.search.suggest.fst.WFSTCompletionLookup;
 import org.apache.lucene.util.CharsRef;
-
+import org.apache.lucene.util.IOUtils;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.core.CloseHook;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.spelling.SolrSpellChecker;
@@ -49,7 +54,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class Suggester extends SolrSpellChecker {
-  private static final Logger LOG = LoggerFactory.getLogger(Suggester.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   
   /** Location of the source data - either a path to a file, or null for the
    * current IndexReader.
@@ -97,9 +102,25 @@ public class Suggester extends SolrSpellChecker {
       lookupImpl = FSTLookupFactory.class.getName();
     }
 
-    factory = (LookupFactory) core.getResourceLoader().newInstance(lookupImpl);
+    factory = core.getResourceLoader().newInstance(lookupImpl, LookupFactory.class);
     
     lookup = factory.create(config, core);
+    core.addCloseHook(new CloseHook() {
+      @Override
+      public void preClose(SolrCore core) {
+        if (lookup != null && lookup instanceof Closeable) {
+          try {
+            ((Closeable) lookup).close();
+          } catch (IOException e) {
+            LOG.warn("Could not close the suggester lookup.", e);
+          }
+        }
+      }
+      
+      @Override
+      public void postClose(SolrCore core) {}
+    });
+    
     String store = (String)config.get(STORE_DIR);
     if (store != null) {
       storeDir = new File(store);
@@ -117,11 +138,12 @@ public class Suggester extends SolrSpellChecker {
         }
       }
     }
+    
     return name;
   }
   
   @Override
-  public void build(SolrCore core, SolrIndexSearcher searcher) {
+  public void build(SolrCore core, SolrIndexSearcher searcher) throws IOException {
     LOG.info("build()");
     if (sourceLocation == null) {
       reader = searcher.getIndexReader();
@@ -129,30 +151,26 @@ public class Suggester extends SolrSpellChecker {
     } else {
       try {
         dictionary = new FileDictionary(new InputStreamReader(
-                core.getResourceLoader().openResource(sourceLocation), "UTF-8"));
+                core.getResourceLoader().openResource(sourceLocation), StandardCharsets.UTF_8));
       } catch (UnsupportedEncodingException e) {
         // should not happen
         LOG.error("should not happen", e);
       }
     }
-    try {
-      lookup.build(dictionary);
-      if (storeDir != null) {
-        File target = new File(storeDir, factory.storeFileName());
-        if(!lookup.store(new FileOutputStream(target))) {
-          if (sourceLocation == null) {
-            assert reader != null && field != null;
-            LOG.error("Store Lookup build from index on field: " + field + " failed reader has: " + reader.maxDoc() + " docs");
-          } else {
-            LOG.error("Store Lookup build from sourceloaction: " + sourceLocation + " failed");
-          }
-        } else {
-          LOG.info("Stored suggest data to: " + target.getAbsolutePath());
-        }
-      }
 
-    } catch (Exception e) {
-      LOG.error("Error while building or storing Suggester data", e);
+    lookup.build(dictionary);
+    if (storeDir != null) {
+      File target = new File(storeDir, factory.storeFileName());
+      if(!lookup.store(new FileOutputStream(target))) {
+        if (sourceLocation == null) {
+          assert reader != null && field != null;
+          LOG.error("Store Lookup build from index on field: " + field + " failed reader has: " + reader.maxDoc() + " docs");
+        } else {
+          LOG.error("Store Lookup build from sourceloaction: " + sourceLocation + " failed");
+        }
+      } else {
+        LOG.info("Stored suggest data to: " + target.getAbsolutePath());
+      }
     }
   }
 
@@ -161,8 +179,13 @@ public class Suggester extends SolrSpellChecker {
     LOG.info("reload()");
     if (dictionary == null && storeDir != null) {
       // this may be a firstSearcher event, try loading it
-      if (lookup.load(new FileInputStream(new File(storeDir, factory.storeFileName())))) {
-        return;  // loaded ok
+      FileInputStream is = new FileInputStream(new File(storeDir, factory.storeFileName()));
+      try {
+        if (lookup.load(is)) {
+          return;  // loaded ok
+        }
+      } finally {
+        IOUtils.closeWhileHandlingException(is);
       }
       LOG.debug("load failed, need to build Lookup again");
     }
@@ -171,11 +194,6 @@ public class Suggester extends SolrSpellChecker {
   }
 
   static SpellingResult EMPTY_RESULT = new SpellingResult();
-
-  @Override
-  public SpellingResult getSuggestions(Collection<Token> tokens, IndexReader reader, int count, boolean onlyMorePopular, boolean extendedResults) throws IOException {
-    return getSuggestions(new SpellingOptions(tokens, reader, count, onlyMorePopular, extendedResults, Float.MIN_VALUE, null));
-  }
 
   @Override
   public SpellingResult getSuggestions(SpellingOptions options) throws IOException {
@@ -190,12 +208,14 @@ public class Suggester extends SolrSpellChecker {
       scratch.chars = t.buffer();
       scratch.offset = 0;
       scratch.length = t.length();
-      List<LookupResult> suggestions = lookup.lookup(scratch,
-          options.onlyMorePopular, options.count);
+      boolean onlyMorePopular = (options.suggestMode == SuggestMode.SUGGEST_MORE_POPULAR) &&
+        !(lookup instanceof WFSTCompletionLookup) &&
+        !(lookup instanceof AnalyzingSuggester);
+      List<LookupResult> suggestions = lookup.lookup(scratch, onlyMorePopular, options.count);
       if (suggestions == null) {
         continue;
       }
-      if (!options.onlyMorePopular) {
+      if (options.suggestMode != SuggestMode.SUGGEST_MORE_POPULAR) {
         Collections.sort(suggestions);
       }
       for (LookupResult lr : suggestions) {

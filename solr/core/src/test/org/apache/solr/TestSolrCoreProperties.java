@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,144 +16,86 @@
  */
 package org.apache.solr;
 
-import java.io.BufferedReader;
+import org.apache.commons.io.FileUtils;
+import org.apache.lucene.util.IOUtils;
+import org.apache.solr.client.solrj.embedded.JettySolrRunner;
+import org.apache.solr.client.solrj.response.QueryResponse;
+import org.apache.solr.common.params.SolrParams;
+import org.apache.solr.common.util.NamedList;
+import org.junit.BeforeClass;
+
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Properties;
-
-import org.apache.commons.io.IOUtils;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.SystemPropertiesRestoreRule;
-import org.apache.solr.client.solrj.SolrServer;
-import org.apache.solr.client.solrj.SolrServerException;
-import org.apache.solr.client.solrj.embedded.JettySolrRunner;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
-import org.apache.solr.client.solrj.response.QueryResponse;
-import org.apache.solr.common.params.ModifiableSolrParams;
-import org.apache.solr.util.AbstractSolrTestCase;
-import org.junit.Rule;
-import org.junit.rules.RuleChain;
-import org.junit.rules.TestRule;
-
 
 /**
  * <p> Test for Loading core properties from a properties file </p>
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
-public class TestSolrCoreProperties extends LuceneTestCase {
-  private static final String CONF_DIR = "." + File.separator + "solr" + File.separator + "conf" + File.separator;
-  JettySolrRunner solrJetty;
-  SolrServer client;
+public class TestSolrCoreProperties extends SolrJettyTestBase {
 
-  @Rule
-  public TestRule solrTestRules = 
-    RuleChain.outerRule(new SystemPropertiesRestoreRule());
+  // TODO these properties files don't work with configsets
 
-  @Override
-  public void setUp() throws Exception {
-    super.setUp();
-    setUpMe();
-    System.setProperty("solr.solr.home", getHomeDir());
-    System.setProperty("solr.data.dir", getDataDir());
-    
-    solrJetty = new JettySolrRunner("/solr", 0);
+  @BeforeClass
+  public static void beforeTest() throws Exception {
+    File homeDir = createTempDir().toFile();
 
-    solrJetty.start();
-    String url = "http://localhost:" + solrJetty.getLocalPort() + "/solr";
-    client = new CommonsHttpSolrServer(url);
-
-  }
-
-  @Override
-  public void tearDown() throws Exception {
-    solrJetty.stop();
-    SolrTestCaseJ4.closeDirectories();
-    AbstractSolrTestCase.recurseDelete(homeDir);
-    super.tearDown();
-  }
-
-  public void testSimple() throws SolrServerException {
-    ModifiableSolrParams params = new ModifiableSolrParams();
-    params.add("q", "*:*");
-    QueryResponse res = client.query(params);
-    assertEquals(0, res.getResults().getNumFound());
-  }
-
-
-  File homeDir;
-  File confDir;
-  File dataDir;
-
-  /**
-   * if masterPort is null, this instance is a master -- otherwise this instance is a slave, and assumes the master is
-   * on localhost at the specified port.
-   */
-
-
-  public String getHomeDir() {
-    return homeDir.toString();
-  }
-
-  public String getSchemaFile() {
-    return CONF_DIR + "schema-replication1.xml";
-  }
-
-  public String getConfDir() {
-    return confDir.toString();
-  }
-
-  public String getDataDir() {
-    return dataDir.toString();
-  }
-
-  public String getSolrConfigFile() {
-    return CONF_DIR + "solrconfig-solcoreproperties.xml";
-  }
-
-  public void setUpMe() throws Exception {
-
-    homeDir = new File(TEMP_DIR,
-            getClass().getName() + "-" + System.currentTimeMillis());
-
-
-    dataDir = new File(homeDir, "data");
-    confDir = new File(homeDir, "conf");
-
+    File collDir = new File(homeDir, "collection1");
+    File dataDir = new File(collDir, "data");
+    File confDir = new File(collDir, "conf");
 
     homeDir.mkdirs();
+    collDir.mkdirs();
     dataDir.mkdirs();
     confDir.mkdirs();
 
-    File f = new File(confDir, "solrconfig.xml");
-    copyFile(SolrTestCaseJ4.getFile(getSolrConfigFile()), f);
+    FileUtils.copyFile(new File(SolrTestCaseJ4.TEST_HOME(), "solr.xml"), new File(homeDir, "solr.xml"));
+    String src_dir = TEST_HOME() + "/collection1/conf";
+    FileUtils.copyFile(new File(src_dir, "schema-tiny.xml"), 
+                       new File(confDir, "schema.xml"));
+    FileUtils.copyFile(new File(src_dir, "solrconfig-solcoreproperties.xml"), 
+                       new File(confDir, "solrconfig.xml"));
+    FileUtils.copyFile(new File(src_dir, "solrconfig.snippet.randomindexconfig.xml"), 
+                       new File(confDir, "solrconfig.snippet.randomindexconfig.xml"));
 
-    f = new File(confDir, "schema.xml");
-    copyFile(SolrTestCaseJ4.getFile(getSchemaFile()), f);
     Properties p = new Properties();
     p.setProperty("foo.foo1", "f1");
     p.setProperty("foo.foo2", "f2");
-    FileOutputStream fos = new FileOutputStream(confDir + File.separator + "solrcore.properties");
+    Writer fos = new OutputStreamWriter(new FileOutputStream(new File(confDir, "solrcore.properties")), StandardCharsets.UTF_8);
     p.store(fos, null);
-    fos.close();
-    IOUtils.closeQuietly(fos);
+    IOUtils.close(fos);
 
-  }
+    Files.createFile(collDir.toPath().resolve("core.properties"));
 
 
-  private void copyFile(File src, File dst) throws IOException {
-    BufferedReader in = new BufferedReader(new FileReader(src));
-    Writer out = new FileWriter(dst);
-
-    for (String line = in.readLine(); null != line; line = in.readLine()) {
-      out.write(line);
+    Properties nodeProperties = new Properties();
+    // this sets the property for jetty starting SolrDispatchFilter
+    if (System.getProperty("solr.data.dir") == null && System.getProperty("solr.hdfs.home") == null) {
+      nodeProperties.setProperty("solr.data.dir", createTempDir().toFile().getCanonicalPath());
     }
-    in.close();
-    out.close();
+    jetty = new JettySolrRunner(homeDir.getAbsolutePath(), nodeProperties, buildJettyConfig("/solr"));
+
+    jetty.start();
+    port = jetty.getLocalPort();
+
+    //createJetty(homeDir.getAbsolutePath(), null, null);
   }
+
+  public void testSimple() throws Exception {
+    SolrParams params = params("q", "*:*", 
+                               "echoParams", "all");
+    QueryResponse res = getSolrClient().query(params);
+    assertEquals(0, res.getResults().getNumFound());
+
+    NamedList echoedParams = (NamedList) res.getHeader().get("params");
+    assertEquals("f1", echoedParams.get("p1"));
+    assertEquals("f2", echoedParams.get("p2"));
+  }
+
 }

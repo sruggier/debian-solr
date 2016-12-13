@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,97 +14,103 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
 
-import org.apache.lucene.index.*;
-import org.apache.lucene.store.*;
-import org.apache.lucene.util.Version;
-import org.apache.solr.common.SolrException;
-import org.apache.solr.core.DirectoryFactory;
-import org.apache.solr.schema.IndexSchema;
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.lucene.codecs.Codec;
+import org.apache.lucene.index.IndexDeletionPolicy;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.InfoStream;
+import org.apache.solr.common.util.IOUtils;
+import org.apache.solr.common.util.SuppressForbidden;
+import org.apache.solr.core.DirectoryFactory;
+import org.apache.solr.core.DirectoryFactory.DirContext;
+import org.apache.solr.core.SolrCore;
+import org.apache.solr.schema.IndexSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.text.DateFormat;
-import java.util.Date;
-import java.util.Locale;
 
 /**
  * An IndexWriter that is configured via Solr config mechanisms.
  *
-* @version $Id$
-* @since solr 0.9
-*/
+ * @since solr 0.9
+ */
 
 public class SolrIndexWriter extends IndexWriter {
-  private static Logger log = LoggerFactory.getLogger(SolrIndexWriter.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  // These should *only* be used for debugging or monitoring purposes
+  public static final AtomicLong numOpens = new AtomicLong();
+  public static final AtomicLong numCloses = new AtomicLong();
+  
+  /** Stored into each Lucene commit to record the
+   *  System.currentTimeMillis() when commit was called. */
+  public static final String COMMIT_TIME_MSEC_KEY = "commitTimeMSec";
 
-  public final static String LOCK_TYPE_SIMPLE = "simple";
-  public final static String LOCK_TYPE_NATIVE = "native";
-  public final static String LOCK_TYPE_SINGLE = "single";
-  public final static String LOCK_TYPE_NONE   = "none";
+  private final Object CLOSE_LOCK = new Object();
   
   String name;
-  private PrintStream infoStream;
+  private DirectoryFactory directoryFactory;
+  private InfoStream infoStream;
+  private Directory directory;
 
-  public static Directory getDirectory(String path, DirectoryFactory directoryFactory, SolrIndexConfig config) throws IOException {
-    
-    Directory d = directoryFactory.open(path);
+  public static SolrIndexWriter create(SolrCore core, String name, String path, DirectoryFactory directoryFactory, boolean create, IndexSchema schema, SolrIndexConfig config, IndexDeletionPolicy delPolicy, Codec codec) throws IOException {
 
-    String rawLockType = config.lockType;
-    final String lockType = rawLockType.toLowerCase(Locale.ENGLISH).trim();
-
-    if (LOCK_TYPE_SIMPLE.equals(lockType)) {
-      // multiple SimpleFSLockFactory instances should be OK
-      d.setLockFactory(new SimpleFSLockFactory(path));
-    } else if (LOCK_TYPE_NATIVE.equals(lockType)) {
-      d.setLockFactory(new NativeFSLockFactory(path));
-    } else if (LOCK_TYPE_SINGLE.equals(lockType)) {
-      if (!(d.getLockFactory() instanceof SingleInstanceLockFactory))
-        d.setLockFactory(new SingleInstanceLockFactory());
-    } else if (LOCK_TYPE_NONE.equals(lockType)) {
-      // Recipe for disaster
-      log.error("CONFIGURATION WARNING: locks are disabled on " + path);      
-      d.setLockFactory(NoLockFactory.getNoLockFactory());
-    } else {
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
-              "Unrecognized lockType: " + rawLockType);
+    SolrIndexWriter w = null;
+    final Directory d = directoryFactory.get(path, DirContext.DEFAULT, config.lockType);
+    try {
+      w = new SolrIndexWriter(core, name, path, d, create, schema, 
+                              config, delPolicy, codec);
+      w.setDirectoryFactory(directoryFactory);
+      return w;
+    } finally {
+      if (null == w && null != d) { 
+        directoryFactory.doneWithDirectory(d);
+        directoryFactory.release(d);
+      }
     }
-    return d;
   }
-  
-  public SolrIndexWriter(String name, String path, DirectoryFactory dirFactory, boolean create, IndexSchema schema, SolrIndexConfig config, IndexDeletionPolicy delPolicy) throws IOException {
-    super(
-        getDirectory(path, dirFactory, config),
-        config.toIndexWriterConfig(schema).
-            setOpenMode(create ? IndexWriterConfig.OpenMode.CREATE : IndexWriterConfig.OpenMode.APPEND).
-            setIndexDeletionPolicy(delPolicy)
-    );
 
-    if (config.maxFieldLength != -1)
-      setMaxFieldLength(config.maxFieldLength);
+  public SolrIndexWriter(String name, Directory d, IndexWriterConfig conf) throws IOException {
+    super(d, conf);
+    this.name = name;
+    this.infoStream = conf.getInfoStream();
+    this.directory = d;
+    numOpens.incrementAndGet();
+    log.debug("Opened Writer " + name);
+  }
 
+  private SolrIndexWriter(SolrCore core, String name, String path, Directory directory, boolean create, IndexSchema schema, SolrIndexConfig config, IndexDeletionPolicy delPolicy, Codec codec) throws IOException {
+    super(directory,
+          config.toIndexWriterConfig(core).
+          setOpenMode(create ? IndexWriterConfig.OpenMode.CREATE : IndexWriterConfig.OpenMode.APPEND).
+          setIndexDeletionPolicy(delPolicy).setCodec(codec)
+          );
     log.debug("Opened Writer " + name);
     this.name = name;
-
-    String infoStreamFile = config.infoStreamFile;
-    if (infoStreamFile != null) {
-      File f = new File(infoStreamFile);
-      File parent = f.getParentFile();
-      if (parent != null) parent.mkdirs();
-      FileOutputStream fos = new FileOutputStream(f, true);
-      infoStream = new TimeLoggingPrintStream(fos, true);
-      setInfoStream(infoStream);
-    }
+    infoStream = getConfig().getInfoStream();
+    this.directory = directory;
+    numOpens.incrementAndGet();
   }
 
+  @SuppressForbidden(reason = "Need currentTimeMillis, commit time should be used only for debugging purposes, " +
+      " but currently suspiciously used for replication as well")
+  public static void setCommitData(IndexWriter iw) {
+    log.info("Calling setCommitData with IW:" + iw.toString());
+    final Map<String,String> commitData = new HashMap<>();
+    commitData.put(COMMIT_TIME_MSEC_KEY, String.valueOf(System.currentTimeMillis()));
+    iw.setLiveCommitData(commitData.entrySet());
+  }
+
+  private void setDirectoryFactory(DirectoryFactory factory) {
+    this.directoryFactory = factory;
+  }
 
   /**
    * use DocumentBuilder now...
@@ -137,25 +143,58 @@ public class SolrIndexWriter extends IndexWriter {
    * ****
    */
   private volatile boolean isClosed = false;
+
   @Override
   public void close() throws IOException {
     log.debug("Closing Writer " + name);
     try {
       super.close();
-      if(infoStream != null) {
-        infoStream.close();
+    } catch (Throwable t) {
+      if (t instanceof OutOfMemoryError) {
+        throw (OutOfMemoryError) t;
       }
+      log.error("Error closing IndexWriter", t);
     } finally {
-      isClosed = true;
+      cleanup();
     }
   }
 
   @Override
   public void rollback() throws IOException {
+    log.debug("Rollback Writer " + name);
     try {
       super.rollback();
+    } catch (Throwable t) {
+      if (t instanceof OutOfMemoryError) {
+        throw (OutOfMemoryError) t;
+      }
+      log.error("Exception rolling back IndexWriter", t);
     } finally {
-      isClosed = true;
+      cleanup();
+    }
+  }
+
+  private void cleanup() throws IOException {
+    // It's kind of an implementation detail whether
+    // or not IndexWriter#close calls rollback, so
+    // we assume it may or may not
+    boolean doClose = false;
+    synchronized (CLOSE_LOCK) {
+      if (!isClosed) {
+        doClose = true;
+        isClosed = true;
+      }
+    }
+    if (doClose) {
+      
+      if (infoStream != null) {
+        IOUtils.closeQuietly(infoStream);
+      }
+      numCloses.incrementAndGet();
+
+      if (directoryFactory != null) {
+        directoryFactory.release(directory);
+      }
     }
   }
 
@@ -163,6 +202,7 @@ public class SolrIndexWriter extends IndexWriter {
   protected void finalize() throws Throwable {
     try {
       if(!isClosed){
+        assert false : "SolrIndexWriter was not closed prior to finalize()";
         log.error("SolrIndexWriter was not closed prior to finalize(), indicates a bug -- POSSIBLE RESOURCE LEAK!!!");
         close();
       }
@@ -170,24 +210,5 @@ public class SolrIndexWriter extends IndexWriter {
       super.finalize();
     }
     
-  }
-  
-  // Helper class for adding timestamps to infoStream logging
-  class TimeLoggingPrintStream extends PrintStream {
-    private DateFormat dateFormat;
-    public TimeLoggingPrintStream(OutputStream underlyingOutputStream,
-        boolean autoFlush) {
-      super(underlyingOutputStream, autoFlush);
-      this.dateFormat = DateFormat.getDateTimeInstance();
-    }
-
-    // We might ideally want to override print(String) as well, but
-    // looking through the code that writes to infoStream, it appears
-    // that all the classes except CheckIndex just use println.
-    @Override
-    public void println(String x) {
-      print(dateFormat.format(new Date()) + " ");
-      super.println(x);
-    }
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.response;
 
 import java.io.BufferedReader;
@@ -23,6 +22,7 @@ import java.io.CharArrayWriter;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
+import java.lang.invoke.MethodHandles;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +33,7 @@ import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
 
 import org.apache.solr.core.SolrConfig;
+import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.XMLErrorLogger;
@@ -46,16 +47,16 @@ import org.apache.solr.util.xslt.TransformerProvider;
 public class XSLTResponseWriter implements QueryResponseWriter {
 
   public static final String DEFAULT_CONTENT_TYPE = "application/xml";
-  public static final String TRANSFORM_PARAM = "tr";
   public static final String CONTEXT_TRANSFORMER_KEY = "xsltwriter.transformer";
   
   private Integer xsltCacheLifetimeSeconds = null; 
   public static final int XSLT_CACHE_DEFAULT = 60;
   private static final String XSLT_CACHE_PARAM = "xsltCacheLifetimeSeconds"; 
 
-  private static final Logger log = LoggerFactory.getLogger(XSLTResponseWriter.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final XMLErrorLogger xmllog = new XMLErrorLogger(log);
   
+  @Override
   public void init(NamedList n) {
       final SolrParams p = SolrParams.toSolrParams(n);
       xsltCacheLifetimeSeconds = p.getInt(XSLT_CACHE_PARAM,XSLT_CACHE_DEFAULT);
@@ -63,6 +64,7 @@ public class XSLTResponseWriter implements QueryResponseWriter {
   }
 
   
+  @Override
   public String getContentType(SolrQueryRequest request, SolrQueryResponse response) {
     Transformer t = null;
     try {
@@ -91,6 +93,7 @@ public class XSLTResponseWriter implements QueryResponseWriter {
     return mediaType;
   }
 
+  @Override
   public void write(Writer writer, SolrQueryRequest request, SolrQueryResponse response) throws IOException {
     final Transformer t = getTransformer(request);
     
@@ -105,9 +108,7 @@ public class XSLTResponseWriter implements QueryResponseWriter {
     try {
       t.transform(source, result);
     } catch(TransformerException te) {
-      final IOException ioe = new IOException("XSLT transformation error");
-      ioe.initCause(te);
-      throw ioe;
+      throw new IOException("XSLT transformation error", te);
     }
   }
   
@@ -116,9 +117,9 @@ public class XSLTResponseWriter implements QueryResponseWriter {
    *  depending on which one is called first, then the other one reuses the same Transformer
    */
   protected Transformer getTransformer(SolrQueryRequest request) throws IOException {
-    final String xslt = request.getParams().get(TRANSFORM_PARAM,null);
+    final String xslt = request.getParams().get(CommonParams.TR,null);
     if(xslt==null) {
-      throw new IOException("'" + TRANSFORM_PARAM + "' request parameter is required to use the XSLTResponseWriter");
+      throw new IOException("'" + CommonParams.TR + "' request parameter is required to use the XSLTResponseWriter");
     }
     // not the cleanest way to achieve this
     SolrConfig solrConfig = request.getCore().getSolrConfig();

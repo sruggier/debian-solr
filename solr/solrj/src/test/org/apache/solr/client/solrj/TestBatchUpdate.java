@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,13 +17,13 @@
 package org.apache.solr.client.solrj;
 
 import org.apache.solr.SolrJettyTestBase;
+import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
 import org.apache.solr.client.solrj.beans.Field;
 import org.apache.solr.client.solrj.impl.BinaryRequestWriter;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
+import org.apache.solr.client.solrj.impl.HttpSolrClient;
 import org.apache.solr.client.solrj.request.RequestWriter;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.util.ExternalPaths;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -34,13 +34,14 @@ import java.util.Iterator;
  * Test for SOLR-1038
  *
  * @since solr 1.4
- * @version $Id$
+ *
  */
+@SuppressSSL(bugUrl = "https://issues.apache.org/jira/browse/SOLR-5776")
 public class TestBatchUpdate extends SolrJettyTestBase {
 
   @BeforeClass
   public static void beforeTest() throws Exception {
-    createJetty(ExternalPaths.EXAMPLE_HOME, null, null);
+    createJetty(legacyExampleCollection1SolrHome());
   }
 
   static final int numdocs = 1000;  
@@ -48,33 +49,35 @@ public class TestBatchUpdate extends SolrJettyTestBase {
 
   @Test
   public void testWithXml() throws Exception {
-    CommonsHttpSolrServer commonsHttpSolrServer = (CommonsHttpSolrServer) getSolrServer();
-    commonsHttpSolrServer.setRequestWriter(new RequestWriter());
-    commonsHttpSolrServer.deleteByQuery( "*:*" ); // delete everything!    
-    doIt(commonsHttpSolrServer);
+    HttpSolrClient client = (HttpSolrClient) getSolrClient();
+    client.setRequestWriter(new RequestWriter());
+    client.deleteByQuery("*:*"); // delete everything!
+    doIt(client);
   }
 
   @Test
   public void testWithBinary()throws Exception{
-    CommonsHttpSolrServer commonsHttpSolrServer = (CommonsHttpSolrServer) getSolrServer();
-    commonsHttpSolrServer.setRequestWriter(new BinaryRequestWriter());
-    commonsHttpSolrServer.deleteByQuery( "*:*" ); // delete everything!
-    doIt(commonsHttpSolrServer);
+    HttpSolrClient client = (HttpSolrClient) getSolrClient();
+    client.setRequestWriter(new BinaryRequestWriter());
+    client.deleteByQuery("*:*"); // delete everything!
+    doIt(client);
   }
 
   @Test
   public void testWithBinaryBean()throws Exception{
-    CommonsHttpSolrServer commonsHttpSolrServer = (CommonsHttpSolrServer) getSolrServer();
-    commonsHttpSolrServer.setRequestWriter(new BinaryRequestWriter());
-    commonsHttpSolrServer.deleteByQuery( "*:*" ); // delete everything!
+    HttpSolrClient client = (HttpSolrClient) getSolrClient();
+    client.setRequestWriter(new BinaryRequestWriter());
+    client.deleteByQuery("*:*"); // delete everything!
     final int[] counter = new int[1];
     counter[0] = 0;
-    commonsHttpSolrServer.addBeans(new Iterator<Bean>() {
+    client.addBeans(new Iterator<Bean>() {
 
+      @Override
       public boolean hasNext() {
         return counter[0] < numdocs;
       }
 
+      @Override
       public Bean next() {
         Bean bean = new Bean();
         bean.id = "" + (++counter[0]);
@@ -82,13 +85,14 @@ public class TestBatchUpdate extends SolrJettyTestBase {
         return bean;
       }
 
+      @Override
       public void remove() {
         //do nothing
       }
     });
-    commonsHttpSolrServer.commit();
+    client.commit();
     SolrQuery query = new SolrQuery("*:*");
-    QueryResponse response = commonsHttpSolrServer.query(query);
+    QueryResponse response = client.query(query);
     assertEquals(0, response.getStatus());
     assertEquals(numdocs, response.getResults().getNumFound());
   }
@@ -100,15 +104,17 @@ public class TestBatchUpdate extends SolrJettyTestBase {
     String cat;
   }
        
-  private void doIt(CommonsHttpSolrServer commonsHttpSolrServer) throws SolrServerException, IOException {
+  private void doIt(HttpSolrClient client) throws SolrServerException, IOException {
     final int[] counter = new int[1];
     counter[0] = 0;
-    commonsHttpSolrServer.add(new Iterator<SolrInputDocument>() {
+    client.add(new Iterator<SolrInputDocument>() {
 
+      @Override
       public boolean hasNext() {
         return counter[0] < numdocs;
       }
 
+      @Override
       public SolrInputDocument next() {
         SolrInputDocument doc = new SolrInputDocument();
         doc.addField("id", "" + (++counter[0]));
@@ -116,14 +122,15 @@ public class TestBatchUpdate extends SolrJettyTestBase {
         return doc;
       }
 
+      @Override
       public void remove() {
         //do nothing
 
       }
     });
-    commonsHttpSolrServer.commit();
+    client.commit();
     SolrQuery query = new SolrQuery("*:*");
-    QueryResponse response = commonsHttpSolrServer.query(query);
+    QueryResponse response = client.query(query);
     assertEquals(0, response.getStatus());
     assertEquals(numdocs, response.getResults().getNumFound());
   }

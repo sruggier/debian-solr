@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,36 +14,57 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
+import java.util.Arrays;
+
 
 /** Represents int[], as a slice (offset + length) into an
- *  existing int[].
+ *  existing int[].  The {@link #ints} member should never be null; use
+ *  {@link #EMPTY_INTS} if necessary.
  *
  *  @lucene.internal */
 public final class IntsRef implements Comparable<IntsRef>, Cloneable {
-
+  /** An empty integer array for convenience */
   public static final int[] EMPTY_INTS = new int[0];
+
+  /** The contents of the IntsRef. Should never be {@code null}. */
   public int[] ints;
+  /** Offset of first valid integer. */
   public int offset;
+  /** Length of used ints. */
   public int length;
 
+  /** Create a IntsRef with {@link #EMPTY_INTS} */
   public IntsRef() {
     ints = EMPTY_INTS;
   }
 
+  /** 
+   * Create a IntsRef pointing to a new array of size <code>capacity</code>.
+   * Offset and length will both be zero.
+   */
   public IntsRef(int capacity) {
     ints = new int[capacity];
   }
 
+  /** This instance will directly reference ints w/o making a copy.
+   * ints should not be null.
+   */
   public IntsRef(int[] ints, int offset, int length) {
-    assert ints != null;
-    assert offset >= 0;
-    assert length >= 0;
-    assert ints.length >= offset + length;
     this.ints = ints;
     this.offset = offset;
     this.length = length;
+    assert isValid();
   }
 
+  /**
+   * Returns a shallow clone of this instance (the underlying ints are
+   * <b>not</b> copied and will be shared by both the returned object and this
+   * object.
+   * 
+   * @see #deepCopyOf
+   */  
   @Override
   public IntsRef clone() {
     return new IntsRef(ints, offset, length);
@@ -90,6 +109,7 @@ public final class IntsRef implements Comparable<IntsRef>, Cloneable {
   }
 
   /** Signed int order comparison */
+  @Override
   public int compareTo(IntsRef other) {
     if (this == other) return 0;
 
@@ -112,27 +132,6 @@ public final class IntsRef implements Comparable<IntsRef>, Cloneable {
 
     // One is a prefix of the other, or, they are equal:
     return this.length - other.length;
-  }
-
-  public void copyInts(IntsRef other) {
-    if (ints.length - offset < other.length) {
-      ints = new int[other.length];
-      offset = 0;
-    }
-    System.arraycopy(other.ints, other.offset, ints, offset, other.length);
-    length = other.length;
-  }
-
-  /** 
-   * Used to grow the reference array. 
-   * 
-   * In general this should not be used as it does not take the offset into account.
-   * @lucene.internal */
-  public void grow(int newLength) {
-    assert offset == 0;
-    if (ints.length < newLength) {
-      ints = ArrayUtil.grow(ints, newLength);
-    }
   }
 
   @Override
@@ -158,8 +157,35 @@ public final class IntsRef implements Comparable<IntsRef>, Cloneable {
    * and an offset of zero.
    */
   public static IntsRef deepCopyOf(IntsRef other) {
-    IntsRef clone = new IntsRef();
-    clone.copyInts(other);
-    return clone;
+    return new IntsRef(Arrays.copyOfRange(other.ints, other.offset, other.offset + other.length), 0, other.length);
+  }
+  
+  /** 
+   * Performs internal consistency checks.
+   * Always returns true (or throws IllegalStateException) 
+   */
+  public boolean isValid() {
+    if (ints == null) {
+      throw new IllegalStateException("ints is null");
+    }
+    if (length < 0) {
+      throw new IllegalStateException("length is negative: " + length);
+    }
+    if (length > ints.length) {
+      throw new IllegalStateException("length is out of bounds: " + length + ",ints.length=" + ints.length);
+    }
+    if (offset < 0) {
+      throw new IllegalStateException("offset is negative: " + offset);
+    }
+    if (offset > ints.length) {
+      throw new IllegalStateException("offset out of bounds: " + offset + ",ints.length=" + ints.length);
+    }
+    if (offset + length < 0) {
+      throw new IllegalStateException("offset+length is negative: offset=" + offset + ",length=" + length);
+    }
+    if (offset + length > ints.length) {
+      throw new IllegalStateException("offset+length out of bounds: offset=" + offset + ",length=" + length + ",ints.length=" + ints.length);
+    }
+    return true;
   }
 }

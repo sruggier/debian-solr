@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,32 +14,40 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.embedded;
 
 import java.io.File;
 import java.net.URL;
+import java.util.Locale;
 import java.util.Random;
 
+import com.carrotsearch.randomizedtesting.rules.SystemPropertiesRestoreRule;
 import org.apache.commons.io.IOUtils;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.SystemPropertiesRestoreRule;
+import org.apache.http.Header;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.solr.SolrJettyTestBase;
 import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.util.ExternalPaths;
+import org.eclipse.jetty.server.Connector;
+import org.eclipse.jetty.server.HttpConnectionFactory;
+import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
+import org.eclipse.jetty.server.session.HashSessionIdManager;
+import org.eclipse.jetty.webapp.WebAppContext;
 import org.junit.Rule;
 import org.junit.rules.RuleChain;
 import org.junit.rules.TestRule;
-import org.mortbay.jetty.Connector;
-import org.mortbay.jetty.Server;
-import org.mortbay.jetty.bio.SocketConnector;
-import org.mortbay.jetty.servlet.HashSessionIdManager;
-import org.mortbay.jetty.webapp.WebAppContext;
 
 /**
- * @version $Id$
+ *
  * @since solr 1.3
  */
-public class JettyWebappTest extends LuceneTestCase 
+public class JettyWebappTest extends SolrTestCaseJ4 
 {
   int port = 0;
   static final String context = "/test";
@@ -49,26 +57,28 @@ public class JettyWebappTest extends LuceneTestCase
     RuleChain.outerRule(new SystemPropertiesRestoreRule());
 
   Server server;
-  
+
   @Override
-  public void setUp() throws Exception 
+  public void setUp() throws Exception
   {
     super.setUp();
-    System.setProperty("solr.solr.home", ExternalPaths.EXAMPLE_HOME);
+    System.setProperty("solr.solr.home", SolrJettyTestBase.legacyExampleCollection1SolrHome());
+    System.setProperty("tests.shardhandler.randomSeed", Long.toString(random().nextLong()));
+    System.setProperty("solr.tests.doContainerStreamCloseAssert", "false");
     
-    File dataDir = new File(LuceneTestCase.TEMP_DIR,
-        getClass().getName() + "-" + System.currentTimeMillis());
+    File dataDir = createTempDir().toFile();
     dataDir.mkdirs();
+
     System.setProperty("solr.data.dir", dataDir.getCanonicalPath());
     String path = ExternalPaths.WEBAPP_HOME;
 
     server = new Server(port);
     // insecure: only use for tests!!!!
-    server.setSessionIdManager(new HashSessionIdManager(new Random(random.nextLong())));
+    server.setSessionIdManager(new HashSessionIdManager(new Random(random().nextLong())));
     new WebAppContext(server, path, context );
 
-    SocketConnector connector = new SocketConnector();
-    connector.setMaxIdleTime(1000 * 60 * 60);
+    ServerConnector connector = new ServerConnector(server, new HttpConnectionFactory());
+    connector.setIdleTimeout(1000 * 60 * 60);
     connector.setSoLingerTime(-1);
     connector.setPort(0);
     server.setConnectors(new Connector[]{connector});
@@ -79,38 +89,32 @@ public class JettyWebappTest extends LuceneTestCase
   }
 
   @Override
-  public void tearDown() throws Exception 
+  public void tearDown() throws Exception
   {
     try {
       server.stop();
     } catch( Exception ex ) {}
-    SolrTestCaseJ4.closeDirectories();
+    System.clearProperty("tests.shardhandler.randomSeed");
+    System.clearProperty("solr.data.dir");
+    System.clearProperty("solr.tests.doContainerStreamCloseAssert");
     super.tearDown();
   }
   
-  public void testJSP() throws Exception
+  public void testAdminUI() throws Exception
   {
     // Currently not an extensive test, but it does fire up the JSP pages and make 
     // sure they compile ok
     
-    String adminPath = "http://localhost:"+port+context+"/";
+    String adminPath = "http://127.0.0.1:"+port+context+"/";
     byte[] bytes = IOUtils.toByteArray( new URL(adminPath).openStream() );
     assertNotNull( bytes ); // real error will be an exception
 
-    adminPath += "admin/";
-    bytes = IOUtils.toByteArray( new URL(adminPath).openStream() );
-    assertNotNull( bytes ); // real error will be an exception
-
-    // analysis
-    bytes = IOUtils.toByteArray( new URL(adminPath+"analysis.jsp").openStream() );
-    assertNotNull( bytes ); // real error will be an exception
-
-    // schema browser
-    bytes = IOUtils.toByteArray( new URL(adminPath+"schema.jsp").openStream() );
-    assertNotNull( bytes ); // real error will be an exception
-
-    // schema browser
-    bytes = IOUtils.toByteArray( new URL(adminPath+"threaddump.jsp").openStream() );
-    assertNotNull( bytes ); // real error will be an exception
+    HttpClient client = HttpClients.createDefault();
+    HttpRequestBase m = new HttpGet(adminPath);
+    HttpResponse response = client.execute(m, HttpClientUtil.createNewHttpClientRequestContext());
+    assertEquals(200, response.getStatusLine().getStatusCode());
+    Header header = response.getFirstHeader("X-Frame-Options");
+    assertEquals("DENY", header.getValue().toUpperCase(Locale.ROOT));
+    m.releaseConnection();
   }
 }

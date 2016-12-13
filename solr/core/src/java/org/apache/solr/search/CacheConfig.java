@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,32 +14,42 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
-
+import javax.xml.xpath.XPathConstants;
+import java.lang.invoke.MethodHandles;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.solr.common.SolrException;
-import org.apache.solr.common.util.DOMUtil;
+import org.apache.solr.common.util.StrUtils;
+import org.apache.solr.common.MapSerializable;
 import org.apache.solr.core.SolrConfig;
 import org.apache.solr.core.SolrResourceLoader;
+import org.apache.solr.util.DOMUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
-import javax.xml.xpath.XPathConstants;
+import static org.apache.solr.common.params.CommonParams.NAME;
 
 /**
  * Contains the knowledge of how cache config is
  * stored in the solrconfig.xml file, and implements a
  * factory to create caches.
  *
- * @version $Id$
+ *
  */
-public class CacheConfig {
+public class CacheConfig implements MapSerializable{
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  
   private String nodeName;
 
-  private Class clazz;
+  private Class<? extends SolrCache> clazz;
   private Map<String,String> args;
   private CacheRegenerator regenerator;
 
@@ -51,7 +61,7 @@ public class CacheConfig {
 
   public CacheConfig() {}
 
-  public CacheConfig(Class clazz, Map<String,String> args, CacheRegenerator regenerator) {
+  public CacheConfig(Class<? extends SolrCache> clazz, Map<String,String> args, CacheRegenerator regenerator) {
     this.clazz = clazz;
     this.args = args;
     this.regenerator = regenerator;
@@ -65,39 +75,60 @@ public class CacheConfig {
     this.regenerator = regenerator;
   }
 
-  public static CacheConfig[] getMultipleConfigs(SolrConfig solrConfig, String configPath) {
-    NodeList nodes = (NodeList)solrConfig.evaluate(configPath, XPathConstants.NODESET);
-    if (nodes==null || nodes.getLength()==0) return null;
-    CacheConfig[] configs = new CacheConfig[nodes.getLength()];
-    for (int i=0; i<nodes.getLength(); i++) {
-      configs[i] = getConfig(solrConfig, nodes.item(i));
+  public static Map<String, CacheConfig> getMultipleConfigs(SolrConfig solrConfig, String configPath) {
+    NodeList nodes = (NodeList) solrConfig.evaluate(configPath, XPathConstants.NODESET);
+    if (nodes == null || nodes.getLength() == 0) return new LinkedHashMap<>();
+    Map<String, CacheConfig> result = new HashMap<>(nodes.getLength());
+    for (int i = 0; i < nodes.getLength(); i++) {
+      CacheConfig config = getConfig(solrConfig, nodes.item(i).getNodeName(), DOMUtil.toMap(nodes.item(i).getAttributes()), configPath);
+      result.put(config.args.get(NAME), config);
     }
-    return configs;
+    return result;
   }
 
 
   public static CacheConfig getConfig(SolrConfig solrConfig, String xpath) {
     Node node = solrConfig.getNode(xpath, false);
-    return getConfig(solrConfig, node);
+    if(node == null) {
+      Map<String, String> m = solrConfig.getOverlay().getEditableSubProperties(xpath);
+      if(m==null) return null;
+      List<String> parts = StrUtils.splitSmart(xpath, '/');
+      return getConfig(solrConfig,parts.get(parts.size()-1) , Collections.EMPTY_MAP,xpath);
+    }
+    return getConfig(solrConfig, node.getNodeName(),DOMUtil.toMap(node.getAttributes()), xpath);
   }
 
 
-  public static CacheConfig getConfig(SolrConfig solrConfig, Node node) {
-    if (node==null) return null;
+  public static CacheConfig getConfig(SolrConfig solrConfig, String nodeName, Map<String,String> attrs, String xpath) {
     CacheConfig config = new CacheConfig();
-    config.nodeName = node.getNodeName();
-    config.args = DOMUtil.toMap(node.getAttributes());
-    String nameAttr = config.args.get("name");  // OPTIONAL
+    config.nodeName = nodeName;
+    Map attrsCopy = new LinkedHashMap<>(attrs.size());
+    for (Map.Entry<String, String> e : attrs.entrySet()) {
+      attrsCopy.put(e.getKey(), String.valueOf(e.getValue()));
+    }
+    attrs = attrsCopy;
+    config.args = attrs;
+
+    Map<String, String> map = xpath == null ? null : solrConfig.getOverlay().getEditableSubProperties(xpath);
+    if(map != null){
+      HashMap<String, String> mapCopy = new HashMap<>(config.args);
+      for (Map.Entry<String, String> e : map.entrySet()) {
+        mapCopy.put(e.getKey(),String.valueOf(e.getValue()));
+      }
+      config.args = mapCopy;
+    }
+    String nameAttr = config.args.get(NAME);  // OPTIONAL
     if (nameAttr==null) {
-      config.args.put("name",config.nodeName);
+      config.args.put(NAME, config.nodeName);
     }
 
     SolrResourceLoader loader = solrConfig.getResourceLoader();
     config.cacheImpl = config.args.get("class");
+    if(config.cacheImpl == null) config.cacheImpl = "solr.LRUCache";
     config.regenImpl = config.args.get("regenerator");
-    config.clazz = loader.findClass(config.cacheImpl);
+    config.clazz = loader.findClass(config.cacheImpl, SolrCache.class);
     if (config.regenImpl != null) {
-      config.regenerator = (CacheRegenerator) loader.newInstance(config.regenImpl);
+      config.regenerator = loader.newInstance(config.regenImpl, CacheRegenerator.class);
     }
     
     return config;
@@ -105,15 +136,26 @@ public class CacheConfig {
 
   public SolrCache newInstance() {
     try {
-      SolrCache cache = (SolrCache)clazz.newInstance();
+      SolrCache cache = clazz.newInstance();
       persistence[0] = cache.init(args, persistence[0], regenerator);
       return cache;
     } catch (Exception e) {
-      SolrException.log(SolrCache.log,"Error instantiating cache",e);
+      SolrException.log(log,"Error instantiating cache",e);
       // we can carry on without a cache... but should we?
       // in some cases (like an OOM) we probably should try to continue.
       return null;
     }
   }
+
+  @Override
+  public Map<String, Object> toMap(Map<String, Object> map) {
+    Map result = Collections.unmodifiableMap(args);
+    return result;
+  }
+
+  public String getNodeName() {
+    return nodeName;
+  }
+
 
 }

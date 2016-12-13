@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,35 +14,25 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
 
-import java.io.Serializable;
 
 import org.apache.lucene.util.AttributeImpl;
+import org.apache.lucene.util.AttributeReflector;
 
-/**
- * This attribute can be used to pass different flags down the tokenizer chain,
- * eg from one TokenFilter to another one. 
- * @lucene.experimental While we think this is here to stay, we may want to change it to be a long.
- */
-public class FlagsAttributeImpl extends AttributeImpl implements FlagsAttribute, Cloneable, Serializable {
+/** Default implementation of {@link FlagsAttribute}. */
+public class FlagsAttributeImpl extends AttributeImpl implements FlagsAttribute, Cloneable {
   private int flags = 0;
   
-  /**
-   * <p/>
-   *
-   * Get the bitset for any bits that have been set.  This is completely distinct from {@link TypeAttribute#type()}, although they do share similar purposes.
-   * The flags can be used to encode information about the token for use by other {@link org.apache.lucene.analysis.TokenFilter}s.
-   *
-   *
-   * @return The bits
-   */
+  /** Initialize this attribute with no bits set */
+  public FlagsAttributeImpl() {}
+  
+  @Override
   public int getFlags() {
     return flags;
   }
 
-  /**
-   * @see #getFlags()
-   */
+  @Override
   public void setFlags(int flags) {
     this.flags = flags;
   }
@@ -76,5 +64,10 @@ public class FlagsAttributeImpl extends AttributeImpl implements FlagsAttribute,
   public void copyTo(AttributeImpl target) {
     FlagsAttribute t = (FlagsAttribute) target;
     t.setFlags(flags);
+  }
+
+  @Override
+  public void reflectWith(AttributeReflector reflector) {
+    reflector.reflect(FlagsAttribute.class, "flags", flags);
   }
 }

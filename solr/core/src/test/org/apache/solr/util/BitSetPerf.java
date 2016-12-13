@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,26 +14,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util;
 
-import java.util.Random;
 import java.util.BitSet;
+import java.util.Random;
 
-import org.apache.lucene.util.OpenBitSet;
-import org.apache.lucene.util.OpenBitSetIterator;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.util.BitSetIterator;
+import org.apache.lucene.util.FixedBitSet;
 
-/** Performance tester for OpenBitSet.
+/** Performance tester for FixedBitSet.
  * Use -Xbatch for more predictable results, and run tests such that the duration
  * is at least 10 seconds for better accuracy.  Close browsers on your system (javascript
  * or flash may be running and cause more erratic results).
  *
- * @version $Id$
+ *
  */
 public class BitSetPerf {
   static Random rand = new Random(0);
 
-  static void randomSets(int maxSize, int bitsToSet, BitSet target1, OpenBitSet target2) {
+  static void randomSets(int maxSize, int bitsToSet, BitSet target1, FixedBitSet target2) {
     for (int i=0; i<bitsToSet; i++) {
       int idx;
       do {
@@ -50,7 +50,7 @@ public class BitSetPerf {
   public static void main(String[] args) {
     if (args.length<5) {
       System.out.println("BitSetTest <bitSetSize> <numSets> <numBitsSet> <testName> <iter> <impl>");
-      System.out.println("  impl => open for OpenBitSet");
+      System.out.println("  impl => open for FixedBitSet");
     }
     int bitSetSize = Integer.parseInt(args[0]);
     int numSets = Integer.parseInt(args[1]);
@@ -60,30 +60,30 @@ public class BitSetPerf {
     String impl = args.length>5 ? args[5].intern() : "bit";
 
     BitSet[] sets = new BitSet[numSets];
-    OpenBitSet[] osets = new OpenBitSet[numSets];
+    FixedBitSet[] osets = new FixedBitSet[numSets];
 
     for (int i=0; i<numSets; i++) {
       sets[i] = new BitSet(bitSetSize);
-      osets[i] = new OpenBitSet(bitSetSize);
+      osets[i] = new FixedBitSet(bitSetSize);
       randomSets(bitSetSize, numBitsSet, sets[i], osets[i]);
     }
 
     BitSet bs = new BitSet(bitSetSize);
-    OpenBitSet obs = new OpenBitSet(bitSetSize);
+    FixedBitSet obs = new FixedBitSet(bitSetSize);
     randomSets(bitSetSize, numBitsSet, bs, obs);
 
 
 
     int ret=0;
 
-    long start = System.currentTimeMillis();
+    final RTimer timer = new RTimer();
 
     if ("union".equals(test)) {
       for (int it=0; it<iter; it++) {
         for (int i=0; i<numSets; i++) {
           if (impl=="open") {
-            OpenBitSet other=osets[i];
-            obs.union(other);
+            FixedBitSet other=osets[i];
+            obs.or(other);
           } else {
             BitSet other=sets[i];
             bs.or(other);
@@ -108,8 +108,8 @@ public class BitSetPerf {
       for (int it=0; it<iter; it++) {
         for (int i=0; i<numSets; i++) {
           if (impl=="open") {
-            OpenBitSet oset = osets[i];
-            for (int k=0; k<bitSetSize; k++) if (oset.fastGet(k)) ret++;
+            FixedBitSet oset = osets[i];
+            for (int k=0; k<bitSetSize; k++) if (oset.get(k)) ret++;
           } else {
             BitSet bset = sets[i];
             for (int k=0; k<bitSetSize; k++) if (bset.get(k)) ret++;
@@ -122,9 +122,9 @@ public class BitSetPerf {
       for (int it=0; it<iter; it++) {
         for (int i=0; i<numSets-1; i++) {
           if (impl=="open") {
-            OpenBitSet a=osets[i];
-            OpenBitSet b=osets[i+1];
-            ret += OpenBitSet.intersectionCount(a,b);
+            FixedBitSet a=osets[i];
+            FixedBitSet b=osets[i+1];
+            ret += FixedBitSet.intersectionCount(a,b);
           } else {
             BitSet a=sets[i];
             BitSet b=sets[i+1];
@@ -140,7 +140,7 @@ public class BitSetPerf {
       for (int it=0; it<iter; it++) {
         for (int i=0; i<numSets; i++) {
           if (impl=="open") {
-            osets[i] = (OpenBitSet)osets[i].clone();
+            osets[i] = osets[i].clone();
           } else {
             sets[i] = (BitSet)sets[i].clone();
           }
@@ -152,8 +152,8 @@ public class BitSetPerf {
       for (int it=0; it<iter; it++) {
         for (int i=0; i<numSets; i++) {
           if (impl=="open") {
-            final OpenBitSet set = osets[i];
-            for(int next=set.nextSetBit(0); next>=0; next=set.nextSetBit(next+1)) {
+            final FixedBitSet set = osets[i];
+            for(int next=set.nextSetBit(0); next != DocIdSetIterator.NO_MORE_DOCS; next=set.nextSetBit(next+1)) {
               ret += next;
             }
           } else {
@@ -171,8 +171,8 @@ public class BitSetPerf {
       for (int it=0; it<iter; it++) {
         for (int i=0; i<numSets; i++) {
           if (impl=="open") {
-            final OpenBitSet set = osets[i];
-            final OpenBitSetIterator iterator = new OpenBitSetIterator(set);
+            final FixedBitSet set = osets[i];
+            final BitSetIterator iterator = new BitSetIterator(set, 0);
             for(int next=iterator.nextDoc(); next>=0; next=iterator.nextDoc()) {
               ret += next;
             }
@@ -186,9 +186,8 @@ public class BitSetPerf {
       }
     }
 
-    long end = System.currentTimeMillis();
     System.out.println("ret="+ret);
-    System.out.println("TIME="+(end-start));
+    System.out.println("TIME="+timer.getTime());
 
   }
 

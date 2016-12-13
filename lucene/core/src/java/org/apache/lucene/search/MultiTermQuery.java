@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,62 +14,68 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
-import java.io.Serializable;
+import java.util.Objects;
 
+import org.apache.lucene.index.FilteredTermsEnum; // javadocs
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.SingleTermsEnum;   // javadocs
 import org.apache.lucene.index.Term;
-
-import org.apache.lucene.queryParser.QueryParser; // for javadoc
+import org.apache.lucene.index.TermContext;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.search.BooleanQuery.Builder;
+import org.apache.lucene.util.AttributeSource;
 
 /**
  * An abstract {@link Query} that matches documents
  * containing a subset of terms provided by a {@link
- * FilteredTermEnum} enumeration.
+ * FilteredTermsEnum} enumeration.
  *
  * <p>This query cannot be used directly; you must subclass
- * it and define {@link #getEnum} to provide a {@link
- * FilteredTermEnum} that iterates through the terms to be
+ * it and define {@link #getTermsEnum(Terms,AttributeSource)} to provide a {@link
+ * FilteredTermsEnum} that iterates through the terms to be
  * matched.
  *
  * <p><b>NOTE</b>: if {@link #setRewriteMethod} is either
- * {@link #CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE} or {@link
- * #SCORING_BOOLEAN_QUERY_REWRITE}, you may encounter a
+ * {@link #CONSTANT_SCORE_BOOLEAN_REWRITE} or {@link
+ * #SCORING_BOOLEAN_REWRITE}, you may encounter a
  * {@link BooleanQuery.TooManyClauses} exception during
  * searching, which happens when the number of terms to be
  * searched exceeds {@link
  * BooleanQuery#getMaxClauseCount()}.  Setting {@link
- * #setRewriteMethod} to {@link #CONSTANT_SCORE_FILTER_REWRITE}
+ * #setRewriteMethod} to {@link #CONSTANT_SCORE_REWRITE}
  * prevents this.
  *
  * <p>The recommended rewrite method is {@link
- * #CONSTANT_SCORE_AUTO_REWRITE_DEFAULT}: it doesn't spend CPU
- * computing unhelpful scores, and it tries to pick the most
+ * #CONSTANT_SCORE_REWRITE}: it doesn't spend CPU
+ * computing unhelpful scores, and is the most
  * performant rewrite method given the query. If you
  * need scoring (like {@link FuzzyQuery}, use
  * {@link TopTermsScoringBooleanQueryRewrite} which uses
  * a priority queue to only collect competitive terms
  * and not hit this limitation.
  *
- * Note that {@link QueryParser} produces
- * MultiTermQueries using {@link
- * #CONSTANT_SCORE_AUTO_REWRITE_DEFAULT} by default.
+ * Note that org.apache.lucene.queryparser.classic.QueryParser produces
+ * MultiTermQueries using {@link #CONSTANT_SCORE_REWRITE}
+ * by default.
  */
 public abstract class MultiTermQuery extends Query {
-  protected RewriteMethod rewriteMethod = CONSTANT_SCORE_AUTO_REWRITE_DEFAULT;
-  transient int numberOfTerms = 0;
+  protected final String field;
+  protected RewriteMethod rewriteMethod = CONSTANT_SCORE_REWRITE;
 
   /** Abstract class that defines how the query is rewritten. */
-  public static abstract class RewriteMethod implements Serializable {
+  public static abstract class RewriteMethod {
     public abstract Query rewrite(IndexReader reader, MultiTermQuery query) throws IOException;
-    
     /**
-     * Returns the {@link MultiTermQuery}s {@link FilteredTermEnum}
-     * @see MultiTermQuery#getEnum(IndexReader)
+     * Returns the {@link MultiTermQuery}s {@link TermsEnum}
+     * @see MultiTermQuery#getTermsEnum(Terms, AttributeSource)
      */
-    protected FilteredTermEnum getTermsEnum(IndexReader reader, MultiTermQuery query) throws IOException {
-      return query.getEnum(reader); // allow RewriteMethod subclasses to pull a FilteredTermEnum from the MTQ 
+    protected TermsEnum getTermsEnum(MultiTermQuery query, Terms terms, AttributeSource atts) throws IOException {
+      return query.getTermsEnum(terms, atts); // allow RewriteMethod subclasses to pull a TermsEnum from the MTQ 
     }
   }
 
@@ -87,17 +91,10 @@ public abstract class MultiTermQuery extends Query {
    *  exception.
    *
    *  @see #setRewriteMethod */
-  public static final RewriteMethod CONSTANT_SCORE_FILTER_REWRITE = new RewriteMethod() {
+  public static final RewriteMethod CONSTANT_SCORE_REWRITE = new RewriteMethod() {
     @Override
     public Query rewrite(IndexReader reader, MultiTermQuery query) {
-      Query result = new ConstantScoreQuery(new MultiTermQueryWrapperFilter<MultiTermQuery>(query));
-      result.setBoost(query.getBoost());
-      return result;
-    }
-
-    // Make sure we are still a singleton even after deserializing
-    protected Object readResolve() {
-      return CONSTANT_SCORE_FILTER_REWRITE;
+      return new MultiTermQueryConstantScoreWrapper<>(query);
     }
   };
 
@@ -107,16 +104,16 @@ public abstract class MultiTermQuery extends Query {
    *  query.  Note that typically such scores are
    *  meaningless to the user, and require non-trivial CPU
    *  to compute, so it's almost always better to use {@link
-   *  #CONSTANT_SCORE_AUTO_REWRITE_DEFAULT} instead.
+   *  #CONSTANT_SCORE_REWRITE} instead.
    *
    *  <p><b>NOTE</b>: This rewrite method will hit {@link
    *  BooleanQuery.TooManyClauses} if the number of terms
    *  exceeds {@link BooleanQuery#getMaxClauseCount}.
    *
    *  @see #setRewriteMethod */
-  public final static RewriteMethod SCORING_BOOLEAN_QUERY_REWRITE = ScoringRewrite.SCORING_BOOLEAN_QUERY_REWRITE;
-  
-  /** Like {@link #SCORING_BOOLEAN_QUERY_REWRITE} except
+  public final static RewriteMethod SCORING_BOOLEAN_REWRITE = ScoringRewrite.SCORING_BOOLEAN_REWRITE;
+
+  /** Like {@link #SCORING_BOOLEAN_REWRITE} except
    *  scores are not computed.  Instead, each matching
    *  document receives a constant score equal to the
    *  query's boost.
@@ -126,7 +123,7 @@ public abstract class MultiTermQuery extends Query {
    *  exceeds {@link BooleanQuery#getMaxClauseCount}.
    *
    *  @see #setRewriteMethod */
-  public final static RewriteMethod CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE = ScoringRewrite.CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE;
+  public final static RewriteMethod CONSTANT_SCORE_BOOLEAN_REWRITE = ScoringRewrite.CONSTANT_SCORE_BOOLEAN_REWRITE;
 
   /**
    * A rewrite method that first translates each term into
@@ -140,7 +137,7 @@ public abstract class MultiTermQuery extends Query {
    * 
    * @see #setRewriteMethod
    */
-  public static final class TopTermsScoringBooleanQueryRewrite extends TopTermsRewrite<BooleanQuery> {
+  public static final class TopTermsScoringBooleanQueryRewrite extends TopTermsRewrite<BooleanQuery.Builder> {
 
     /** 
      * Create a TopTermsScoringBooleanQueryRewrite for 
@@ -159,18 +156,75 @@ public abstract class MultiTermQuery extends Query {
     }
     
     @Override
-    protected BooleanQuery getTopLevelQuery() {
-      return new BooleanQuery(true);
+    protected BooleanQuery.Builder getTopLevelBuilder() {
+      BooleanQuery.Builder builder = new BooleanQuery.Builder();
+      builder.setDisableCoord(true);
+      return builder;
     }
     
     @Override
-    protected void addClause(BooleanQuery topLevel, Term term, float boost) {
-      final TermQuery tq = new TermQuery(term);
-      tq.setBoost(boost);
-      topLevel.add(tq, BooleanClause.Occur.SHOULD);
+    protected Query build(Builder builder) {
+      return builder.build();
+    }
+    
+    @Override
+    protected void addClause(BooleanQuery.Builder topLevel, Term term, int docCount, float boost, TermContext states) {
+      final TermQuery tq = new TermQuery(term, states);
+      topLevel.add(new BoostQuery(tq, boost), BooleanClause.Occur.SHOULD);
     }
   }
   
+  /**
+   * A rewrite method that first translates each term into
+   * {@link BooleanClause.Occur#SHOULD} clause in a BooleanQuery, but adjusts
+   * the frequencies used for scoring to be blended across the terms, otherwise
+   * the rarest term typically ranks highest (often not useful eg in the set of
+   * expanded terms in a FuzzyQuery).
+   * 
+   * <p>
+   * This rewrite method only uses the top scoring terms so it will not overflow
+   * the boolean max clause count.
+   * 
+   * @see #setRewriteMethod
+   */
+  public static final class TopTermsBlendedFreqScoringRewrite extends
+      TopTermsRewrite<BlendedTermQuery.Builder> {
+
+    /**
+     * Create a TopTermsBlendedScoringBooleanQueryRewrite for at most
+     * <code>size</code> terms.
+     * <p>
+     * NOTE: if {@link BooleanQuery#getMaxClauseCount} is smaller than
+     * <code>size</code>, then it will be used instead.
+     */
+    public TopTermsBlendedFreqScoringRewrite(int size) {
+      super(size);
+    }
+
+    @Override
+    protected int getMaxSize() {
+      return BooleanQuery.getMaxClauseCount();
+    }
+
+    @Override
+    protected BlendedTermQuery.Builder getTopLevelBuilder() {
+      BlendedTermQuery.Builder builder = new BlendedTermQuery.Builder();
+      builder.setRewriteMethod(BlendedTermQuery.BOOLEAN_REWRITE);
+      return builder;
+    }
+
+    @Override
+    protected Query build(BlendedTermQuery.Builder builder) {
+      return builder.build();
+    }
+
+    @Override
+    protected void addClause(BlendedTermQuery.Builder topLevel, Term term, int docCount,
+        float boost, TermContext states) {
+      topLevel.add(term, boost, states);
+    }
+  }
+
   /**
    * A rewrite method that first translates each term into
    * {@link BooleanClause.Occur#SHOULD} clause in a BooleanQuery, but the scores
@@ -181,7 +235,7 @@ public abstract class MultiTermQuery extends Query {
    * 
    * @see #setRewriteMethod
    */
-  public static final class TopTermsBoostOnlyBooleanQueryRewrite extends TopTermsRewrite<BooleanQuery> {
+  public static final class TopTermsBoostOnlyBooleanQueryRewrite extends TopTermsRewrite<BooleanQuery.Builder> {
     
     /** 
      * Create a TopTermsBoostOnlyBooleanQueryRewrite for 
@@ -200,112 +254,60 @@ public abstract class MultiTermQuery extends Query {
     }
     
     @Override
-    protected BooleanQuery getTopLevelQuery() {
-      return new BooleanQuery(true);
+    protected BooleanQuery.Builder getTopLevelBuilder() {
+      BooleanQuery.Builder builder = new BooleanQuery.Builder();
+      builder.setDisableCoord(true);
+      return builder;
     }
     
     @Override
-    protected void addClause(BooleanQuery topLevel, Term term, float boost) {
-      final Query q = new ConstantScoreQuery(new TermQuery(term));
-      q.setBoost(boost);
-      topLevel.add(q, BooleanClause.Occur.SHOULD);
+    protected Query build(BooleanQuery.Builder builder) {
+      return builder.build();
+    }
+    
+    @Override
+    protected void addClause(BooleanQuery.Builder topLevel, Term term, int docFreq, float boost, TermContext states) {
+      final Query q = new ConstantScoreQuery(new TermQuery(term, states));
+      topLevel.add(new BoostQuery(q, boost), BooleanClause.Occur.SHOULD);
     }
   }
-    
-  /** A rewrite method that tries to pick the best
-   *  constant-score rewrite method based on term and
-   *  document counts from the query.  If both the number of
-   *  terms and documents is small enough, then {@link
-   *  #CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE} is used.
-   *  Otherwise, {@link #CONSTANT_SCORE_FILTER_REWRITE} is
-   *  used.
-   */
-  public static class ConstantScoreAutoRewrite extends org.apache.lucene.search.ConstantScoreAutoRewrite {}
-
-  /** Read-only default instance of {@link
-   *  ConstantScoreAutoRewrite}, with {@link
-   *  ConstantScoreAutoRewrite#setTermCountCutoff} set to
-   *  {@link
-   *  ConstantScoreAutoRewrite#DEFAULT_TERM_COUNT_CUTOFF}
-   *  and {@link
-   *  ConstantScoreAutoRewrite#setDocCountPercent} set to
-   *  {@link
-   *  ConstantScoreAutoRewrite#DEFAULT_DOC_COUNT_PERCENT}.
-   *  Note that you cannot alter the configuration of this
-   *  instance; you'll need to create a private instance
-   *  instead. */
-  public final static RewriteMethod CONSTANT_SCORE_AUTO_REWRITE_DEFAULT = new ConstantScoreAutoRewrite() {
-    @Override
-    public void setTermCountCutoff(int count) {
-      throw new UnsupportedOperationException("Please create a private instance");
-    }
-
-    @Override
-    public void setDocCountPercent(double percent) {
-      throw new UnsupportedOperationException("Please create a private instance");
-    }
-
-    // Make sure we are still a singleton even after deserializing
-    protected Object readResolve() {
-      return CONSTANT_SCORE_AUTO_REWRITE_DEFAULT;
-    }
-  };
 
   /**
    * Constructs a query matching terms that cannot be represented with a single
    * Term.
    */
-  public MultiTermQuery() {
+  public MultiTermQuery(final String field) {
+    this.field = Objects.requireNonNull(field, "field must not be null");
   }
 
-  /** Construct the enumeration to be used, expanding the pattern term. */
-  protected abstract FilteredTermEnum getEnum(IndexReader reader)
-      throws IOException;
+  /** Returns the field name for this query */
+  public final String getField() { return field; }
 
-  /**
-   * Expert: Return the number of unique terms visited during execution of the query.
-   * If there are many of them, you may consider using another query type
-   * or reduce your total term count in index.
-   * <p>This method is not thread safe, be sure to only call it when no query is running!
-   * If you re-use the same query instance for another
-   * search, be sure to first reset the term counter
-   * with {@link #clearTotalNumberOfTerms}.
-   * <p>On single-segment indexes / no MultiReaders, you get the correct number of
-   * unique terms for the whole index. Use this number to compare different queries.
-   * For multi-segment indexes this number can also be achieved in
-   * non-constant-score mode. In constant-score mode you get the total number of
-   * terms seeked for all segments / sub-readers.
-   * @see #clearTotalNumberOfTerms
-   * @deprecated Don't use this method, as its not thread safe and useless.
+  /** Construct the enumeration to be used, expanding the
+   *  pattern term.  This method should only be called if
+   *  the field exists (ie, implementations can assume the
+   *  field does exist).  This method should not return null
+   *  (should instead return {@link TermsEnum#EMPTY} if no
+   *  terms match).  The TermsEnum must already be
+   *  positioned to the first matching term.
+   * The given {@link AttributeSource} is passed by the {@link RewriteMethod} to
+   * provide attributes, the rewrite method uses to inform about e.g. maximum competitive boosts.
+   * This is currently only used by {@link TopTermsRewrite}
    */
-  @Deprecated
-  public int getTotalNumberOfTerms() {
-    return numberOfTerms;
-  }
-  
-  /**
-   * Expert: Resets the counting of unique terms.
-   * Do this before executing the query/filter.
-   * @see #getTotalNumberOfTerms
-   * @deprecated Don't use this method, as its not thread safe and useless.
+  protected abstract TermsEnum getTermsEnum(Terms terms, AttributeSource atts) throws IOException;
+
+  /** Convenience method, if no attributes are needed:
+   * This simply passes empty attributes and is equal to:
+   * <code>getTermsEnum(terms, new AttributeSource())</code>
    */
-  @Deprecated
-  public void clearTotalNumberOfTerms() {
-    numberOfTerms = 0;
-  }
-  
-  /** 
-   * @deprecated Don't use this method, as its not thread safe and useless.
-   */
-  @Deprecated
-  protected void incTotalNumberOfTerms(int inc) {
-    numberOfTerms += inc;
+  protected final TermsEnum getTermsEnum(Terms terms) throws IOException {
+    return getTermsEnum(terms, new AttributeSource());
   }
 
   /**
    * To rewrite to a simpler form, instead return a simpler
-   * enum from {@link #getEnum(IndexReader)}.  For example,
-   * to rewrite to a single term, return a {@link SingleTermEnum}
+   * enum from {@link #getTermsEnum(Terms, AttributeSource)}.  For example,
+   * to rewrite to a single term, return a {@link SingleTermsEnum}
    */
   @Override
   public final Query rewrite(IndexReader reader) throws IOException {
@@ -330,28 +332,20 @@ public abstract class MultiTermQuery extends Query {
   @Override
   public int hashCode() {
     final int prime = 31;
-    int result = 1;
-    result = prime * result + Float.floatToIntBits(getBoost());
-    result = prime * result;
-    result += rewriteMethod.hashCode();
+    int result = classHash();
+    result = prime * result + rewriteMethod.hashCode();
+    result = prime * result + field.hashCode();
     return result;
   }
 
   @Override
-  public boolean equals(Object obj) {
-    if (this == obj)
-      return true;
-    if (obj == null)
-      return false;
-    if (getClass() != obj.getClass())
-      return false;
-    MultiTermQuery other = (MultiTermQuery) obj;
-    if (Float.floatToIntBits(getBoost()) != Float.floatToIntBits(other.getBoost()))
-      return false;
-    if (!rewriteMethod.equals(other.rewriteMethod)) {
-      return false;
-    }
-    return true;
+  public boolean equals(Object other) {
+    return sameClassAs(other) &&
+           equalsTo(getClass().cast(other));
   }
- 
+
+  private boolean equalsTo(MultiTermQuery other) {
+    return rewriteMethod.equals(other.rewriteMethod) && 
+           field.equals(other.field);
+  }
 }

@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +14,18 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
+
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.Reader;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.Version;
 
 /**
  * Loader for text files that represent a list of stopwords.
@@ -32,7 +35,10 @@ import org.apache.lucene.util.Version;
  */
 public class WordlistLoader {
   
-  private static final int INITITAL_CAPACITY = 16;
+  private static final int INITIAL_CAPACITY = 16;
+  
+  /** no instance */
+  private WordlistLoader() {}
   
   /**
    * Reads lines from a Reader and adds every line as an entry to a CharArraySet (omitting
@@ -66,11 +72,10 @@ public class WordlistLoader {
    * Analyzer which uses LowerCaseFilter (like StandardAnalyzer).
    *
    * @param reader Reader containing the wordlist
-   * @param matchVersion the Lucene {@link Version}
    * @return A {@link CharArraySet} with the reader's words
    */
-  public static CharArraySet getWordSet(Reader reader, Version matchVersion) throws IOException {
-    return getWordSet(reader, new CharArraySet(matchVersion, INITITAL_CAPACITY, false));
+  public static CharArraySet getWordSet(Reader reader) throws IOException {
+    return getWordSet(reader, new CharArraySet(INITIAL_CAPACITY, false));
   }
 
   /**
@@ -81,11 +86,10 @@ public class WordlistLoader {
    *
    * @param reader Reader containing the wordlist
    * @param comment The string representing a comment.
-   * @param matchVersion the Lucene {@link Version}
    * @return A CharArraySet with the reader's words
    */
-  public static CharArraySet getWordSet(Reader reader, String comment, Version matchVersion) throws IOException {
-    return getWordSet(reader, comment, new CharArraySet(matchVersion, INITITAL_CAPACITY, false));
+  public static CharArraySet getWordSet(Reader reader, String comment) throws IOException {
+    return getWordSet(reader, comment, new CharArraySet(INITIAL_CAPACITY, false));
   }
 
   /**
@@ -126,7 +130,6 @@ public class WordlistLoader {
    * <li>The comment character is the vertical line (&#124;).
    * <li>Lines may contain trailing comments.
    * </ul>
-   * </p>
    * 
    * @param reader Reader containing a Snowball stopword list
    * @param result the {@link CharArraySet} to fill with the readers words
@@ -160,14 +163,12 @@ public class WordlistLoader {
    * <li>The comment character is the vertical line (&#124;).
    * <li>Lines may contain trailing comments.
    * </ul>
-   * </p>
    * 
    * @param reader Reader containing a Snowball stopword list
-   * @param matchVersion the Lucene {@link Version}
    * @return A {@link CharArraySet} with the reader's words
    */
-  public static CharArraySet getSnowballWordSet(Reader reader, Version matchVersion) throws IOException {
-    return getSnowballWordSet(reader, new CharArraySet(matchVersion, INITITAL_CAPACITY, false));
+  public static CharArraySet getSnowballWordSet(Reader reader) throws IOException {
+    return getSnowballWordSet(reader, new CharArraySet(INITIAL_CAPACITY, false));
   }
 
 
@@ -177,7 +178,7 @@ public class WordlistLoader {
    * (i.e. two tab separated words)
    *
    * @return stem dictionary that overrules the stemming algorithm
-   * @throws IOException 
+   * @throws IOException If there is a low-level I/O error.
    */
   public static CharArrayMap<String> getStemDict(Reader reader, CharArrayMap<String> result) throws IOException {
     BufferedReader br = null;
@@ -192,6 +193,47 @@ public class WordlistLoader {
       IOUtils.close(br);
     }
     return result;
+  }
+  
+  /**
+   * Accesses a resource by name and returns the (non comment) lines containing
+   * data using the given character encoding.
+   *
+   * <p>
+   * A comment line is any line that starts with the character "#"
+   * </p>
+   *
+   * @return a list of non-blank non-comment lines with whitespace trimmed
+   * @throws IOException If there is a low-level I/O error.
+   */
+  public static List<String> getLines(InputStream stream, Charset charset) throws IOException{
+    BufferedReader input = null;
+    ArrayList<String> lines;
+    boolean success = false;
+    try {
+      input = getBufferedReader(IOUtils.getDecodingReader(stream, charset));
+
+      lines = new ArrayList<>();
+      for (String word=null; (word=input.readLine())!=null;) {
+        // skip initial bom marker
+        if (lines.isEmpty() && word.length() > 0 && word.charAt(0) == '\uFEFF')
+          word = word.substring(1);
+        // skip comments
+        if (word.startsWith("#")) continue;
+        word=word.trim();
+        // skip blank lines
+        if (word.length()==0) continue;
+        lines.add(word);
+      }
+      success = true;
+      return lines;
+    } finally {
+      if (success) {
+        IOUtils.close(input);
+      } else {
+        IOUtils.closeWhileHandlingException(input);
+      }
+    }
   }
   
   private static BufferedReader getBufferedReader(Reader reader) {

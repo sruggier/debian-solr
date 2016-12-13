@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
 
 import java.io.IOException;
 
@@ -36,13 +35,32 @@ public final class CannedTokenStream extends TokenStream {
   private final PositionLengthAttribute posLengthAtt = addAttribute(PositionLengthAttribute.class);
   private final OffsetAttribute offsetAtt = addAttribute(OffsetAttribute.class);
   private final PayloadAttribute payloadAtt = addAttribute(PayloadAttribute.class);
-  
+  private final int finalOffset;
+  private final int finalPosInc;
+
   public CannedTokenStream(Token... tokens) {
     this.tokens = tokens;
+    finalOffset = 0;
+    finalPosInc = 0;
+  }
+
+  /** If you want trailing holes, pass a non-zero
+   *  finalPosInc. */
+  public CannedTokenStream(int finalPosInc, int finalOffset, Token... tokens) {
+    this.tokens = tokens;
+    this.finalOffset = finalOffset;
+    this.finalPosInc = finalPosInc;
+  }
+
+  @Override
+  public void end() throws IOException {
+    super.end();
+    posIncrAtt.setPositionIncrement(finalPosInc);
+    offsetAtt.setOffset(finalOffset, finalOffset);
   }
   
   @Override
-  public boolean incrementToken() throws IOException {
+  public boolean incrementToken() {
     if (upto < tokens.length) {
       final Token token = tokens[upto++];     
       // TODO: can we just capture/restoreState so

@@ -13,39 +13,66 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-Solr example configuration
+Solr example
+------------
+
+This directory contains Solr examples. Each example is contained in a 
+separate directory. To run a specific example, do:
+
+  bin/solr -e <EXAMPLE> where <EXAMPLE> is one of:
+  
+    cloud        : SolrCloud example
+    dih          : Data Import Handler (rdbms, mail, rss, tika)
+    schemaless   : Schema-less example (schema is inferred from data during indexing)
+    techproducts : Kitchen sink example providing comprehensive examples of Solr features
+
+For instance, if you want to run the Solr Data Import Handler example, do:
+
+  bin/solr -e dih
+  
+To see all the options available when starting Solr:
+
+  bin/solr start -help
+
+After starting a Solr example, direct your Web browser to:
+
+  http://localhost:8983/solr/
+
+To add documents to the index, use bin/post, for example:
+
+     bin/post -c techproducts example/exampledocs/*.xml
+
+(where "techproducts" is the Solr core name)
+
+For more information about this example please read...
+
+ * example/solr/README.txt
+   For more information about the "Solr Home" and Solr specific configuration
+ * http://lucene.apache.org/solr/quickstart.html
+   For a Tutorial using this example configuration
+ * http://wiki.apache.org/solr/SolrResources 
+   For a list of other tutorials and introductory articles.
+
+Notes About These Examples
 --------------------------
 
-To run this example configuration, use 
+* References to Jar Files Outside This Directory *
 
-  java -jar start.jar
+Various example SolrHome dirs contained in this directory may use "<lib>"
+statements in the solrconfig.xml file to reference plugin jars outside of 
+this directory for loading "contrib" plugins via relative paths.  
 
-in this directory, and when Solr is started connect to 
+If you make a copy of this example server and wish to use the 
+ExtractingRequestHandler (SolrCell), DataImportHandler (DIH), UIMA, the 
+clustering component, or any other modules in "contrib", you will need to 
+copy the required jars or update the paths to those jars in your 
+solrconfig.xml.
 
-  http://localhost:8983/solr/admin/
+* Logging *
 
-To add documents to the index, use the post.sh script in the exampledocs
-subdirectory (while Solr is running), for example:
-
-  cd exampledocs
-  sh post.sh *.xml
-
-See also README.txt in the solr subdirectory, and check
-http://wiki.apache.org/solr/SolrResources for a list of tutorials and
-introductory articles.
-
-NOTE: This Solr example server references certain Solr jars outside of
-this server directory for non-core modules with <lib> statements in
-solrconfig.xml.  If you make a copy of this example server and wish
-to use the ExtractingRequestHandler (SolrCell), DataImportHandler (DIH),
-UIMA, the clustering component, or other modules in "contrib",
-you will need to copy the required jars into solr/lib or update the paths to
-the jars in your solrconfig.xml.
-
-By default, start.jar starts Solr in Jetty using the default solr home
-directory of "./solr/" -- To run other example configurations, you can
-speciy the solr.solr.home system property when starting jetty...
-
-  java -Dsolr.solr.home=multicore -jar start.jar
-  java -Dsolr.solr.home=example-DIH -jar start.jar
+By default, Jetty & Solr will log to the console and logs/solr.log. This can
+be convenient when first getting started, but eventually you will want to
+log just to a file. To configure logging, edit the log4j.properties file in
+"resources".
+It is also possible to setup log4j or other popular logging frameworks.
 

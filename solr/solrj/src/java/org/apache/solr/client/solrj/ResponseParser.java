@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj;
 
 import java.io.Reader;
@@ -23,7 +22,7 @@ import org.apache.solr.common.util.NamedList;
 
 /**
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public abstract class ResponseParser
@@ -33,6 +32,15 @@ public abstract class ResponseParser
   public abstract NamedList<Object> processResponse(InputStream body, String encoding);
 
   public abstract NamedList<Object> processResponse(Reader reader);
+  
+  /**
+   * A well behaved ResponseParser will return its content-type.
+   * 
+   * @return the content-type this parser expects to parse
+   */
+  public String getContentType() {
+    return null;
+  }
   
   /**
    * @return the version param passed to solr

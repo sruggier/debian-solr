@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,23 +16,24 @@
  */
 package org.apache.solr.handler.dataimport;
 
-import org.junit.Test;
-
 import java.io.File;
 import java.io.Reader;
 import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.Test;
+
 /**
  * <p>
  * Test for XPathEntityProcessor
  * </p>
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase {
@@ -42,11 +43,9 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
   
   @Test
   public void withFieldsAndXpath() throws Exception {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
-    createFile(tmpdir, "x.xsl", xsl.getBytes("UTF-8"), false);
+    File tmpdir = createTempDir().toFile();
+    
+    createFile(tmpdir, "x.xsl", xsl.getBytes(StandardCharsets.UTF_8), false);
     Map entityAttrs = createMap("name", "e", "url", "cd.xml",
             XPathEntityProcessor.FOR_EACH, "/catalog/cd");
     List fields = new ArrayList();
@@ -54,10 +53,10 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
     fields.add(createMap("column", "artist", "xpath", "/catalog/cd/artist"));
     fields.add(createMap("column", "year", "xpath", "/catalog/cd/year"));
     Context c = getContext(null,
-            new VariableResolverImpl(), getDataSource(cdData), Context.FULL_DUMP, fields, entityAttrs);
+            new VariableResolver(), getDataSource(cdData), Context.FULL_DUMP, fields, entityAttrs);
     XPathEntityProcessor xPathEntityProcessor = new XPathEntityProcessor();
     xPathEntityProcessor.init(c);
-    List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+    List<Map<String, Object>> result = new ArrayList<>();
     while (true) {
       Map<String, Object> row = xPathEntityProcessor.nextRow();
       if (row == null)
@@ -77,17 +76,143 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
     List fields = new ArrayList();
     fields.add(createMap("column", "a", "xpath", "/root/a", DataImporter.MULTI_VALUED, "true"));
     Context c = getContext(null,
-            new VariableResolverImpl(), getDataSource(testXml), Context.FULL_DUMP, fields, entityAttrs);
+            new VariableResolver(), getDataSource(testXml), Context.FULL_DUMP, fields, entityAttrs);
     XPathEntityProcessor xPathEntityProcessor = new XPathEntityProcessor();
     xPathEntityProcessor.init(c);
-    List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+    List<Map<String, Object>> result = new ArrayList<>();
     while (true) {
       Map<String, Object> row = xPathEntityProcessor.nextRow();
       if (row == null)
         break;
       result.add(row);
     }
-    assertEquals(2, ((List)result.get(0).get("a")).size());
+    List l = (List)result.get(0).get("a");
+    assertEquals(3, l.size());
+    assertEquals("1", l.get(0));
+    assertEquals("2", l.get(1));
+    assertEquals("ü", l.get(2));
+  }
+  
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  @Test
+  public void testMultiValuedWithMultipleDocuments() throws Exception {
+    Map entityAttrs = createMap("name", "e", "url", "testdata.xml", XPathEntityProcessor.FOR_EACH, "/documents/doc");
+    List fields = new ArrayList();
+    fields.add(createMap("column", "id", "xpath", "/documents/doc/id", DataImporter.MULTI_VALUED, "false"));
+    fields.add(createMap("column", "a", "xpath", "/documents/doc/a", DataImporter.MULTI_VALUED, "true"));
+    fields.add(createMap("column", "s1dataA", "xpath", "/documents/doc/sec1/s1dataA", DataImporter.MULTI_VALUED, "true"));
+    fields.add(createMap("column", "s1dataB", "xpath", "/documents/doc/sec1/s1dataB", DataImporter.MULTI_VALUED, "true")); 
+    fields.add(createMap("column", "s1dataC", "xpath", "/documents/doc/sec1/s1dataC", DataImporter.MULTI_VALUED, "true")); 
+    
+    Context c = getContext(null,
+            new VariableResolver(), getDataSource(textMultipleDocuments), Context.FULL_DUMP, fields, entityAttrs);
+    XPathEntityProcessor xPathEntityProcessor = new XPathEntityProcessor();
+    xPathEntityProcessor.init(c);
+    List<Map<String, Object>> result = new ArrayList<>();
+    while (true) {
+      Map<String, Object> row = xPathEntityProcessor.nextRow();
+      if (row == null)
+        break;
+      result.add(row);
+    }
+    {  
+      assertEquals("1", result.get(0).get("id"));
+      List a = (List)result.get(0).get("a");
+      List s1dataA = (List)result.get(0).get("s1dataA");
+      List s1dataB = (List)result.get(0).get("s1dataB");
+      List s1dataC = (List)result.get(0).get("s1dataC");      
+      assertEquals(2, a.size());
+      assertEquals("id1-a1", a.get(0));
+      assertEquals("id1-a2", a.get(1));
+      assertEquals(3, s1dataA.size());
+      assertEquals("id1-s1dataA-1", s1dataA.get(0));
+      assertNull(s1dataA.get(1));
+      assertEquals("id1-s1dataA-3", s1dataA.get(2));
+      assertEquals(3, s1dataB.size());
+      assertEquals("id1-s1dataB-1", s1dataB.get(0));
+      assertEquals("id1-s1dataB-2", s1dataB.get(1));
+      assertEquals("id1-s1dataB-3", s1dataB.get(2));
+      assertEquals(3, s1dataC.size());
+      assertNull(s1dataC.get(0));
+      assertNull(s1dataC.get(1));
+      assertNull(s1dataC.get(2));
+    }
+    { 
+      assertEquals("2", result.get(1).get("id"));
+      List a = (List)result.get(1).get("a");
+      List s1dataA = (List)result.get(1).get("s1dataA");
+      List s1dataB = (List)result.get(1).get("s1dataB");
+      List s1dataC = (List)result.get(1).get("s1dataC");  
+      assertTrue(a==null || a.size()==0);
+      assertEquals(1, s1dataA.size()); 
+      assertNull(s1dataA.get(0));
+      assertEquals(1, s1dataB.size());
+      assertEquals("id2-s1dataB-1", s1dataB.get(0));
+      assertEquals(1, s1dataC.size());
+      assertNull(s1dataC.get(0));
+    }  
+    {
+      assertEquals("3", result.get(2).get("id"));
+      List a = (List)result.get(2).get("a");
+      List s1dataA = (List)result.get(2).get("s1dataA");
+      List s1dataB = (List)result.get(2).get("s1dataB");
+      List s1dataC = (List)result.get(2).get("s1dataC");  
+      assertTrue(a==null || a.size()==0);
+      assertEquals(1, s1dataA.size());
+      assertEquals("id3-s1dataA-1", s1dataA.get(0));
+      assertEquals(1, s1dataB.size());
+      assertNull(s1dataB.get(0));
+      assertEquals(1, s1dataC.size());
+      assertNull(s1dataC.get(0)); 
+    }
+    {  
+      assertEquals("4", result.get(3).get("id"));
+      List a = (List)result.get(3).get("a");
+      List s1dataA = (List)result.get(3).get("s1dataA");
+      List s1dataB = (List)result.get(3).get("s1dataB");
+      List s1dataC = (List)result.get(3).get("s1dataC");  
+      assertTrue(a==null || a.size()==0);
+      assertEquals(1, s1dataA.size());
+      assertEquals("id4-s1dataA-1", s1dataA.get(0));
+      assertEquals(1, s1dataB.size());
+      assertEquals("id4-s1dataB-1", s1dataB.get(0));
+      assertEquals(1, s1dataC.size());
+      assertEquals("id4-s1dataC-1", s1dataC.get(0));
+    }
+    {
+      assertEquals("5", result.get(4).get("id"));
+      List a = (List)result.get(4).get("a");
+      List s1dataA = (List)result.get(4).get("s1dataA");
+      List s1dataB = (List)result.get(4).get("s1dataB");
+      List s1dataC = (List)result.get(4).get("s1dataC");  
+      assertTrue(a==null || a.size()==0);      
+      assertEquals(1, s1dataA.size());
+      assertNull(s1dataA.get(0)); 
+      assertEquals(1, s1dataB.size());
+      assertNull(s1dataB.get(0)); 
+      assertEquals(1, s1dataC.size());
+      assertEquals("id5-s1dataC-1", s1dataC.get(0));
+    }
+    {  
+      assertEquals("6", result.get(5).get("id"));
+      List a = (List)result.get(5).get("a");
+      List s1dataA = (List)result.get(5).get("s1dataA");
+      List s1dataB = (List)result.get(5).get("s1dataB");
+      List s1dataC = (List)result.get(5).get("s1dataC");     
+      assertTrue(a==null || a.size()==0); 
+      assertEquals(3, s1dataA.size());
+      assertEquals("id6-s1dataA-1", s1dataA.get(0));
+      assertEquals("id6-s1dataA-2", s1dataA.get(1));
+      assertNull(s1dataA.get(2));
+      assertEquals(3, s1dataB.size());
+      assertEquals("id6-s1dataB-1", s1dataB.get(0));
+      assertEquals("id6-s1dataB-2", s1dataB.get(1));
+      assertEquals("id6-s1dataB-3", s1dataB.get(2));
+      assertEquals(3, s1dataC.size());
+      assertEquals("id6-s1dataC-1", s1dataC.get(0));
+      assertNull(s1dataC.get(1));
+      assertEquals("id6-s1dataC-3", s1dataC.get(2));
+    }
   }
 
   @Test
@@ -97,7 +222,7 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
     List fields = new ArrayList();
     fields.add(createMap("column", "a", "xpath", "/root/a" ,"flatten","true"));
     Context c = getContext(null,
-            new VariableResolverImpl(), getDataSource(testXmlFlatten), Context.FULL_DUMP, fields, entityAttrs);
+            new VariableResolver(), getDataSource(testXmlFlatten), Context.FULL_DUMP, fields, entityAttrs);
     XPathEntityProcessor xPathEntityProcessor = new XPathEntityProcessor();
     xPathEntityProcessor.init(c);
     Map<String, Object> result = null;
@@ -122,7 +247,7 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
     fields.add(createMap("column", "artist", "xpath", "/catalog/cd/artist"));
     fields.add(createMap("column", "year", "xpath", "/catalog/cd/year"));
     Context c = getContext(null,
-        new VariableResolverImpl(), getDataSource(cdData), Context.FULL_DUMP, fields, entityAttrs);
+        new VariableResolver(), getDataSource(cdData), Context.FULL_DUMP, fields, entityAttrs);
     XPathEntityProcessor xPathEntityProcessor = new XPathEntityProcessor() {
       private int count;
       
@@ -150,7 +275,7 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
     xPathEntityProcessor.blockingQueueTimeOutUnits = TimeUnit.MICROSECONDS;
     
     xPathEntityProcessor.init(c);
-    List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+    List<Map<String, Object>> result = new ArrayList<>();
     while (true) {
       if (rowsToRead >= 0 && result.size() >= rowsToRead) {
         Thread.currentThread().interrupt();
@@ -207,20 +332,18 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
   
   @Test
   public void withDefaultSolrAndXsl() throws Exception {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
-    AbstractDataImportHandlerTestCase.createFile(tmpdir, "x.xsl", xsl.getBytes("UTF-8"),
+    File tmpdir = createTempDir().toFile();
+    AbstractDataImportHandlerTestCase.createFile(tmpdir, "x.xsl", xsl.getBytes(StandardCharsets.UTF_8),
             false);
+
     Map entityAttrs = createMap("name", "e",
             XPathEntityProcessor.USE_SOLR_ADD_SCHEMA, "true", "xsl", ""
-            + new File(tmpdir, "x.xsl").getAbsolutePath(), "url", "cd.xml");
+            + new File(tmpdir, "x.xsl").toURI(), "url", "cd.xml");
     Context c = getContext(null,
-            new VariableResolverImpl(), getDataSource(cdData), Context.FULL_DUMP, null, entityAttrs);
+            new VariableResolver(), getDataSource(cdData), Context.FULL_DUMP, null, entityAttrs);
     XPathEntityProcessor xPathEntityProcessor = new XPathEntityProcessor();
     xPathEntityProcessor.init(c);
-    List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
+    List<Map<String, Object>> result = new ArrayList<>();
     while (true) {
       Map<String, Object> row = xPathEntityProcessor.nextRow();
       if (row == null)
@@ -298,7 +421,71 @@ public class TestXPathEntityProcessor extends AbstractDataImportHandlerTestCase 
           + "\t\t<price>9.90</price>\n"
           + "\t\t<year>1982</year>\n" + "\t</cd>\n" + "</catalog>\t";
 
-  private static final String testXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><root><a>1</a><a>2</a></root>";
+  private static final String testXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE root [\n<!ENTITY uuml \"&#252;\" >\n]>\n<root><a>1</a><a>2</a><a>&uuml;</a></root>";
 
   private static final String testXmlFlatten = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><root><a>1<b>B</b>2</a></root>";
+  
+  private static final String textMultipleDocuments = 
+      "<?xml version=\"1.0\" ?>" +
+          "<documents>" +          
+          " <doc>" +
+          "  <id>1</id>" +
+          "  <a>id1-a1</a>" +
+          "  <a>id1-a2</a>" +
+          "  <sec1>" +
+          "   <s1dataA>id1-s1dataA-1</s1dataA>" +
+          "   <s1dataB>id1-s1dataB-1</s1dataB>" +
+          "  </sec1>" +
+          "  <sec1>" +
+          "   <s1dataB>id1-s1dataB-2</s1dataB>" +
+          "  </sec1>" +
+          "  <sec1>" +
+          "   <s1dataA>id1-s1dataA-3</s1dataA>" +
+          "   <s1dataB>id1-s1dataB-3</s1dataB>" +
+          "  </sec1>" +
+          " </doc>" +
+          " <doc>" +
+          "  <id>2</id>" +          
+          "  <sec1>" +
+          "   <s1dataB>id2-s1dataB-1</s1dataB>" +
+          "  </sec1>" + 
+          " </doc>" +
+          " <doc>" +
+          "  <id>3</id>" +          
+          "  <sec1>" +
+          "   <s1dataA>id3-s1dataA-1</s1dataA>" +
+          "  </sec1>" + 
+          " </doc>" +
+          " <doc>" +
+          "  <id>4</id>" +          
+          "  <sec1>" +
+          "   <s1dataA>id4-s1dataA-1</s1dataA>" +
+          "   <s1dataB>id4-s1dataB-1</s1dataB>" +
+          "   <s1dataC>id4-s1dataC-1</s1dataC>" +
+          "  </sec1>" + 
+          " </doc>" +
+          " <doc>" +
+          "  <id>5</id>" +          
+          "  <sec1>" +
+          "   <s1dataC>id5-s1dataC-1</s1dataC>" +
+          "  </sec1>" + 
+          " </doc>" +
+          " <doc>" +
+          "  <id>6</id>" +
+          "  <sec1>" +
+          "   <s1dataA>id6-s1dataA-1</s1dataA>" +
+          "   <s1dataB>id6-s1dataB-1</s1dataB>" +
+          "   <s1dataC>id6-s1dataC-1</s1dataC>" +
+          "  </sec1>" +
+          "  <sec1>" +
+          "   <s1dataA>id6-s1dataA-2</s1dataA>" +
+          "   <s1dataB>id6-s1dataB-2</s1dataB>" +
+          "  </sec1>" +
+          "  <sec1>" +
+          "   <s1dataB>id6-s1dataB-3</s1dataB>" +
+          "   <s1dataC>id6-s1dataC-3</s1dataC>" +
+          "  </sec1>" +
+          " </doc>" +
+          "</documents>"
+         ;
 }

@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +14,16 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
 
+
+import org.apache.lucene.util.AttributeImpl;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.TestUtil;
+
 import java.nio.CharBuffer;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.Formatter;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -92,7 +95,7 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
     char[] content = "hello".toCharArray();
     t.copyBuffer(content, 0, 5);
     char[] buf = t.buffer();
-    CharTermAttributeImpl copy = (CharTermAttributeImpl) TestSimpleAttributeImpls.assertCloneIsEqual(t);
+    CharTermAttributeImpl copy = assertCloneIsEqual(t);
     assertEquals(t.toString(), copy.toString());
     assertNotSame(buf, copy.buffer());
   }
@@ -114,7 +117,7 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
   
   public void testCopyTo() throws Exception {
     CharTermAttributeImpl t = new CharTermAttributeImpl();
-    CharTermAttributeImpl copy = (CharTermAttributeImpl) TestSimpleAttributeImpls.assertCopyIsEqual(t);
+    CharTermAttributeImpl copy = assertCopyIsEqual(t);
     assertEquals("", t.toString());
     assertEquals("", copy.toString());
 
@@ -122,7 +125,7 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
     char[] content = "hello".toCharArray();
     t.copyBuffer(content, 0, 5);
     char[] buf = t.buffer();
-    copy = (CharTermAttributeImpl) TestSimpleAttributeImpls.assertCopyIsEqual(t);
+    copy = assertCopyIsEqual(t);
     assertEquals(t.toString(), copy.toString());
     assertNotSame(buf, copy.buffer());
   }
@@ -130,8 +133,10 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
   public void testAttributeReflection() throws Exception {
     CharTermAttributeImpl t = new CharTermAttributeImpl();
     t.append("foobar");
-    _TestUtil.assertAttributeReflection(t,
-      Collections.singletonMap(CharTermAttribute.class.getName() + "#term", "foobar"));
+    TestUtil.assertAttributeReflection(t, new HashMap<String, Object>() {{
+      put(CharTermAttribute.class.getName() + "#term", "foobar");
+      put(TermToBytesRefAttribute.class.getName() + "#bytes", new BytesRef("foobar"));
+    }});
   }
   
   public void testCharSequenceInterface() {
@@ -155,7 +160,7 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
 
   public void testAppendableInterface() {
     CharTermAttributeImpl t = new CharTermAttributeImpl();
-    Formatter formatter = new Formatter(t, Locale.US);
+    Formatter formatter = new Formatter(t, Locale.ROOT);
     formatter.format("%d", 1234);
     assertEquals("1234", t.toString());
     formatter.format("%d", 5678);
@@ -186,17 +191,13 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
     t.append((CharSequence) t2, 1, 2);
     assertEquals("4teste", t.toString());
     
-    try {
+    expectThrows(IndexOutOfBoundsException.class, () -> {
       t.append((CharSequence) t2, 1, 5);
-      fail("Should throw IndexOutOfBoundsException");
-    } catch(IndexOutOfBoundsException iobe) {
-    }
-    
-    try {
+    });
+
+    expectThrows(IndexOutOfBoundsException.class, () -> {
       t.append((CharSequence) t2, 1, 0);
-      fail("Should throw IndexOutOfBoundsException");
-    } catch(IndexOutOfBoundsException iobe) {
-    }
+    });
     
     t.append((CharSequence) null);
     assertEquals("4testenull", t.toString());
@@ -220,8 +221,11 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
     // finally use a completely custom CharSequence that is not catched by instanceof checks
     final String longTestString = "012345678901234567890123456789";
     t.append(new CharSequence() {
+      @Override
       public char charAt(int i) { return longTestString.charAt(i); }
+      @Override
       public int length() { return longTestString.length(); }
+      @Override
       public CharSequence subSequence(int start, int end) { return longTestString.subSequence(start, end); }
       @Override
       public String toString() { return longTestString; }
@@ -251,31 +255,40 @@ public class TestCharTermAttributeImpl extends LuceneTestCase {
     t.append("test");
     assertEquals("test", t.toString());
 
-    try {
+    expectThrows(IndexOutOfBoundsException.class, () -> {
       t.charAt(-1);
-      fail("Should throw IndexOutOfBoundsException");
-    } catch(IndexOutOfBoundsException iobe) {
-    }
+    });
 
-    try {
+    expectThrows(IndexOutOfBoundsException.class, () -> {
       t.charAt(4);
-      fail("Should throw IndexOutOfBoundsException");
-    } catch(IndexOutOfBoundsException iobe) {
-    }
+    });
 
-    try {
+    expectThrows(IndexOutOfBoundsException.class, () -> {
       t.subSequence(0, 5);
-      fail("Should throw IndexOutOfBoundsException");
-    } catch(IndexOutOfBoundsException iobe) {
-    }
+    });
 
-    try {
+    expectThrows(IndexOutOfBoundsException.class, () -> {
       t.subSequence(5, 0);
-      fail("Should throw IndexOutOfBoundsException");
-    } catch(IndexOutOfBoundsException iobe) {
-    }
+    });
   }
 
+  public static <T extends AttributeImpl> T assertCloneIsEqual(T att) {
+    @SuppressWarnings("unchecked")
+    T clone = (T) att.clone();
+    assertEquals("Clone must be equal", att, clone);
+    assertEquals("Clone's hashcode must be equal", att.hashCode(), clone.hashCode());
+    return clone;
+  }
+
+  public static <T extends AttributeImpl> T assertCopyIsEqual(T att) throws Exception {
+    @SuppressWarnings("unchecked")
+    T copy = (T) att.getClass().newInstance();
+    att.copyTo(copy);
+    assertEquals("Copied instance must be equal", att, copy);
+    assertEquals("Copied instance's hashcode must be equal", att.hashCode(), copy.hashCode());
+    return copy;
+  }
+  
   /*
   
   // test speed of the dynamic instanceof checks in append(CharSequence),

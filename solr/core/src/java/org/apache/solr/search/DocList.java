@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 
@@ -23,7 +22,7 @@ package org.apache.solr.search;
  * This list contains a subset of the complete list of documents actually matched: <code>size()</code>
  * document ids starting at <code>offset()</code>.
  *
- * @version $Id$
+ *
  * @since solr 0.9
  */
 public interface DocList extends DocSet {
@@ -36,13 +35,14 @@ public interface DocList extends DocSet {
   /**
    * Returns the number of ids in this list.
    */
+  @Override
   public int size();
 
   /**
    * Returns the total number of matches for the search
    * (as opposed to just the number collected according
    * to <code>offset()</code> and <code>size()</code>).
-   * Hence it's always true that matches() >= size()
+   * Hence it's always true that matches() &gt;= size()
    * @return number of matches for the search(query &amp; any filters)
    */
   public int matches();
@@ -76,6 +76,7 @@ public interface DocList extends DocSet {
    * </p>
    * @see #hasScores
    */
+  @Override
   public DocIterator iterator();
     
   /** True if scores were retained */

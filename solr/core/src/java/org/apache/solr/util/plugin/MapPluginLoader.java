@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,32 +14,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util.plugin;
 
 import java.util.Map;
 
-import org.apache.solr.common.util.DOMUtil;
+import org.apache.solr.util.DOMUtil;
 import org.w3c.dom.Node;
+
+import static org.apache.solr.common.params.CommonParams.NAME;
 
 /**
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class MapPluginLoader<T extends MapInitializedPlugin> extends AbstractPluginLoader<T> 
 {
   private final Map<String,T> registry;
   
-  public MapPluginLoader( String name, Map<String,T> map )
-  {
-    super( name );
+  public MapPluginLoader(String name, Class<T> pluginClassType, Map<String, T> map) {
+    super(name, pluginClassType);
     registry = map;
   }
 
   @Override
   protected void init(T plugin, Node node) throws Exception {
-    Map<String,String> params = DOMUtil.toMapExcept( node.getAttributes(), "name","class" );
+    Map<String, String> params = DOMUtil.toMapExcept(node.getAttributes(), NAME, "class");
     plugin.init( params );
   }
 

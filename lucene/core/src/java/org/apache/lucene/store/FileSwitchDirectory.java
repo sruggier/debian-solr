@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,15 +14,20 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.IOException;
-
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.HashSet;
+
+import org.apache.lucene.util.IOUtils;
 
 /**
  * Expert: A Directory instance that switches files between
@@ -35,6 +38,11 @@ import java.util.HashSet;
  * directory.  The provided Set must not change once passed
  * to this class, and must allow multiple threads to call
  * contains at once.</p>
+ *
+ * <p>Locks with a name having the specified extensions are
+ * delegated to the primary directory; others are delegated
+ * to the secondary directory. Ideally, both Directory
+ * instances should use the same lock factory.</p>
  *
  * @lucene.experimental
  */
@@ -50,7 +58,6 @@ public class FileSwitchDirectory extends Directory {
     this.primaryDir = primaryDir;
     this.secondaryDir = secondaryDir;
     this.doClose = doClose;
-    this.lockFactory = primaryDir.getLockFactory();
   }
 
   /** Return the primary directory */
@@ -64,54 +71,57 @@ public class FileSwitchDirectory extends Directory {
   }
   
   @Override
+  public Lock obtainLock(String name) throws IOException {
+    return getDirectory(name).obtainLock(name);
+  }
+
+  @Override
   public void close() throws IOException {
     if (doClose) {
-      try {
-        secondaryDir.close();
-      } finally { 
-        primaryDir.close();
-      }
+      IOUtils.close(primaryDir, secondaryDir);
       doClose = false;
     }
   }
   
   @Override
   public String[] listAll() throws IOException {
-    Set<String> files = new HashSet<String>();
+    Set<String> files = new HashSet<>();
     // LUCENE-3380: either or both of our dirs could be FSDirs,
     // but if one underlying delegate is an FSDir and mkdirs() has not
     // yet been called, because so far everything is written to the other,
-    // in this case, we don't want to throw a NoSuchDirectoryException
-    NoSuchDirectoryException exc = null;
+    // in this case, we don't want to throw a NoSuchFileException
+    NoSuchFileException exc = null;
     try {
       for(String f : primaryDir.listAll()) {
         files.add(f);
       }
-    } catch (NoSuchDirectoryException e) {
+    } catch (NoSuchFileException e) {
       exc = e;
     }
     try {
       for(String f : secondaryDir.listAll()) {
         files.add(f);
       }
-    } catch (NoSuchDirectoryException e) {
-      // we got NoSuchDirectoryException from both dirs
+    } catch (NoSuchFileException e) {
+      // we got NoSuchFileException from both dirs
       // rethrow the first.
       if (exc != null) {
         throw exc;
       }
-      // we got NoSuchDirectoryException from the secondary,
+      // we got NoSuchFileException from the secondary,
       // and the primary is empty.
       if (files.isEmpty()) {
         throw e;
       }
     }
-    // we got NoSuchDirectoryException from the primary,
+    // we got NoSuchFileException from the primary,
     // and the secondary is empty.
     if (exc != null && files.isEmpty()) {
       throw exc;
     }
-    return files.toArray(new String[files.size()]);
+    String[] result = files.toArray(new String[files.size()]);
+    Arrays.sort(result);
+    return result;
   }
 
   /** Utility method to return a file's extension. */
@@ -133,26 +143,12 @@ public class FileSwitchDirectory extends Directory {
   }
 
   @Override
-  public boolean fileExists(String name) throws IOException {
-    return getDirectory(name).fileExists(name);
-  }
-
-  @Override
-  public long fileModified(String name) throws IOException {
-    return getDirectory(name).fileModified(name);
-  }
-
-  @Deprecated
-  @Override
-  /*  @deprecated Lucene never uses this API; it will be
-   *  removed in 4.0. */
-  public void touchFile(String name) throws IOException {
-    getDirectory(name).touchFile(name);
-  }
-
-  @Override
   public void deleteFile(String name) throws IOException {
-    getDirectory(name).deleteFile(name);
+    if (getDirectory(name) == primaryDir) {
+      primaryDir.deleteFile(name);
+    } else {
+      secondaryDir.deleteFile(name);
+    }
   }
 
   @Override
@@ -161,20 +157,19 @@ public class FileSwitchDirectory extends Directory {
   }
 
   @Override
-  public IndexOutput createOutput(String name) throws IOException {
-    return getDirectory(name).createOutput(name);
+  public IndexOutput createOutput(String name, IOContext context) throws IOException {
+    return getDirectory(name).createOutput(name, context);
   }
 
-  @Deprecated
   @Override
-  public void sync(String name) throws IOException {
-    sync(Collections.singleton(name));
+  public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
+    return getDirectory("."+suffix).createTempOutput(prefix, suffix, context);
   }
 
   @Override
   public void sync(Collection<String> names) throws IOException {
-    List<String> primaryNames = new ArrayList<String>();
-    List<String> secondaryNames = new ArrayList<String>();
+    List<String> primaryNames = new ArrayList<>();
+    List<String> secondaryNames = new ArrayList<>();
 
     for (String name : names)
       if (primaryExtensions.contains(getExtension(name)))
@@ -187,7 +182,24 @@ public class FileSwitchDirectory extends Directory {
   }
 
   @Override
-  public IndexInput openInput(String name) throws IOException {
-    return getDirectory(name).openInput(name);
+  public void rename(String source, String dest) throws IOException {
+    Directory sourceDir = getDirectory(source);
+    // won't happen with standard lucene index files since pending and commit will
+    // always have the same extension ("")
+    if (sourceDir != getDirectory(dest)) {
+      throw new AtomicMoveNotSupportedException(source, dest, "source and dest are in different directories");
+    }
+    sourceDir.rename(source, dest);
+  }
+
+  @Override
+  public void syncMetaData() throws IOException {
+    primaryDir.syncMetaData();
+    secondaryDir.syncMetaData();
+  }
+
+  @Override
+  public IndexInput openInput(String name, IOContext context) throws IOException {
+    return getDirectory(name).openInput(name, context);
   }
 }

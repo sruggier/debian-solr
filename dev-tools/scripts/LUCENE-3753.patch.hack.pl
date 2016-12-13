@@ -37,6 +37,9 @@ my @moves = (
     'lucene/src/test'
  => 'lucene/core/src/test',
 
+    'lucene/src/resources'
+ => 'lucene/core/src/resources',
+
     'lucene/src/site'
  => 'lucene/site',
 

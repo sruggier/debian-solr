@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 import org.apache.lucene.index.*;
@@ -24,49 +24,25 @@ import org.apache.lucene.index.*;
  * Position of a term in a document that takes into account the term offset within the phrase. 
  */
 final class PhrasePositions {
-  int doc;					  // current doc
-  int position;					  // position in doc
-  int count;					  // remaining pos in this doc
-  int offset;					  // position in phrase
+  int position;         // position in doc
+  int count;            // remaining pos in this doc
+  int offset;           // position in phrase
   final int ord;                                  // unique across all PhrasePositions instances
-  TermPositions tp;				  // stream of positions
-  PhrasePositions next;				  // used to make lists
+  final PostingsEnum postings;            // stream of docs & positions
+  PhrasePositions next;                           // used to make lists
   int rptGroup = -1; // >=0 indicates that this is a repeating PP
   int rptInd; // index in the rptGroup
   final Term[] terms; // for repetitions initialization 
-  
-  PhrasePositions(TermPositions t, int o, int ord, Term[] terms) {
-    tp = t;
+
+  PhrasePositions(PostingsEnum postings, int o, int ord, Term[] terms) {
+    this.postings = postings;
     offset = o;
     this.ord = ord;
     this.terms = terms;
   }
 
-  final boolean next() throws IOException {	  // increments to next doc
-    if (!tp.next()) {
-      tp.close();				  // close stream
-      doc = Integer.MAX_VALUE;			  // sentinel value
-      return false;
-    }
-    doc = tp.doc();
-    position = 0;
-    return true;
-  }
-
-  final boolean skipTo(int target) throws IOException {
-    if (!tp.skipTo(target)) {
-      tp.close();				  // close stream
-      doc = Integer.MAX_VALUE;			  // sentinel value
-      return false;
-    }
-    doc = tp.doc();
-    position = 0;
-    return true;
-  }
-
-
   final void firstPosition() throws IOException {
-    count = tp.freq();				  // read first pos
+    count = postings.freq();  // read first pos
     nextPosition();
   }
 
@@ -77,8 +53,8 @@ final class PhrasePositions {
    * have exactly the same <code>position</code>.
    */
   final boolean nextPosition() throws IOException {
-    if (count-- > 0) {				  // read subsequent pos's
-      position = tp.nextPosition() - offset;
+    if (count-- > 0) {  // read subsequent pos's
+      position = postings.nextPosition() - offset;
       return true;
     } else
       return false;
@@ -87,7 +63,7 @@ final class PhrasePositions {
   /** for debug purposes */
   @Override
   public String toString() {
-    String s = "d:"+doc+" o:"+offset+" p:"+position+" c:"+count;
+    String s = "o:"+offset+" p:"+position+" c:"+count;
     if (rptGroup >=0 ) {
       s += " rpt:"+rptGroup+",i"+rptInd;
     }

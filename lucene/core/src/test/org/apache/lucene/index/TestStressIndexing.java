@@ -1,11 +1,10 @@
-package org.apache.lucene.index;
-
-/**
- * Copyright 2004 The Apache Software Foundation
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -15,6 +14,7 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
 import org.apache.lucene.util.*;
 import org.apache.lucene.store.*;
@@ -77,9 +77,9 @@ public class TestStressIndexing extends LuceneTestCase {
       // Add 10 docs:
       for(int j=0; j<10; j++) {
         Document d = new Document();
-        int n = random.nextInt();
-        d.add(newField("id", Integer.toString(nextID++), Field.Store.YES, Field.Index.NOT_ANALYZED));
-        d.add(newField("contents", English.intToEnglish(n), Field.Store.NO, Field.Index.ANALYZED));
+        int n = random().nextInt();
+        d.add(newStringField("id", Integer.toString(nextID++), Field.Store.YES));
+        d.add(newTextField("contents", English.intToEnglish(n), Field.Store.NO));
         writer.addDocument(d);
       }
 
@@ -103,9 +103,8 @@ public class TestStressIndexing extends LuceneTestCase {
     @Override
     public void doWork() throws Throwable {
       for (int i=0; i<100; i++) {
-        IndexReader ir = IndexReader.open(directory, true);
-        IndexSearcher is = new IndexSearcher(ir);
-        is.close();
+        IndexReader ir = DirectoryReader.open(directory);
+        IndexSearcher is = newSearcher(ir);
         ir.close();
       }
       count += 100;
@@ -117,10 +116,10 @@ public class TestStressIndexing extends LuceneTestCase {
     stress test.
   */
   public void runStressTest(Directory directory, MergeScheduler mergeScheduler) throws Exception {
-    IndexWriter modifier = new IndexWriter(directory, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setOpenMode(OpenMode.CREATE).setMaxBufferedDocs(10).setMergeScheduler(
-            mergeScheduler));
+    IndexWriter modifier = new IndexWriter(directory, newIndexWriterConfig(new MockAnalyzer(random()))
+        .setOpenMode(OpenMode.CREATE)
+        .setMaxBufferedDocs(10)
+        .setMergeScheduler(mergeScheduler));
     modifier.commit();
     
     TimedThread[] threads = new TimedThread[4];
@@ -165,7 +164,11 @@ public class TestStressIndexing extends LuceneTestCase {
     FSDirectory.
   */
   public void testStressIndexAndSearching() throws Exception {
-    Directory directory = newDirectory();
+    Directory directory = newMaybeVirusCheckingDirectory();
+    if (directory instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper) directory).setAssertNoUnrefencedFilesOnClose(true);
+    }
+
     runStressTest(directory, new ConcurrentMergeScheduler());
     directory.close();
   }

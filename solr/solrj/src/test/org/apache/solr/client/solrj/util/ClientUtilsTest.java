@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,14 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.util;
 
 import org.apache.lucene.util.LuceneTestCase;
 
 /**
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class ClientUtilsTest extends LuceneTestCase {

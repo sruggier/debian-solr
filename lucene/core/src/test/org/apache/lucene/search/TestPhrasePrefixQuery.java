@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,19 +14,22 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.util.LuceneTestCase;
-
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.index.RandomIndexWriter;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.index.TermEnum;
-import org.apache.lucene.store.Directory;
 
 import java.io.IOException;
 import java.util.LinkedList;
+
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.MultiFields;
+import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.LuceneTestCase;
 
 /**
  * This class tests PhrasePrefixQuery class.
@@ -40,22 +41,17 @@ public class TestPhrasePrefixQuery extends LuceneTestCase {
      */
   public void testPhrasePrefix() throws IOException {
     Directory indexStore = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, indexStore);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), indexStore);
     Document doc1 = new Document();
     Document doc2 = new Document();
     Document doc3 = new Document();
     Document doc4 = new Document();
     Document doc5 = new Document();
-    doc1.add(newField("body", "blueberry pie", Field.Store.YES,
-        Field.Index.ANALYZED));
-    doc2.add(newField("body", "blueberry strudel", Field.Store.YES,
-        Field.Index.ANALYZED));
-    doc3.add(newField("body", "blueberry pizza", Field.Store.YES,
-        Field.Index.ANALYZED));
-    doc4.add(newField("body", "blueberry chewing gum", Field.Store.YES,
-        Field.Index.ANALYZED));
-    doc5.add(newField("body", "piccadilly circus", Field.Store.YES,
-        Field.Index.ANALYZED));
+    doc1.add(newTextField("body", "blueberry pie", Field.Store.YES));
+    doc2.add(newTextField("body", "blueberry strudel", Field.Store.YES));
+    doc3.add(newTextField("body", "blueberry pizza", Field.Store.YES));
+    doc4.add(newTextField("body", "blueberry chewing gum", Field.Store.YES));
+    doc5.add(newTextField("body", "piccadilly circus", Field.Store.YES));
     writer.addDocument(doc1);
     writer.addDocument(doc2);
     writer.addDocument(doc3);
@@ -67,34 +63,36 @@ public class TestPhrasePrefixQuery extends LuceneTestCase {
     IndexSearcher searcher = newSearcher(reader);
     
     // PhrasePrefixQuery query1 = new PhrasePrefixQuery();
-    MultiPhraseQuery query1 = new MultiPhraseQuery();
+    MultiPhraseQuery.Builder query1builder = new MultiPhraseQuery.Builder();
     // PhrasePrefixQuery query2 = new PhrasePrefixQuery();
-    MultiPhraseQuery query2 = new MultiPhraseQuery();
-    query1.add(new Term("body", "blueberry"));
-    query2.add(new Term("body", "strawberry"));
+    MultiPhraseQuery.Builder query2builder = new MultiPhraseQuery.Builder();
+    query1builder.add(new Term("body", "blueberry"));
+    query2builder.add(new Term("body", "strawberry"));
     
-    LinkedList<Term> termsWithPrefix = new LinkedList<Term>();
+    LinkedList<Term> termsWithPrefix = new LinkedList<>();
     
     // this TermEnum gives "piccadilly", "pie" and "pizza".
     String prefix = "pi";
-    TermEnum te = reader.terms(new Term("body", prefix + "*"));
+    TermsEnum te = MultiFields.getFields(reader).terms("body").iterator();
+    te.seekCeil(new BytesRef(prefix));
     do {
-        if (te.term().text().startsWith(prefix))
-        {
-            termsWithPrefix.add(te.term());
-        }
-    } while (te.next());
+      String s = te.term().utf8ToString();
+      if (s.startsWith(prefix)) {
+        termsWithPrefix.add(new Term("body", s));
+      } else {
+        break;
+      }
+    } while (te.next() != null);
     
-    query1.add(termsWithPrefix.toArray(new Term[0]));
-    query2.add(termsWithPrefix.toArray(new Term[0]));
+    query1builder.add(termsWithPrefix.toArray(new Term[0]));
+    query2builder.add(termsWithPrefix.toArray(new Term[0]));
     
     ScoreDoc[] result;
-    result = searcher.search(query1, null, 1000).scoreDocs;
+    result = searcher.search(query1builder.build(), 1000).scoreDocs;
     assertEquals(2, result.length);
     
-    result = searcher.search(query2, null, 1000).scoreDocs;
+    result = searcher.search(query2builder.build(), 1000).scoreDocs;
     assertEquals(0, result.length);
-    searcher.close();
     reader.close();
     indexStore.close();
   }

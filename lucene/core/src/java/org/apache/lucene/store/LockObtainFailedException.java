@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.lucene.store;
 
 import java.io.IOException;
@@ -24,10 +23,14 @@ import java.io.IOException;
  * could not be acquired.  This
  * happens when a writer tries to open an index
  * that another writer already has open.
- * @see Lock#obtain(long)
+ * @see LockFactory#obtainLock(Directory, String)
  */
 public class LockObtainFailedException extends IOException {
   public LockObtainFailedException(String message) {
     super(message);
+  }
+  
+  public LockObtainFailedException(String message, Throwable cause) {
+    super(message, cause);
   }
 }

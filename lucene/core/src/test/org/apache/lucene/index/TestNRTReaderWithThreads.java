@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
 
 public class TestNRTReaderWithThreads extends LuceneTestCase {
@@ -30,13 +31,15 @@ public class TestNRTReaderWithThreads extends LuceneTestCase {
 
   public void testIndexing() throws Exception {
     Directory mainDir = newDirectory();
+    if (mainDir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)mainDir).setAssertNoDeleteOpenFile(true);
+    }
     IndexWriter writer = new IndexWriter(
         mainDir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).
-            setMaxBufferedDocs(10).
-            setMergePolicy(newLogMergePolicy(false,2))
+        newIndexWriterConfig(new MockAnalyzer(random()))
+           .setMaxBufferedDocs(10)
+           .setMergePolicy(newLogMergePolicy(false,2))
     );
-    writer.setInfoStream(VERBOSE ? System.out : null);
     IndexReader reader = writer.getReader(); // start pooling readers
     reader.close();
     RunThread[] indexThreads = new RunThread[4];
@@ -77,7 +80,7 @@ public class TestNRTReaderWithThreads extends LuceneTestCase {
     int delCount = 0;
     int addCount = 0;
     int type;
-    final Random r = new Random(random.nextLong());
+    final Random r = new Random(random().nextLong());
     
     public RunThread(int type, IndexWriter writer) {
       this.type = type;

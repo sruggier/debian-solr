@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,23 +14,21 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.util.Arrays;
 
-import org.apache.lucene.util.LuceneTestCase;
-
-import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.analysis.WhitespaceAnalyzer;
 import org.apache.lucene.document.DateTools;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
-import org.apache.lucene.queryParser.QueryParser;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.Sort;
-import org.apache.lucene.search.SortField;
+import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.LuceneTestCase;
 
 /**
  * Test date sorting, i.e. auto-sorting of fields with type "long".
@@ -51,7 +47,7 @@ public class TestDateSort extends LuceneTestCase {
     super.setUp();
     // Create an index writer.
     directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, directory, new MockAnalyzer(random));
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
 
     // oldest doc:
     // Add the first document.  text = "Document 1"  dateTime = Oct 10 03:25:22 EDT 2007
@@ -80,20 +76,17 @@ public class TestDateSort extends LuceneTestCase {
   public void testReverseDateSort() throws Exception {
     IndexSearcher searcher = newSearcher(reader);
 
-    Sort sort = new Sort(new SortField(DATE_TIME_FIELD, SortField.STRING, true));
-
-    QueryParser queryParser = new QueryParser(TEST_VERSION_CURRENT, TEXT_FIELD, new MockAnalyzer(random));
-    Query query = queryParser.parse("Document");
+    Sort sort = new Sort(new SortField(DATE_TIME_FIELD, SortField.Type.STRING, true));
+    Query query = new TermQuery(new Term(TEXT_FIELD, "document"));
 
     // Execute the search and process the search results.
     String[] actualOrder = new String[5];
-    ScoreDoc[] hits = searcher.search(query, null, 1000, sort).scoreDocs;
+    ScoreDoc[] hits = searcher.search(query, 1000, sort).scoreDocs;
     for (int i = 0; i < hits.length; i++) {
       Document document = searcher.doc(hits[i].doc);
       String text = document.get(TEXT_FIELD);
       actualOrder[i] = text;
     }
-    searcher.close();
 
     // Set up the expected order (i.e. Document 5, 4, 3, 2, 1).
     String[] expectedOrder = new String[5];
@@ -110,14 +103,14 @@ public class TestDateSort extends LuceneTestCase {
     Document document = new Document();
 
     // Add the text field.
-    Field textField = newField(TEXT_FIELD, text, Field.Store.YES, Field.Index.ANALYZED);
+    Field textField = newTextField(TEXT_FIELD, text, Field.Store.YES);
     document.add(textField);
 
     // Add the date/time field.
     String dateTimeString = DateTools.timeToString(time, DateTools.Resolution.SECOND);
-    Field dateTimeField = newField(DATE_TIME_FIELD, dateTimeString, Field.Store.YES,
-        Field.Index.NOT_ANALYZED);
+    Field dateTimeField = newStringField(DATE_TIME_FIELD, dateTimeString, Field.Store.YES);
     document.add(dateTimeField);
+    document.add(new SortedDocValuesField(DATE_TIME_FIELD, new BytesRef(dateTimeString)));
 
     return document;
   }

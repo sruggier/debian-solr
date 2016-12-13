@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,25 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.request;
 
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.schema.IndexSchema;
-import org.apache.solr.common.params.CommonParams; //javadoc
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.core.SolrCore;
+import org.apache.solr.util.RTimerTree;
 
+import java.security.Principal;
 import java.util.Map;
 
 /**
  * <p>Container for a request to execute a query.</p>
  * <p><code>SolrQueryRequest</code> is not thread safe.</p>
  * 
- * @version $Id$
+ *
  */
-public interface SolrQueryRequest {
+public interface SolrQueryRequest extends AutoCloseable {
 
   /** returns the current request parameters */
   public SolrParams getParams();
@@ -63,52 +63,14 @@ public interface SolrQueryRequest {
    */
   public void close();
 
-  /**
-   * Returns the input parameter value for the specified name
-   * @return the value, or the first value if the parameter was
-   * specified more then once; may be null.
-   * @deprecated Use {@link #getParams()} instead.
+  /** The start time of this request in milliseconds.
+   * Use this only if you need the absolute system time at the start of the request,
+   * getRequestTimer() provides a more accurate mechanism for timing purposes.
    */
-  @Deprecated
-  public String getParam(String name);
-
-  /**
-   * Returns the input parameter values for the specified name
-   * @return the values; may be null or empty depending on implementation
-   * @deprecated Use {@link #getParams()} instead.
-   */
-  @Deprecated
-  public String[] getParams(String name);
-
-  /**
-   * Returns the primary query string parameter of the request
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#Q} instead.
-   */
-  @Deprecated
-  public String getQueryString();
-
-  /**
-   * Signifies the syntax and the handler that should be used
-   * to execute this query.
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#QT} instead.
-   */
-  @Deprecated
-  public String getQueryType();
-
-  /** starting position in matches to return to client
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#START} instead.
-   */
-  @Deprecated
-  public int getStart();
-
-  /** number of matching documents to return
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#ROWS} instead.
-   */
-  @Deprecated
-  public int getLimit();
-
-  /** The start time of this request in milliseconds */
   public long getStartTime();
+
+  /** The timer for this request, created when the request started being processed */
+  public RTimerTree getRequestTimer();
 
   /** The index searcher associated with this request */
   public SolrIndexSearcher getSearcher();
@@ -116,8 +78,11 @@ public interface SolrQueryRequest {
   /** The solr core (coordinator, etc) associated with this request */
   public SolrCore getCore();
 
-  /** The index schema associated with this request */
+  /** The schema snapshot from core.getLatestSchema() at request creation. */
   public IndexSchema getSchema();
+  
+  /** Replaces the current schema snapshot with the latest from the core. */
+  public void updateSchemaToLatest();
 
   /**
    * Returns a string representing all the important parameters.
@@ -125,10 +90,14 @@ public interface SolrQueryRequest {
    */
   public String getParamString();
 
-  /******
-  // Get the current elapsed time in milliseconds
-  public long getElapsedTime();
-  ******/
+  /** Returns any associated JSON (or null if none) in deserialized generic form.
+   * Java classes used to represent the JSON are as follows: Map, List, String, Long, Double, Boolean
+   */
+  public Map<String,Object> getJSON();
+
+  public void setJSON(Map<String,Object> json);
+
+  public Principal getUserPrincipal();
 }
 
 

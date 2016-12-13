@@ -27,98 +27,22 @@
     <relativePath>../pom.xml</relativePath>
   </parent>
   <groupId>org.apache.solr</groupId>
-  <artifactId>solr-solrj</artifactId>
-  <packaging>jar</packaging>
-  <name>Apache Solr Solrj</name>
-  <description>Apache Solr Solrj</description>
-  <properties>
-    <module-directory>solr/solrj</module-directory>
-    <build-directory>../build/solr-solrj</build-directory>
-  </properties>
-  <scm>
-    <connection>
-      scm:svn:http://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </connection>
-    <developerConnection>
-      scm:svn:https://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </developerConnection>
-    <url>
-      http://svn.apache.org/viewvc/lucene/dev/branches/branch_3x/${module-directory}
-    </url>
-  </scm>
-  <dependencies>
-    <dependency>
-      <groupId>commons-httpclient</groupId>
-      <artifactId>commons-httpclient</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>commons-io</groupId>
-      <artifactId>commons-io</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.httpcomponents</groupId>
-      <artifactId>httpclient</artifactId>
-      <!-- HttpSolrServer requires this dependency. -->
-      <optional>true</optional>
-      <exclusions>
-        <exclusion>
-          <groupId>commons-logging</groupId>
-          <artifactId>commons-logging</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.httpcomponents</groupId>
-      <artifactId>httpmime</artifactId>
-      <!-- HttpSolrServer requires this dependency. -->
-      <optional>true</optional>
-    </dependency>
-    <!-- Technically, this is optional in SolrJ; but it's fast. SOLR-2852 -->
-    <dependency>
-      <groupId>org.codehaus.woodstox</groupId>
-      <artifactId>wstx-asl</artifactId>
-      <scope>runtime</scope>
-      <exclusions>
-        <exclusion>
-          <groupId>stax</groupId>
-          <artifactId>stax-api</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>jcl-over-slf4j</artifactId>
-    </dependency>
-  </dependencies>
+  <artifactId>solr-solrj-aggregator</artifactId>
+  <packaging>pom</packaging>
+  <name>Apache Solr Solrj aggregator POM</name>
+  <modules>
+    <module>src/java</module>
+    <module>src/test</module>
+  </modules>
   <build>
-    <directory>${build-directory}</directory>
-    <outputDirectory>${build-directory}/classes/java</outputDirectory>
-    <testOutputDirectory>${build-directory}/classes/test</testOutputDirectory>
-    <sourceDirectory>src/java</sourceDirectory>
-    <testSourceDirectory/>
-    <testResources/>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
+        <artifactId>maven-deploy-plugin</artifactId>
         <configuration>
-          <skipTests>true</skipTests> <!-- Tests are run from solr-core module -->
+          <skip>true</skip>
         </configuration>
       </plugin>
     </plugins>
   </build>
-  <profiles>
-    <profile>
-      <id>jdk15</id>
-      <activation>
-        <jdk>1.5</jdk>
-      </activation>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.geronimo.specs</groupId>
-          <artifactId>geronimo-stax-api_1.0_spec</artifactId>
-        </dependency>
-      </dependencies>
-    </profile>
-  </profiles>
 </project>

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update.processor;
 
 import java.util.ArrayList;
 import java.util.List;
-
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -27,17 +25,14 @@ import org.apache.solr.core.SolrCore;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.servlet.SolrRequestParsers;
 
 public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends SolrTestCaseJ4 {
 
-  protected static SolrRequestParsers _parser;
-  protected static SolrQueryRequest req;
-  protected static SolrQueryResponse resp = new SolrQueryResponse();
-  protected static LanguageIdentifierUpdateProcessor liProcessor;
-  protected static ModifiableSolrParams parameters;
+  protected static final SolrRequestParsers _parser = new SolrRequestParsers(null);
+  protected static final SolrQueryResponse resp = new SolrQueryResponse();
+  protected LanguageIdentifierUpdateProcessor liProcessor;
 
   @BeforeClass
   public static void beforeClass() throws Exception {
@@ -45,7 +40,6 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
     SolrCore core = h.getCore();
     UpdateRequestProcessorChain chained = core.getUpdateProcessingChain("lang_id");
     assertNotNull(chained);
-    _parser = new SolrRequestParsers(null);
   }
 
   @Override
@@ -58,7 +52,7 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
 
   @Test
   public void testLangIdGlobal() throws Exception {
-    parameters = new ModifiableSolrParams();
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
     parameters.add("langid.fl", "name,subject");
     parameters.add("langid.langField", "language_s");
     parameters.add("langid.fallback", "un");
@@ -87,13 +81,12 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
     assertLang("uk", "id", "20uk", "name", "Ukrainian", "subject", "Народно-господарський комплекс країни включає такі види промисловості як важке машинобудування, чорна та кольорова металургія, суднобудування, виробництво автобусів, легкових та вантажних автомобілів, тракторів та іншої сільськогосподарської техніки, тепловозів, верстатів, турбін, авіаційних двигунів та літаків, обладнання для електростанцій, нафто-газової та хімічної промисловості тощо. Крім того, Україна є потужним виробником електроенергії. Україна має розвинуте сільське господарство і займає одне з провідних місць серед експортерів деяких видів сільськогосподарської продукції і продовольства (зокрема, соняшникової олії).");
   }
     
-  
   @Test
   public void testMapFieldName() throws Exception {
-    parameters = new ModifiableSolrParams();
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
     parameters.add("langid.fl", "name");
     parameters.add("langid.map.lcmap", "jp:s zh:cjk ko:cjk");
-    parameters.add("langid.enforceSchema", "true");
+    parameters.set("langid.enforceSchema", "false");
     liProcessor = createLangIdProcessor(parameters);
     
     assertEquals("test_no", liProcessor.getMappedField("test", "no"));
@@ -102,19 +95,39 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
     assertEquals("test_cjk", liProcessor.getMappedField("test", "zh"));
     assertEquals("test_cjk", liProcessor.getMappedField("test", "ko"));
 
-    // Prove support for other mapping regex
+    // Test that enforceSchema correctly catches illegal field and returns null
+    parameters.set("langid.enforceSchema", "true");
+    liProcessor = createLangIdProcessor(parameters);
+    assertEquals(null, liProcessor.getMappedField("inputfield", "sv"));
+
+    // Prove support for other mapping regex, still with enforceSchema=true
     parameters.add("langid.map.pattern", "text_(.*?)_field");
-    parameters.add("langid.map.replace", "$1_{lang}Text");
+    parameters.add("langid.map.replace", "$1_{lang}_s");
+    liProcessor = createLangIdProcessor(parameters);
+    assertEquals("title_no_s", liProcessor.getMappedField("text_title_field", "no"));
+    assertEquals("body_sv_s", liProcessor.getMappedField("text_body_field", "sv"));
+  }
+
+  @Test
+  public void testMapLangcode() throws Exception {
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
+    parameters.add("langid.fl", "name");
+    parameters.add("langid.lcmap", "zh_cn:zh zh_tw:zh");
+    parameters.set("langid.enforceSchema", "false");
     liProcessor = createLangIdProcessor(parameters);
 
-    assertEquals("title_noText", liProcessor.getMappedField("text_title_field", "no"));
-    assertEquals("body_svText", liProcessor.getMappedField("text_body_field", "sv"));
+    assertEquals("zh", liProcessor.resolveLanguage("zh_cn", "NA"));
+    assertEquals("zh", liProcessor.resolveLanguage("zh_tw", "NA"));
+    assertEquals("no", liProcessor.resolveLanguage("no", "NA"));
+    List<DetectedLanguage> langs = new ArrayList<>();
+    langs.add(new DetectedLanguage("zh_cn", 0.8));
+    assertEquals("zh", liProcessor.resolveLanguage(langs, "NA"));
   }
 
   @Test
   public void testPreExisting() throws Exception {
     SolrInputDocument doc;
-    parameters = new ModifiableSolrParams();
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
     parameters.add("langid.fl", "text");
     parameters.add("langid.langField", "language");
     parameters.add("langid.langsField", "languages");
@@ -133,10 +146,62 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
     assertNotNull(liProcessor.process(doc).getFieldValue("text_no"));
   }
 
+  /**
+   * Test not only 1st value taken into account (empty string),
+   * but all other values of 'text_multivalue' field ('en').
+   */
+  @Test
+  public void testPreExistingMultiValue() throws Exception {
+    SolrInputDocument doc;
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
+    parameters.add("langid.fl", "text_multivalue");
+    parameters.add("langid.langField", "language");
+    parameters.add("langid.langsField", "languages");
+    parameters.add("langid.enforceSchema", "false");
+    parameters.add("langid.map", "true");
+    liProcessor = createLangIdProcessor(parameters);
+    
+    doc = englishDoc();
+    assertEquals("en", liProcessor.process(doc).getFieldValue("language"));
+    assertEquals("en", liProcessor.process(doc).getFieldValue("languages"));
+    
+    doc = englishDoc();
+    doc.setField("language", "no");
+    assertEquals("no", liProcessor.process(doc).getFieldValue("language"));
+    assertEquals("no", liProcessor.process(doc).getFieldValue("languages"));
+    assertNotNull(liProcessor.process(doc).getFieldValue("text_multivalue_no"));
+  }
+
+  /**
+   * Test not only 1st value taken into account (ru text),
+   * but all values of 'text_multivalue' field ('ru' and 'en').
+   */
+  @Test
+  public void testPreExistingMultiValueMixedLang() throws Exception {
+    SolrInputDocument doc;
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
+    parameters.add("langid.fl", "text_multivalue");
+    parameters.add("langid.langField", "language");
+    parameters.add("langid.langsField", "languages");
+    parameters.add("langid.enforceSchema", "false");
+    parameters.add("langid.map", "true");
+    liProcessor = createLangIdProcessor(parameters);
+
+    doc = mixedEnglishRussianDoc();
+    assertEquals("en", liProcessor.process(doc).getFieldValue("language"));
+    assertEquals("en", liProcessor.process(doc).getFieldValue("languages"));
+
+    doc = mixedEnglishRussianDoc();
+    doc.setField("language", "no");
+    assertEquals("no", liProcessor.process(doc).getFieldValue("language"));
+    assertEquals("no", liProcessor.process(doc).getFieldValue("languages"));
+    assertNotNull(liProcessor.process(doc).getFieldValue("text_multivalue_no"));
+  }
+
   @Test
   public void testDefaultFallbackEmptyString() throws Exception {
     SolrInputDocument doc;
-    parameters = new ModifiableSolrParams();
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
     parameters.add("langid.fl", "text");
     parameters.add("langid.langField", "language");
     parameters.add("langid.enforceSchema", "false");
@@ -149,7 +214,7 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
   @Test
   public void testFallback() throws Exception {
     SolrInputDocument doc;
-    parameters = new ModifiableSolrParams();
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
     parameters.add("langid.fl", "text");
     parameters.add("langid.langField", "language");
     parameters.add("langid.fallbackFields", "noop,fb");
@@ -170,13 +235,13 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
   @Test
   public void testResolveLanguage() throws Exception {
     List<DetectedLanguage> langs;
-    parameters = new ModifiableSolrParams();
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
     parameters.add("langid.fl", "text");
     parameters.add("langid.langField", "language");
     liProcessor = createLangIdProcessor(parameters);
 
     // No detected languages
-    langs = new ArrayList<DetectedLanguage>();
+    langs = new ArrayList<>();
     assertEquals("", liProcessor.resolveLanguage(langs, null));
     assertEquals("fallback", liProcessor.resolveLanguage(langs, "fallback"));
 
@@ -185,7 +250,7 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
     assertEquals("one", liProcessor.resolveLanguage(langs, "fallback"));    
 
     // One detected language under default threshold
-    langs = new ArrayList<DetectedLanguage>();
+    langs = new ArrayList<>();
     langs.add(new DetectedLanguage("under", 0.1));
     assertEquals("fallback", liProcessor.resolveLanguage(langs, "fallback"));    
   }
@@ -196,6 +261,20 @@ public abstract class LanguageIdentifierUpdateProcessorFactoryTestCase extends S
   private SolrInputDocument englishDoc() {
     SolrInputDocument doc = new SolrInputDocument();
     doc.addField("text", "Apache Lucene is a free/open source information retrieval software library, originally created in Java by Doug Cutting. It is supported by the Apache Software Foundation and is released under the Apache Software License.");
+    doc.addField("text_multivalue", new String[]{"", "Apache Lucene is a free/open source information retrieval software library, originally created in Java by Doug Cutting. It is supported by the Apache Software Foundation and is released under the Apache Software License."});
+    return doc;
+  }
+
+  /**
+   * Construct document containing multi-value fields in different languages.
+   * @return solr input document
+   */
+  private SolrInputDocument mixedEnglishRussianDoc() {
+    SolrInputDocument doc = new SolrInputDocument();
+    doc.addField("text_multivalue", new String[]{"The Apache Lucene — это свободная библиотека для высокоскоростного полнотекстового поиска, написанная на Java. Может быть использована для поиска в интернете и других областях компьютерной лингвистики (аналитическая философия).",
+                                                 "Apache Lucene is a free/open source information retrieval software library, originally created in Java by Doug Cutting. It is supported by the Apache Software Foundation and is released under the Apache Software License.",
+        "Solr (pronounced \"solar\") is an open source enterprise search platform from the Apache Lucene project. Its major features include full-text search, hit highlighting, faceted search, dynamic clustering, database integration, and rich document (e.g., Word, PDF) handling."
+    });
     return doc;
   }
 

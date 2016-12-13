@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,9 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.dataimport;
 
+import java.lang.invoke.MethodHandles;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -28,37 +28,39 @@ import org.slf4j.LoggerFactory;
  * <p>
  * {@link Transformer} instance which creates {@link Date} instances out of {@link String}s.
  * </p>
- * <p/>
  * <p>
  * Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
- * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public class DateFormatTransformer extends Transformer {
-  private Map<String, SimpleDateFormat> fmtCache = new HashMap<String, SimpleDateFormat>();
-  private static final Logger LOG = LoggerFactory
-          .getLogger(DateFormatTransformer.class);
+  private Map<String, SimpleDateFormat> fmtCache = new HashMap<>();
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   @Override
   @SuppressWarnings("unchecked")
   public Object transformRow(Map<String, Object> aRow, Context context) {
 
     for (Map<String, String> map : context.getAllEntityFields()) {
-      Locale locale = Locale.getDefault();
-      String customLocale = map.get("locale");
-      if(customLocale != null){
-        locale = new Locale(customLocale);
+      Locale locale = Locale.ENGLISH; // we default to ENGLISH for dates for full Java 9 compatibility
+      String customLocale = map.get(LOCALE);
+      if (customLocale != null) {
+        try {
+          locale = new Locale.Builder().setLanguageTag(customLocale).build();
+        } catch (IllformedLocaleException e) {
+          throw new DataImportHandlerException(DataImportHandlerException.SEVERE, "Invalid Locale specified: " + customLocale, e);
+        }
       }
 
       String fmt = map.get(DATE_TIME_FMT);
       if (fmt == null)
         continue;
+      VariableResolver resolver = context.getVariableResolver();
+      fmt = resolver.replaceTokens(fmt);
       String column = map.get(DataImporter.COLUMN);
       String srcCol = map.get(RegexTransformer.SRC_COL_NAME);
       if (srcCol == null)
@@ -67,7 +69,7 @@ public class DateFormatTransformer extends Transformer {
         Object o = aRow.get(srcCol);
         if (o instanceof List) {
           List inputs = (List) o;
-          List<Date> results = new ArrayList<Date>();
+          List<Date> results = new ArrayList<>();
           for (Object input : inputs) {
             results.add(process(input, fmt, locale));
           }
@@ -98,4 +100,6 @@ public class DateFormatTransformer extends Transformer {
   }
 
   public static final String DATE_TIME_FMT = "dateTimeFormat";
+  
+  public static final String LOCALE = "locale";
 }

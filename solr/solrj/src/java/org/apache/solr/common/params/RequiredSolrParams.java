@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
 import org.apache.solr.common.SolrException;
@@ -31,7 +30,7 @@ import java.util.Iterator;
  * (If you pass in <code>null</code> as the default value, you can 
  * get a null return value)
  * 
- * @version $Id$
+ *
  * @since solr 1.2
  */
 public class RequiredSolrParams extends SolrParams {
@@ -106,7 +105,7 @@ public class RequiredSolrParams extends SolrParams {
 
   //----------------------------------------------------------
   // Functions with a default value - pass directly to the
-  // wrapped SolrParams (they won't return null - unless its the default)
+  // wrapped SolrParams (they won't return null - unless it's the default)
   //----------------------------------------------------------
 
   @Override
@@ -147,5 +146,9 @@ public class RequiredSolrParams extends SolrParams {
   @Override
   public String getFieldParam(String field, String param, String def) {
     return params.getFieldParam(field, param, def);
+  }
+
+  public void check(String... params){
+    for (String param : params) get(param);
   }
 }

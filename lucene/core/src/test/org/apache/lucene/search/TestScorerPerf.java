@@ -1,21 +1,4 @@
-package org.apache.lucene.search;
-
-import org.apache.lucene.util.DocIdBitSet;
-import org.apache.lucene.util.LuceneTestCase;
-
-import java.util.BitSet;
-import java.io.IOException;
-
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.index.IndexWriterConfig.OpenMode;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -31,11 +14,30 @@ import org.apache.lucene.document.Field;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
+import java.io.IOException;
+import java.util.BitSet;
+
+import org.apache.lucene.analysis.MockAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig.OpenMode;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BitSetIterator;
+import org.apache.lucene.util.FixedBitSet;
+import org.apache.lucene.util.LuceneTestCase;
+
 
 public class TestScorerPerf extends LuceneTestCase {
   boolean validate = true;  // set to false when doing performance testing
 
-  BitSet[] sets;
+  FixedBitSet[] sets;
   Term[] terms;
   IndexSearcher s;
   IndexReader r;
@@ -46,11 +48,12 @@ public class TestScorerPerf extends LuceneTestCase {
       // Create a dummy index with nothing in it.
     // This could possibly fail if Lucene starts checking for docid ranges...
     d = newDirectory();
-    IndexWriter iw = new IndexWriter(d, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    IndexWriter iw = new IndexWriter(d, newIndexWriterConfig(new MockAnalyzer(random())));
     iw.addDocument(new Document());
     iw.close();
-    r = IndexReader.open(d);
-    s = new IndexSearcher(r);
+    r = DirectoryReader.open(d);
+    s = newSearcher(r);
+    s.setQueryCache(null);
   }
 
   public void createRandomTerms(int nDocs, int nTerms, double power, Directory dir) throws Exception {
@@ -62,12 +65,12 @@ public class TestScorerPerf extends LuceneTestCase {
       terms[i] = new Term("f",Character.toString((char)('A'+i)));
     }
 
-    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)).setOpenMode(OpenMode.CREATE));
+    IndexWriter iw = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())).setOpenMode(OpenMode.CREATE));
     for (int i=0; i<nDocs; i++) {
       Document d = new Document();
       for (int j=0; j<nTerms; j++) {
-        if (random.nextInt(freq[j]) == 0) {
-          d.add(newField("f", terms[j].text(), Field.Store.NO, Field.Index.NOT_ANALYZED));
+        if (random().nextInt(freq[j]) == 0) {
+          d.add(newStringField("f", terms[j].text(), Field.Store.NO));
           //System.out.println(d);
         }
       }
@@ -78,29 +81,26 @@ public class TestScorerPerf extends LuceneTestCase {
   }
 
 
-  public BitSet randBitSet(int sz, int numBitsToSet) {
-    BitSet set = new BitSet(sz);
+  public FixedBitSet randBitSet(int sz, int numBitsToSet) {
+    FixedBitSet set = new FixedBitSet(sz);
     for (int i=0; i<numBitsToSet; i++) {
-      set.set(random.nextInt(sz));
+      set.set(random().nextInt(sz));
     }
     return set;
   }
 
-  public BitSet[] randBitSets(int numSets, int setSize) {
-    BitSet[] sets = new BitSet[numSets];
+  public FixedBitSet[] randBitSets(int numSets, int setSize) {
+    FixedBitSet[] sets = new FixedBitSet[numSets];
     for (int i=0; i<sets.length; i++) {
-      sets[i] = randBitSet(setSize, random.nextInt(setSize));
+      sets[i] = randBitSet(setSize, random().nextInt(setSize));
     }
     return sets;
   }
 
-  public static class CountingHitCollector extends Collector {
+  public static class CountingHitCollector extends SimpleCollector {
     int count=0;
     int sum=0;
     protected int docBase = 0;
-
-    @Override
-    public void setScorer(Scorer scorer) throws IOException {}
     
     @Override
     public void collect(int doc) {
@@ -112,20 +112,21 @@ public class TestScorerPerf extends LuceneTestCase {
     public int getSum() { return sum; }
 
     @Override
-    public void setNextReader(IndexReader reader, int base) {
-      docBase = base;
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
+      docBase = context.docBase;
     }
+    
     @Override
-    public boolean acceptsDocsOutOfOrder() {
-      return true;
+    public boolean needsScores() {
+      return false;
     }
   }
 
 
   public static class MatchingHitCollector extends CountingHitCollector {
-    BitSet answer;
+    FixedBitSet answer;
     int pos=-1;
-    public MatchingHitCollector(BitSet answer) {
+    public MatchingHitCollector(FixedBitSet answer) {
       this.answer = answer;
     }
 
@@ -139,18 +140,47 @@ public class TestScorerPerf extends LuceneTestCase {
     }
   }
 
+  private static class BitSetQuery extends Query {
 
-  BitSet addClause(BooleanQuery bq, BitSet result) {
-    final BitSet rnd = sets[random.nextInt(sets.length)];
-    Query q = new ConstantScoreQuery(new Filter() {
-      @Override
-      public DocIdSet getDocIdSet(IndexReader reader) {
-        return new DocIdBitSet(rnd);
-      }
-    });
+    private final FixedBitSet docs;
+
+    BitSetQuery(FixedBitSet docs) {
+      this.docs = docs;
+    }
+
+    @Override
+    public Weight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
+      return new ConstantScoreWeight(this) {
+        @Override
+        public Scorer scorer(LeafReaderContext context) throws IOException {
+          return new ConstantScoreScorer(this, score(), new BitSetIterator(docs, docs.approximateCardinality()));
+        }
+      };
+    }
+    
+    @Override
+    public String toString(String field) {
+      return "randomBitSetFilter";
+    }
+    
+    @Override
+    public boolean equals(Object other) {
+      return sameClassAs(other) &&
+             docs.equals(((BitSetQuery) other).docs);
+    }
+
+    @Override
+    public int hashCode() {
+      return 31 * classHash() + docs.hashCode();
+    }
+  }
+
+  FixedBitSet addClause(BooleanQuery.Builder bq, FixedBitSet result) {
+    final FixedBitSet rnd = sets[random().nextInt(sets.length)];
+    Query q = new BitSetQuery(rnd);
     bq.add(q, BooleanClause.Occur.MUST);
     if (validate) {
-      if (result==null) result = (BitSet)rnd.clone();
+      if (result==null) result = rnd.clone();
       else result.and(rnd);
     }
     return result;
@@ -161,16 +191,16 @@ public class TestScorerPerf extends LuceneTestCase {
     int ret=0;
 
     for (int i=0; i<iter; i++) {
-      int nClauses = random.nextInt(maxClauses-1)+2; // min 2 clauses
-      BooleanQuery bq = new BooleanQuery();
-      BitSet result=null;
+      int nClauses = random().nextInt(maxClauses-1)+2; // min 2 clauses
+      BooleanQuery.Builder bq = new BooleanQuery.Builder();
+      FixedBitSet result=null;
       for (int j=0; j<nClauses; j++) {
         result = addClause(bq,result);
       }
 
       CountingHitCollector hc = validate ? new MatchingHitCollector(result)
                                          : new CountingHitCollector();
-      s.search(bq, hc);
+      s.search(bq.build(), hc);
       ret += hc.getSum();
 
       if (validate) assertEquals(result.cardinality(), hc.getCount());
@@ -185,24 +215,24 @@ public class TestScorerPerf extends LuceneTestCase {
     long nMatches=0;
 
     for (int i=0; i<iter; i++) {
-      int oClauses = random.nextInt(maxOuterClauses-1)+2;
-      BooleanQuery oq = new BooleanQuery();
-      BitSet result=null;
+      int oClauses = random().nextInt(maxOuterClauses-1)+2;
+      BooleanQuery.Builder oq = new BooleanQuery.Builder();
+      FixedBitSet result=null;
 
       for (int o=0; o<oClauses; o++) {
 
-      int nClauses = random.nextInt(maxClauses-1)+2; // min 2 clauses
-      BooleanQuery bq = new BooleanQuery();
+      int nClauses = random().nextInt(maxClauses-1)+2; // min 2 clauses
+      BooleanQuery.Builder bq = new BooleanQuery.Builder();
       for (int j=0; j<nClauses; j++) {
         result = addClause(bq,result);
       }
 
-      oq.add(bq, BooleanClause.Occur.MUST);
+      oq.add(bq.build(), BooleanClause.Occur.MUST);
       } // outer
 
       CountingHitCollector hc = validate ? new MatchingHitCollector(result)
                                          : new CountingHitCollector();
-      s.search(oq, hc);
+      s.search(oq.build(), hc);
       nMatches += hc.getCount();
       ret += hc.getSum();
       if (validate) assertEquals(result.cardinality(), hc.getCount());
@@ -222,13 +252,13 @@ public class TestScorerPerf extends LuceneTestCase {
 
     long nMatches=0;
     for (int i=0; i<iter; i++) {
-      int nClauses = random.nextInt(maxClauses-1)+2; // min 2 clauses
-      BooleanQuery bq = new BooleanQuery();
+      int nClauses = random().nextInt(maxClauses-1)+2; // min 2 clauses
+      BooleanQuery.Builder bq = new BooleanQuery.Builder();
       BitSet termflag = new BitSet(termsInIndex);
       for (int j=0; j<nClauses; j++) {
         int tnum;
         // don't pick same clause twice
-        tnum = random.nextInt(termsInIndex);
+        tnum = random().nextInt(termsInIndex);
         if (termflag.get(tnum)) tnum=termflag.nextClearBit(tnum);
         if (tnum<0 || tnum>=termsInIndex) tnum=termflag.nextClearBit(0);
         termflag.set(tnum);
@@ -237,7 +267,7 @@ public class TestScorerPerf extends LuceneTestCase {
       }
 
       CountingHitCollector hc = new CountingHitCollector();
-      s.search(bq, hc);
+      s.search(bq.build(), hc);
       nMatches += hc.getCount();
       ret += hc.getSum();
     }
@@ -256,17 +286,17 @@ public class TestScorerPerf extends LuceneTestCase {
     int ret=0;
     long nMatches=0;
     for (int i=0; i<iter; i++) {
-      int oClauses = random.nextInt(maxOuterClauses-1)+2;
-      BooleanQuery oq = new BooleanQuery();
+      int oClauses = random().nextInt(maxOuterClauses-1)+2;
+      BooleanQuery.Builder oq = new BooleanQuery.Builder();
       for (int o=0; o<oClauses; o++) {
 
-      int nClauses = random.nextInt(maxClauses-1)+2; // min 2 clauses
-      BooleanQuery bq = new BooleanQuery();
+      int nClauses = random().nextInt(maxClauses-1)+2; // min 2 clauses
+      BooleanQuery.Builder bq = new BooleanQuery.Builder();
       BitSet termflag = new BitSet(termsInIndex);
       for (int j=0; j<nClauses; j++) {
         int tnum;
         // don't pick same clause twice
-        tnum = random.nextInt(termsInIndex);
+        tnum = random().nextInt(termsInIndex);
         if (termflag.get(tnum)) tnum=termflag.nextClearBit(tnum);
         if (tnum<0 || tnum>=25) tnum=termflag.nextClearBit(0);
         termflag.set(tnum);
@@ -274,12 +304,12 @@ public class TestScorerPerf extends LuceneTestCase {
         bq.add(tq, BooleanClause.Occur.MUST);
       } // inner
 
-      oq.add(bq, BooleanClause.Occur.MUST);
+      oq.add(bq.build(), BooleanClause.Occur.MUST);
       } // outer
 
 
       CountingHitCollector hc = new CountingHitCollector();
-      s.search(oq, hc);
+      s.search(oq.build(), hc);
       nMatches += hc.getCount();     
       ret += hc.getSum();
     }
@@ -296,13 +326,15 @@ public class TestScorerPerf extends LuceneTestCase {
     int ret=0;
 
     for (int i=0; i<iter; i++) {
-      int nClauses = random.nextInt(maxClauses-1)+2; // min 2 clauses
-      PhraseQuery q = new PhraseQuery();
+      int nClauses = random().nextInt(maxClauses-1)+2; // min 2 clauses
+      PhraseQuery.Builder builder = new PhraseQuery.Builder();
       for (int j=0; j<nClauses; j++) {
-        int tnum = random.nextInt(termsInIndex);
-        q.add(new Term("f",Character.toString((char)(tnum+'A'))), j);
+        int tnum = random().nextInt(termsInIndex);
+        builder.add(new Term("f", Character.toString((char)(tnum+'A'))));
       }
-      q.setSlop(termsInIndex);  // this could be random too
+      // slop could be random too
+      builder.setSlop(termsInIndex);
+      PhraseQuery q = builder.build();
 
       CountingHitCollector hc = new CountingHitCollector();
       s.search(q, hc);
@@ -320,7 +352,6 @@ public class TestScorerPerf extends LuceneTestCase {
     sets=randBitSets(atLeast(1000), atLeast(10));
     doConjunctions(atLeast(10000), atLeast(5));
     doNestedConjunctions(atLeast(10000), atLeast(3), atLeast(3));
-    s.close();
     r.close();
     d.close();
   }
@@ -363,7 +394,7 @@ public class TestScorerPerf extends LuceneTestCase {
     RAMDirectory dir = new RAMDirectory();
     if (VERBOSE) System.out.println("Creating index");
     createRandomTerms(100000,25,.5, dir);
-    s = new IndexSearcher(dir, true);
+    s = newSearcher(dir, true);
     if (VERBOSE) System.out.println("Starting performance test");
     for (int i=0; i<bigIter; i++) {
       long start = System.currentTimeMillis();
@@ -380,7 +411,7 @@ public class TestScorerPerf extends LuceneTestCase {
     RAMDirectory dir = new RAMDirectory();
     if (VERBOSE) System.out.println("Creating index");
     createRandomTerms(100000,25,.2, dir);
-    s = new IndexSearcher(dir, true);
+    s = newSearcher(dir, true);
     if (VERBOSE) System.out.println("Starting performance test");
     for (int i=0; i<bigIter; i++) {
       long start = System.currentTimeMillis();
@@ -398,7 +429,7 @@ public class TestScorerPerf extends LuceneTestCase {
     RAMDirectory dir = new RAMDirectory();
     if (VERBOSE) System.out.println("Creating index");
     createRandomTerms(100000,25,2,dir);
-    s = new IndexSearcher(dir, true);
+    s = newSearcher(dir, true);
     if (VERBOSE) System.out.println("Starting performance test");
     for (int i=0; i<bigIter; i++) {
       long start = System.currentTimeMillis();

@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,35 +14,79 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.TermContext;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.util.AttributeSource;
+import org.apache.lucene.util.BytesRef;
 
-abstract class TermCollectingRewrite<Q extends Query> extends MultiTermQuery.RewriteMethod {
+abstract class TermCollectingRewrite<B> extends MultiTermQuery.RewriteMethod {
   
-  /** Return a suitable top-level Query for holding all expanded terms. */
-  protected abstract Q getTopLevelQuery() throws IOException;
   
-  /** Add a MultiTermQuery term to the top-level query */
-  protected abstract void addClause(Q topLevel, Term term, float boost) throws IOException;
+  /** Return a suitable builder for the top-level Query for holding all expanded terms. */
+  protected abstract B getTopLevelBuilder() throws IOException;
+
+  /** Finalize the creation of the query from the builder. */
+  protected abstract Query build(B builder);
+
+  /** Add a MultiTermQuery term to the top-level query builder. */
+  protected final void addClause(B topLevel, Term term, int docCount, float boost) throws IOException {
+    addClause(topLevel, term, docCount, boost, null);
+  }
   
-  protected final void collectTerms(IndexReader reader, MultiTermQuery query, TermCollector collector) throws IOException {
-    final FilteredTermEnum enumerator = getTermsEnum(reader, query);
-    try {
-      do {
-        final Term t = enumerator.term();
-        if (t == null || !collector.collect(t, enumerator.difference()))
-          break;
-      } while (enumerator.next());    
-    } finally {
-      enumerator.close();
+  protected abstract void addClause(B topLevel, Term term, int docCount, float boost, TermContext states) throws IOException;
+
+  
+  final void collectTerms(IndexReader reader, MultiTermQuery query, TermCollector collector) throws IOException {
+    IndexReaderContext topReaderContext = reader.getContext();
+    for (LeafReaderContext context : topReaderContext.leaves()) {
+      final Terms terms = context.reader().terms(query.field);
+      if (terms == null) {
+        // field does not exist
+        continue;
+      }
+
+      final TermsEnum termsEnum = getTermsEnum(query, terms, collector.attributes);
+      assert termsEnum != null;
+
+      if (termsEnum == TermsEnum.EMPTY)
+        continue;
+      
+      collector.setReaderContext(topReaderContext, context);
+      collector.setNextEnum(termsEnum);
+      BytesRef bytes;
+      while ((bytes = termsEnum.next()) != null) {
+        if (!collector.collect(bytes))
+          return; // interrupt whole term collection, so also don't iterate other subReaders
+      }
     }
   }
   
-  protected interface TermCollector {
+  static abstract class TermCollector {
+    
+    protected LeafReaderContext readerContext;
+    protected IndexReaderContext topReaderContext;
+
+    public void setReaderContext(IndexReaderContext topReaderContext, LeafReaderContext readerContext) {
+      this.readerContext = readerContext;
+      this.topReaderContext = topReaderContext;
+    }
+    /** attributes used for communication with the enum */
+    public final AttributeSource attributes = new AttributeSource();
+  
     /** return false to stop collecting */
-    boolean collect(Term t, float boost) throws IOException;
+    public abstract boolean collect(BytesRef bytes) throws IOException;
+    
+    /** the next segment's {@link TermsEnum} that is used to collect terms */
+    public abstract void setNextEnum(TermsEnum termsEnum) throws IOException;
   }
 }

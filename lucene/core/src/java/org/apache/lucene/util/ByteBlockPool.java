@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,11 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import java.io.IOException;
+package org.apache.lucene.util;
+
+
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
-
-import org.apache.lucene.store.DataOutput;
 
 import static org.apache.lucene.util.RamUsageEstimator.NUM_BYTES_OBJECT_REF;
 
@@ -89,17 +86,18 @@ public final class ByteBlockPool {
   /** A simple {@link Allocator} that never recycles, but
    *  tracks how much total RAM is in use. */
   public static class DirectTrackingAllocator extends Allocator {
-    private final AtomicLong bytesUsed;
+    private final Counter bytesUsed;
     
-    public DirectTrackingAllocator(AtomicLong bytesUsed) {
+    public DirectTrackingAllocator(Counter bytesUsed) {
       this(BYTE_BLOCK_SIZE, bytesUsed);
     }
 
-    public DirectTrackingAllocator(int blockSize, AtomicLong bytesUsed) {
+    public DirectTrackingAllocator(int blockSize, Counter bytesUsed) {
       super(blockSize);
       this.bytesUsed = bytesUsed;
     }
 
+    @Override
     public byte[] getByteBlock() {
       bytesUsed.addAndGet(blockSize);
       return new byte[blockSize];
@@ -114,14 +112,21 @@ public final class ByteBlockPool {
     }
   };
 
-
+  /**
+   * array of buffers currently used in the pool. Buffers are allocated if
+   * needed don't modify this outside of this class.
+   */
   public byte[][] buffers = new byte[10][];
+  
+  /** index into the buffers array pointing to the current buffer used as the head */
+  private int bufferUpto = -1;                        // Which buffer we are upto
+  /** Where we are in head buffer */
+  public int byteUpto = BYTE_BLOCK_SIZE;
 
-  int bufferUpto = -1;                        // Which buffer we are upto
-  public int byteUpto = BYTE_BLOCK_SIZE;             // Where we are in head buffer
-
-  public byte[] buffer;                              // Current head buffer
-  public int byteOffset = -BYTE_BLOCK_SIZE;          // Current head offset
+  /** Current head buffer */
+  public byte[] buffer;
+  /** Current head offset */
+  public int byteOffset = -BYTE_BLOCK_SIZE;
 
   private final Allocator allocator;
 
@@ -129,43 +134,65 @@ public final class ByteBlockPool {
     this.allocator = allocator;
   }
   
-  public void dropBuffersAndReset() {
-    if (bufferUpto != -1) {
-      // Recycle all but the first buffer
-      allocator.recycleByteBlocks(buffers, 0, 1+bufferUpto);
-
-      // Re-use the first buffer
-      bufferUpto = -1;
-      byteUpto = BYTE_BLOCK_SIZE;
-      byteOffset = -BYTE_BLOCK_SIZE;
-      buffers = new byte[10][];
-      buffer = null;
-    }
-  }
-
+  /**
+   * Resets the pool to its initial state reusing the first buffer and fills all
+   * buffers with <tt>0</tt> bytes before they reused or passed to
+   * {@link Allocator#recycleByteBlocks(byte[][], int, int)}. Calling
+   * {@link ByteBlockPool#nextBuffer()} is not needed after reset.
+   */
   public void reset() {
+    reset(true, true);
+  }
+  
+  /**
+   * Expert: Resets the pool to its initial state reusing the first buffer. Calling
+   * {@link ByteBlockPool#nextBuffer()} is not needed after reset. 
+   * @param zeroFillBuffers if <code>true</code> the buffers are filled with <tt>0</tt>. 
+   *        This should be set to <code>true</code> if this pool is used with slices.
+   * @param reuseFirst if <code>true</code> the first buffer will be reused and calling
+   *        {@link ByteBlockPool#nextBuffer()} is not needed after reset iff the 
+   *        block pool was used before ie. {@link ByteBlockPool#nextBuffer()} was called before.
+   */
+  public void reset(boolean zeroFillBuffers, boolean reuseFirst) {
     if (bufferUpto != -1) {
       // We allocated at least one buffer
 
-      for(int i=0;i<bufferUpto;i++)
-        // Fully zero fill buffers that we fully used
-        Arrays.fill(buffers[i], (byte) 0);
-
-      // Partial zero fill the final buffer
-      Arrays.fill(buffers[bufferUpto], 0, byteUpto, (byte) 0);
-          
-      if (bufferUpto > 0)
-        // Recycle all but the first buffer
-        allocator.recycleByteBlocks(buffers, 1, 1+bufferUpto);
-
-      // Re-use the first buffer
-      bufferUpto = 0;
-      byteUpto = 0;
-      byteOffset = 0;
-      buffer = buffers[0];
+      if (zeroFillBuffers) {
+        for(int i=0;i<bufferUpto;i++) {
+          // Fully zero fill buffers that we fully used
+          Arrays.fill(buffers[i], (byte) 0);
+        }
+        // Partial zero fill the final buffer
+        Arrays.fill(buffers[bufferUpto], 0, byteUpto, (byte) 0);
+      }
+     
+     if (bufferUpto > 0 || !reuseFirst) {
+       final int offset = reuseFirst ? 1 : 0;  
+       // Recycle all but the first buffer
+       allocator.recycleByteBlocks(buffers, offset, 1+bufferUpto);
+       Arrays.fill(buffers, offset, 1+bufferUpto, null);
+     }
+     if (reuseFirst) {
+       // Re-use the first buffer
+       bufferUpto = 0;
+       byteUpto = 0;
+       byteOffset = 0;
+       buffer = buffers[0];
+     } else {
+       bufferUpto = -1;
+       byteUpto = BYTE_BLOCK_SIZE;
+       byteOffset = -BYTE_BLOCK_SIZE;
+       buffer = null;
+     }
     }
   }
-  
+
+  /**
+   * Advances the pool to its next buffer. This method should be called once
+   * after the constructor to initialize the pool. In contrast to the
+   * constructor a {@link ByteBlockPool#reset()} call will advance the pool to
+   * its first buffer immediately.
+   */
   public void nextBuffer() {
     if (1+bufferUpto == buffers.length) {
       byte[][] newBuffers = new byte[ArrayUtil.oversize(buffers.length+1,
@@ -179,7 +206,11 @@ public final class ByteBlockPool {
     byteUpto = 0;
     byteOffset += BYTE_BLOCK_SIZE;
   }
-
+  
+  /**
+   * Allocates a new slice with the given size. 
+   * @see ByteBlockPool#FIRST_LEVEL_SIZE
+   */
   public int newSlice(final int size) {
     if (byteUpto > BYTE_BLOCK_SIZE-size)
       nextBuffer();
@@ -195,19 +226,37 @@ public final class ByteBlockPool {
   // array is the length of each slice, ie first slice is 5
   // bytes, next slice is 14 bytes, etc.
   
-  public final static int[] nextLevelArray = {1, 2, 3, 4, 5, 6, 7, 8, 9, 9};
-  public final static int[] levelSizeArray = {5, 14, 20, 30, 40, 40, 80, 80, 120, 200};
-  public final static int FIRST_LEVEL_SIZE = levelSizeArray[0];
+  /**
+   * An array holding the offset into the {@link ByteBlockPool#LEVEL_SIZE_ARRAY}
+   * to quickly navigate to the next slice level.
+   */
+  public final static int[] NEXT_LEVEL_ARRAY = {1, 2, 3, 4, 5, 6, 7, 8, 9, 9};
+  
+  /**
+   * An array holding the level sizes for byte slices.
+   */
+  public final static int[] LEVEL_SIZE_ARRAY = {5, 14, 20, 30, 40, 40, 80, 80, 120, 200};
+  
+  /**
+   * The first level size for new slices
+   * @see ByteBlockPool#newSlice(int)
+   */
+  public final static int FIRST_LEVEL_SIZE = LEVEL_SIZE_ARRAY[0];
 
+  /**
+   * Creates a new byte slice with the given starting size and 
+   * returns the slices offset in the pool.
+   */
   public int allocSlice(final byte[] slice, final int upto) {
 
     final int level = slice[upto] & 15;
-    final int newLevel = nextLevelArray[level];
-    final int newSize = levelSizeArray[newLevel];
+    final int newLevel = NEXT_LEVEL_ARRAY[level];
+    final int newSize = LEVEL_SIZE_ARRAY[newLevel];
 
     // Maybe allocate another block
-    if (byteUpto > BYTE_BLOCK_SIZE-newSize)
+    if (byteUpto > BYTE_BLOCK_SIZE-newSize) {
       nextBuffer();
+    }
 
     final int newUpto = byteUpto;
     final int offset = newUpto + byteOffset;
@@ -231,9 +280,31 @@ public final class ByteBlockPool {
     return newUpto+3;
   }
 
+  /** Fill the provided {@link BytesRef} with the bytes at the specified offset/length slice.
+   *  This will avoid copying the bytes, if the slice fits into a single block; otherwise, it uses
+   *  the provided {@link BytesRefBuilder} to copy bytes over. */
+  void setBytesRef(BytesRefBuilder builder, BytesRef result, long offset, int length) {
+    result.length = length;
+
+    int bufferIndex = (int) (offset >> BYTE_BLOCK_SHIFT);
+    byte[] buffer = buffers[bufferIndex];
+    int pos = (int) (offset & BYTE_BLOCK_MASK);
+    if (pos + length <= BYTE_BLOCK_SIZE) {
+      // common case where the slice lives in a single block: just reference the buffer directly without copying
+      result.bytes = buffer;
+      result.offset = pos;
+    } else {
+      // uncommon case: the slice spans at least 2 blocks, so we must copy the bytes:
+      builder.grow(length);
+      result.bytes = builder.get().bytes;
+      result.offset = 0;
+      readBytes(offset, result.bytes, 0, length);
+    }
+  }
+
   // Fill in a BytesRef from term's length & bytes encoded in
   // byte block
-  public final BytesRef setBytesRef(BytesRef term, int textStart) {
+  public void setBytesRef(BytesRef term, int textStart) {
     final byte[] bytes = term.bytes = buffers[textStart >> BYTE_BLOCK_SHIFT];
     int pos = textStart & BYTE_BLOCK_MASK;
     if ((bytes[pos] & 0x80) == 0) {
@@ -246,15 +317,17 @@ public final class ByteBlockPool {
       term.offset = pos+2;
     }
     assert term.length >= 0;
-    return term;
   }
   
   /**
-   * Copies the given {@link BytesRef} at the current positions (
-   * {@link #byteUpto} across buffer boundaries
+   * Appends the bytes in the provided {@link BytesRef} at
+   * the current position.
    */
-  public final void copy(final BytesRef bytes) {
+  public void append(final BytesRef bytes) {
     int length = bytes.length;
+    if (length == 0) {
+      return;
+    }
     int offset = bytes.offset;
     int overflow = (length + byteUpto) - BYTE_BLOCK_SIZE;
     do {
@@ -264,9 +337,11 @@ public final class ByteBlockPool {
         break;
       } else {
         final int bytesToCopy = length-overflow;
-        System.arraycopy(bytes.bytes, offset, buffer, byteUpto, bytesToCopy);
-        offset += bytesToCopy;
-        length -= bytesToCopy;
+        if (bytesToCopy > 0) {
+          System.arraycopy(bytes.bytes, offset, buffer, byteUpto, bytesToCopy);
+          offset += bytesToCopy;
+          length -= bytesToCopy;
+        }
         nextBuffer();
         overflow = overflow - BYTE_BLOCK_SIZE;
       }
@@ -274,47 +349,63 @@ public final class ByteBlockPool {
   }
   
   /**
-   *
+   * Reads bytes bytes out of the pool starting at the given offset with the given  
+   * length into the given byte array at offset <tt>off</tt>.
+   * <p>Note: this method allows to copy across block boundaries.</p>
    */
-  public final BytesRef copyFrom(final BytesRef bytes) {
-    final int length = bytes.length;
-    final int offset = bytes.offset;
-    bytes.offset = 0;
-    bytes.grow(length);
-    int bufferIndex = offset >> BYTE_BLOCK_SHIFT;
+  public void readBytes(final long offset, final byte bytes[], final int off, final int length) {
+    if (length == 0) {
+      return;
+    }
+    int bytesOffset = off;
+    int bytesLength = length;
+    int bufferIndex = (int) (offset >> BYTE_BLOCK_SHIFT);
     byte[] buffer = buffers[bufferIndex];
-    int pos = offset & BYTE_BLOCK_MASK;
+    int pos = (int) (offset & BYTE_BLOCK_MASK);
     int overflow = (pos + length) - BYTE_BLOCK_SIZE;
     do {
       if (overflow <= 0) {
-        System.arraycopy(buffer, pos, bytes.bytes, bytes.offset, bytes.length);
-        bytes.length = length;
-        bytes.offset = 0;
+        System.arraycopy(buffer, pos, bytes, bytesOffset, bytesLength);
         break;
       } else {
         final int bytesToCopy = length - overflow;
-        System.arraycopy(buffer, pos, bytes.bytes, bytes.offset, bytesToCopy);
+        System.arraycopy(buffer, pos, bytes, bytesOffset, bytesToCopy);
         pos = 0;
-        bytes.length -= bytesToCopy;
-        bytes.offset += bytesToCopy;
+        bytesLength -= bytesToCopy;
+        bytesOffset += bytesToCopy;
         buffer = buffers[++bufferIndex];
         overflow = overflow - BYTE_BLOCK_SIZE;
       }
     } while (true);
-    return bytes;
   }
-  
+
   /**
-   * Writes the pools content to the given {@link DataOutput}
+   * Set the given {@link BytesRef} so that its content is equal to the
+   * {@code ref.length} bytes starting at {@code offset}. Most of the time this
+   * method will set pointers to internal data-structures. However, in case a
+   * value crosses a boundary, a fresh copy will be returned.
+   * On the contrary to {@link #setBytesRef(BytesRef, int)}, this does not
+   * expect the length to be encoded with the data.
    */
-  public final void writePool(final DataOutput out) throws IOException {
-    int bytesOffset = byteOffset;
-    int block = 0;
-    while (bytesOffset > 0) {
-      out.writeBytes(buffers[block++], BYTE_BLOCK_SIZE);
-      bytesOffset -= BYTE_BLOCK_SIZE;
+  public void setRawBytesRef(BytesRef ref, final long offset) {
+    int bufferIndex = (int) (offset >> BYTE_BLOCK_SHIFT);
+    int pos = (int) (offset & BYTE_BLOCK_MASK);
+    if (pos + ref.length <= BYTE_BLOCK_SIZE) {
+      ref.bytes = buffers[bufferIndex];
+      ref.offset = pos;
+    } else {
+      ref.bytes = new byte[ref.length];
+      ref.offset = 0;
+      readBytes(offset, ref.bytes, 0, ref.length);
     }
-    out.writeBytes(buffers[block], byteUpto);
+  }
+
+  /** Read a single byte at the given {@code offset}. */
+  public byte readByte(long offset) {
+    int bufferIndex = (int) (offset >> BYTE_BLOCK_SHIFT);
+    int pos = (int) (offset & BYTE_BLOCK_MASK);
+    byte[] buffer = buffers[bufferIndex];
+    return buffer[pos];
   }
 }
 

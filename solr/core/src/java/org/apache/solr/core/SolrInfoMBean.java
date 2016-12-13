@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
 import java.net.URL;
@@ -26,11 +25,11 @@ import org.apache.solr.common.util.NamedList;
  * for use by objects which are 'pluggable' to make server administration
  * easier.
  *
- * @version $Id$
+ *
  */
 public interface SolrInfoMBean {
 
-  public enum Category { CORE, QUERYHANDLER, UPDATEHANDLER, CACHE, HIGHLIGHTING, OTHER };
+  public enum Category { CORE, QUERYHANDLER, UPDATEHANDLER, CACHE, HIGHLIGHTING, QUERYPARSER, OTHER };
 
   /**
    * Simple common usage name, e.g. BasicQueryHandler,
@@ -43,8 +42,6 @@ public interface SolrInfoMBean {
   public String getDescription();
   /** Purpose of this Class */
   public Category getCategory();
-  /** CVS Id, SVN Id, etc */
-  public String getSourceId();
   /** CVS Source, SVN Source, etc */
   public String getSource();
   /**

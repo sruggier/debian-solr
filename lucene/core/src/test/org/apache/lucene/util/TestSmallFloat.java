@@ -1,11 +1,10 @@
-package org.apache.lucene.util;
-
-/**
- * Copyright 2005 The Apache Software Foundation
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -15,6 +14,7 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
 
 public class TestSmallFloat extends LuceneTestCase {
 
@@ -114,7 +114,7 @@ public class TestSmallFloat extends LuceneTestCase {
     // up iterations for more exhaustive test after changing something
     int num = atLeast(100000);
     for (int i = 0; i < num; i++) {
-      float f = Float.intBitsToFloat(random.nextInt());
+      float f = Float.intBitsToFloat(random().nextInt());
       if (Float.isNaN(f)) continue;    // skip NaN
       byte b1 = orig_floatToByte(f);
       byte b2 = SmallFloat.floatToByte(f,3,15);

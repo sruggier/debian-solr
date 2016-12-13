@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,28 +14,45 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
-import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.BitUtil;
 
 /**
  * Abstract base class for performing read operations of Lucene's low-level
  * data types.
+ *
+ * <p>{@code DataInput} may only be used from one thread, because it is not
+ * thread safe (it keeps internal state like file position). To allow
+ * multithreaded use, every {@code DataInput} instance must be cloned before
+ * used in another thread. Subclasses must therefore implement {@link #clone()},
+ * returning a new {@code DataInput} which operates on the same underlying
+ * resource, but positioned independently.
  */
 public abstract class DataInput implements Cloneable {
 
-  private boolean preUTF8Strings;                 // true if we are reading old (modified UTF8) string format
+  private static final int SKIP_BUFFER_SIZE = 1024;
 
-  /** Call this if readString should read characters stored
-   *  in the old modified UTF8 format (length in java chars
-   *  and java's modified UTF8 encoding).  This is used for
-   *  indices written pre-2.4 See LUCENE-510 for details. */
-  public void setModifiedUTF8StringsMode() {
-    preUTF8Strings = true;
-  }
+  /* This buffer is used to skip over bytes with the default implementation of
+   * skipBytes. The reason why we need to use an instance member instead of
+   * sharing a single instance across threads is that some delegating
+   * implementations of DataInput might want to reuse the provided buffer in
+   * order to eg. update the checksum. If we shared the same buffer across
+   * threads, then another thread might update the buffer while the checksum is
+   * being computed, making it invalid. See LUCENE-5583 for more information.
+   */
+  private byte[] skipBuffer;
 
   /** Reads and returns a single byte.
    * @see DataOutput#writeByte(byte)
@@ -90,6 +105,9 @@ public abstract class DataInput implements Cloneable {
   /** Reads an int stored in variable-length format.  Reads between one and
    * five bytes.  Smaller values take fewer bytes.  Negative numbers are not
    * supported.
+   * <p>
+   * The format is described further in {@link DataOutput#writeVInt(int)}.
+   * 
    * @see DataOutput#writeVInt(int)
    */
   public int readVInt() throws IOException {
@@ -105,22 +123,31 @@ public abstract class DataInput implements Cloneable {
     return i;
     */
     byte b = readByte();
+    if (b >= 0) return b;
     int i = b & 0x7F;
-    if ((b & 0x80) == 0) return i;
     b = readByte();
     i |= (b & 0x7F) << 7;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7F) << 14;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7F) << 21;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     // Warning: the next ands use 0x0F / 0xF0 - beware copy/paste errors:
     i |= (b & 0x0F) << 28;
     if ((b & 0xF0) == 0) return i;
     throw new IOException("Invalid vInt detected (too many bits)");
+  }
+
+  /**
+   * Read a {@link BitUtil#zigZagDecode(int) zig-zag}-encoded
+   * {@link #readVInt() variable-length} integer.
+   * @see DataOutput#writeZInt(int)
+   */
+  public int readZInt() throws IOException {
+    return BitUtil.zigZagDecode(readVInt());
   }
 
   /** Reads eight bytes and returns a long.
@@ -132,8 +159,17 @@ public abstract class DataInput implements Cloneable {
 
   /** Reads a long stored in variable-length format.  Reads between one and
    * nine bytes.  Smaller values take fewer bytes.  Negative numbers are not
-   * supported. */
+   * supported.
+   * <p>
+   * The format is described further in {@link DataOutput#writeVInt(int)}.
+   * 
+   * @see DataOutput#writeVLong(long)
+   */
   public long readVLong() throws IOException {
+    return readVLong(false);
+  }
+
+  private long readVLong(boolean allowNegative) throws IOException {
     /* This is the original code of this method,
      * but a Hotspot bug (see LUCENE-2975) corrupts the for-loop if
      * readByte() is inlined. So the loop was unwinded!
@@ -146,81 +182,60 @@ public abstract class DataInput implements Cloneable {
     return i;
     */
     byte b = readByte();
+    if (b >= 0) return b;
     long i = b & 0x7FL;
-    if ((b & 0x80) == 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 7;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 14;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 21;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 28;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 35;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 42;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 49;
-    if ((b & 0x80) == 0) return i;
+    if (b >= 0) return i;
     b = readByte();
     i |= (b & 0x7FL) << 56;
-    if ((b & 0x80) == 0) return i;
-    throw new IOException("Invalid vLong detected (negative values disallowed)");
+    if (b >= 0) return i;
+    if (allowNegative) {
+      b = readByte();
+      i |= (b & 0x7FL) << 63;
+      if (b == 0 || b == 1) return i;
+      throw new IOException("Invalid vLong detected (more than 64 bits)");
+    } else {
+      throw new IOException("Invalid vLong detected (negative values disallowed)");
+    }
+  }
+
+  /**
+   * Read a {@link BitUtil#zigZagDecode(long) zig-zag}-encoded
+   * {@link #readVLong() variable-length} integer. Reads between one and ten
+   * bytes.
+   * @see DataOutput#writeZLong(long)
+   */
+  public long readZLong() throws IOException {
+    return BitUtil.zigZagDecode(readVLong(true));
   }
 
   /** Reads a string.
    * @see DataOutput#writeString(String)
    */
   public String readString() throws IOException {
-    if (preUTF8Strings)
-      return readModifiedUTF8String();
     int length = readVInt();
     final byte[] bytes = new byte[length];
     readBytes(bytes, 0, length);
-    return new String(bytes, 0, length, "UTF-8");
-  }
-
-  private String readModifiedUTF8String() throws IOException {
-    int length = readVInt();
-    final char[] chars = new char[length];
-    readChars(chars, 0, length);
-    return new String(chars, 0, length);
-  }
-
-  /** Reads Lucene's old "modified UTF-8" encoded
-   *  characters into an array.
-   * @param buffer the array to read characters into
-   * @param start the offset in the array to start storing characters
-   * @param length the number of characters to read
-   * @see DataOutput#writeChars(String,int,int)
-   * @deprecated -- please use readString or readBytes
-   *                instead, and construct the string
-   *                from those utf8 bytes
-   */
-  @Deprecated
-  public void readChars(char[] buffer, int start, int length)
-       throws IOException {
-    final int end = start + length;
-    for (int i = start; i < end; i++) {
-      byte b = readByte();
-      if ((b & 0x80) == 0)
-	buffer[i] = (char)(b & 0x7F);
-      else if ((b & 0xE0) != 0xE0) {
-	buffer[i] = (char)(((b & 0x1F) << 6)
-		 | (readByte() & 0x3F));
-      } else {
-	buffer[i] = (char)(((b & 0x0F) << 12)
-		| ((readByte() & 0x3F) << 6)
-	        |  (readByte() & 0x3F));
-      }
-    }
+    return new String(bytes, 0, length, StandardCharsets.UTF_8);
   }
 
   /** Returns a clone of this stream.
@@ -233,17 +248,22 @@ public abstract class DataInput implements Cloneable {
    * were cloned from.
    */
   @Override
-  public Object clone() {
-    DataInput clone = null;
+  public DataInput clone() {
     try {
-      clone = (DataInput)super.clone();
-    } catch (CloneNotSupportedException e) {}
-
-    return clone;
+      return (DataInput) super.clone();
+    } catch (CloneNotSupportedException e) {
+      throw new Error("This cannot happen: Failing to clone DataInput");
+    }
   }
 
+  /** Reads a Map&lt;String,String&gt; previously written
+   *  with {@link DataOutput#writeStringStringMap(Map)}. 
+   *  @deprecated Only for reading existing formats. Encode maps with 
+   *  {@link DataOutput#writeMapOfStrings(Map)} instead.
+   */
+  @Deprecated
   public Map<String,String> readStringStringMap() throws IOException {
-    final Map<String,String> map = new HashMap<String,String>();
+    final Map<String,String> map = new HashMap<>();
     final int count = readInt();
     for(int i=0;i<count;i++) {
       final String key = readString();
@@ -253,4 +273,83 @@ public abstract class DataInput implements Cloneable {
 
     return map;
   }
+  
+  /** 
+   * Reads a Map&lt;String,String&gt; previously written
+   * with {@link DataOutput#writeMapOfStrings(Map)}. 
+   * @return An immutable map containing the written contents.
+   */
+  public Map<String,String> readMapOfStrings() throws IOException {
+    int count = readVInt();
+    if (count == 0) {
+      return Collections.emptyMap();
+    } else if (count == 1) {
+      return Collections.singletonMap(readString(), readString());
+    } else {
+      Map<String,String> map = count > 10 ? new HashMap<>() : new TreeMap<>();
+      for (int i = 0; i < count; i++) {
+        final String key = readString();
+        final String val = readString();
+        map.put(key, val);
+      }
+      return Collections.unmodifiableMap(map);
+    }
+  }
+
+  /** Reads a Set&lt;String&gt; previously written
+   *  with {@link DataOutput#writeStringSet(Set)}. 
+   *  @deprecated Only for reading existing formats. Encode maps with 
+   *  {@link DataOutput#writeSetOfStrings(Set)} instead. */
+  @Deprecated
+  public Set<String> readStringSet() throws IOException {
+    final Set<String> set = new HashSet<>();
+    final int count = readInt();
+    for(int i=0;i<count;i++) {
+      set.add(readString());
+    }
+
+    return set;
+  }
+  
+  /** 
+   * Reads a Set&lt;String&gt; previously written
+   * with {@link DataOutput#writeSetOfStrings(Set)}. 
+   * @return An immutable set containing the written contents.
+   */
+  public Set<String> readSetOfStrings() throws IOException {
+    int count = readVInt();
+    if (count == 0) {
+      return Collections.emptySet();
+    } else if (count == 1) {
+      return Collections.singleton(readString());
+    } else {
+      Set<String> set = count > 10 ? new HashSet<>() : new TreeSet<>();
+      for (int i = 0; i < count; i++) {
+        set.add(readString());
+      }
+      return Collections.unmodifiableSet(set);
+    }
+  }
+
+  /**
+   * Skip over <code>numBytes</code> bytes. The contract on this method is that it
+   * should have the same behavior as reading the same number of bytes into a
+   * buffer and discarding its content. Negative values of <code>numBytes</code>
+   * are not supported.
+   */
+  public void skipBytes(final long numBytes) throws IOException {
+    if (numBytes < 0) {
+      throw new IllegalArgumentException("numBytes must be >= 0, got " + numBytes);
+    }
+    if (skipBuffer == null) {
+      skipBuffer = new byte[SKIP_BUFFER_SIZE];
+    }
+    assert skipBuffer.length == SKIP_BUFFER_SIZE;
+    for (long skipped = 0; skipped < numBytes; ) {
+      final int step = (int) Math.min(SKIP_BUFFER_SIZE, numBytes - skipped);
+      readBytes(skipBuffer, 0, step, false);
+      skipped += step;
+    }
+  }
+
 }

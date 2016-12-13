@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,35 +14,34 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.io.File;
+
 import java.io.IOException;
+import java.nio.file.Path;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field.Index;
-import org.apache.lucene.queryParser.ParseException;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.FilterDirectory;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
 
 public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
 
-  File path;
+  Path path;
     
   /**
    * LUCENE-3627: This test fails.
-   * 
-   * @throws Exception
    */
   public void testCrashCorruptsIndexing() throws Exception {
-    path = _TestUtil.getTempDir("testCrashCorruptsIndexing");
+    path = createTempDir("testCrashCorruptsIndexing");
         
     indexAndCrashOnCreateOutputSegments2();
 
@@ -59,8 +56,6 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
    * index 1 document and commit.
    * prepare for crashing.
    * index 1 more document, and upon commit, creation of segments_2 will crash.
-   * 
-   * @throws IOException
    */
   private void indexAndCrashOnCreateOutputSegments2() throws IOException {
     Directory realDirectory = FSDirectory.open(path);
@@ -69,31 +64,27 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
     // NOTE: cannot use RandomIndexWriter because it
     // sometimes commits:
     IndexWriter indexWriter = new IndexWriter(crashAfterCreateOutput,
-                                              newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+                                              newIndexWriterConfig(new MockAnalyzer(random())));
             
     indexWriter.addDocument(getDocument());
     // writes segments_1:
     indexWriter.commit();
             
-    crashAfterCreateOutput.setCrashAfterCreateOutput("segments_2");
+    crashAfterCreateOutput.setCrashAfterCreateOutput("pending_segments_2");
     indexWriter.addDocument(getDocument());
-    try {
-      // tries to write segments_2 but hits fake exc:
+    // tries to write segments_2 but hits fake exc:
+    expectThrows(CrashingException.class, () -> {
       indexWriter.commit();
-      fail("should have hit CrashingException");
-    } catch (CrashingException e) {
-      // expected
-    }
+    });
+
     // writes segments_3
     indexWriter.close();
-    assertFalse(realDirectory.fileExists("segments_2"));
+    assertFalse(slowFileExists(realDirectory, "segments_2"));
     crashAfterCreateOutput.close();
   }
     
   /**
    * Attempts to index another 1 document.
-   * 
-   * @throws IOException
    */
   private void indexAfterRestart() throws IOException {
     Directory realDirectory = newFSDirectory(path);
@@ -102,30 +93,26 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
     // it doesn't know what to do with the created but empty
     // segments_2 file
     IndexWriter indexWriter = new IndexWriter(realDirectory,
-                                              newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+                                              newIndexWriterConfig(new MockAnalyzer(random())));
             
     // currently the test fails above.
     // however, to test the fix, the following lines should pass as well.
     indexWriter.addDocument(getDocument());
     indexWriter.close();
-    assertFalse(realDirectory.fileExists("segments_2"));
+    assertFalse(slowFileExists(realDirectory, "segments_2"));
     realDirectory.close();
   }
     
   /**
    * Run an example search.
-   * 
-   * @throws IOException
-   * @throws ParseException
    */
-  private void searchForFleas(final int expectedTotalHits) throws IOException, ParseException {
+  private void searchForFleas(final int expectedTotalHits) throws IOException {
     Directory realDirectory = newFSDirectory(path);
-    IndexReader indexReader = IndexReader.open(realDirectory);
+    IndexReader indexReader = DirectoryReader.open(realDirectory);
     IndexSearcher indexSearcher = newSearcher(indexReader);
     TopDocs topDocs = indexSearcher.search(new TermQuery(new Term(TEXT_FIELD, "fleas")), 10);
     assertNotNull(topDocs);
     assertEquals(expectedTotalHits, topDocs.totalHits);
-    indexSearcher.close();
     indexReader.close();
     realDirectory.close();
   }
@@ -137,7 +124,7 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
    */
   private Document getDocument() {
     Document document = new Document();
-    document.add(newField(TEXT_FIELD, "my dog has fleas", Index.ANALYZED));
+    document.add(newTextField(TEXT_FIELD, "my dog has fleas", Field.Store.NO));
     return document;
   }
     
@@ -146,11 +133,6 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
    * actual machine crash.
    */
   private static class CrashingException extends RuntimeException {
-    /**
-     * 
-     */
-    private static final long serialVersionUID = 1L;
-
     public CrashingException(String msg) {
       super(msg);
     }
@@ -160,34 +142,21 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
    * This test class provides direct access to "simulating" a crash right after 
    * realDirectory.createOutput(..) has been called on a certain specified name.
    */
-  private static class CrashAfterCreateOutput extends Directory {
+  private static class CrashAfterCreateOutput extends FilterDirectory {
         
-    private Directory realDirectory;
     private String crashAfterCreateOutput;
 
     public CrashAfterCreateOutput(Directory realDirectory) throws IOException {
-      this.realDirectory = realDirectory;
-      setLockFactory(realDirectory.getLockFactory());
+      super(realDirectory);
     }
         
     public void setCrashAfterCreateOutput(String name) {
       this.crashAfterCreateOutput = name;
     }
-        
-    /**
-     * {@inheritDoc}
-     */
+    
     @Override
-    public void close() throws IOException {
-      realDirectory.close();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public IndexOutput createOutput(String name) throws IOException {
-      IndexOutput indexOutput = realDirectory.createOutput(name);
+    public IndexOutput createOutput(String name, IOContext cxt) throws IOException {
+      IndexOutput indexOutput = in.createOutput(name, cxt);
       if (null != crashAfterCreateOutput && name.equals(crashAfterCreateOutput)) {
         // CRASH!
         indexOutput.close();
@@ -200,60 +169,6 @@ public class TestCrashCausesCorruptIndex extends LuceneTestCase  {
       return indexOutput;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public void deleteFile(String name) throws IOException {
-      realDirectory.deleteFile(name);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean fileExists(String name) throws IOException {
-      return realDirectory.fileExists(name);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public long fileLength(String name) throws IOException {
-      return realDirectory.fileLength(name);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public long fileModified(String name) throws IOException {
-      return realDirectory.fileModified(name);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String[] listAll() throws IOException {
-      return realDirectory.listAll();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public IndexInput openInput(String name) throws IOException {
-      return realDirectory.openInput(name);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public void touchFile(String name) throws IOException {
-      realDirectory.touchFile(name);
-    }
   }
+  
 }

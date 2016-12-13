@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,18 +14,28 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.BufferedIndexInput;
-import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.document.Field.Index;
-import org.apache.lucene.document.Field.Store;
-import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+
+import org.apache.lucene.codecs.Codec;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.MergeInfo;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.FixedBitSet;
+import org.apache.lucene.util.InfoStream;
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.StringHelper;
+import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.Version;
+import org.apache.lucene.util.packed.PackedLongValues;
 
 public class TestSegmentMerger extends LuceneTestCase {
   //The variables for the new merged segment
@@ -49,13 +57,13 @@ public class TestSegmentMerger extends LuceneTestCase {
     merge1Dir = newDirectory();
     merge2Dir = newDirectory();
     DocHelper.setupDoc(doc1);
-    SegmentInfo info1 = DocHelper.writeDoc(random, merge1Dir, doc1);
+    SegmentCommitInfo info1 = DocHelper.writeDoc(random(), merge1Dir, doc1);
     DocHelper.setupDoc(doc2);
-    SegmentInfo info2 = DocHelper.writeDoc(random, merge2Dir, doc2);
-    reader1 = SegmentReader.get(true, info1, IndexReader.DEFAULT_TERMS_INDEX_DIVISOR);
-    reader2 = SegmentReader.get(true, info2, IndexReader.DEFAULT_TERMS_INDEX_DIVISOR);
+    SegmentCommitInfo info2 = DocHelper.writeDoc(random(), merge2Dir, doc2);
+    reader1 = new SegmentReader(info1, newIOContext(random()));
+    reader2 = new SegmentReader(info2, newIOContext(random()));
   }
-  
+
   @Override
   public void tearDown() throws Exception {
     reader1.close();
@@ -73,20 +81,23 @@ public class TestSegmentMerger extends LuceneTestCase {
     assertTrue(reader1 != null);
     assertTrue(reader2 != null);
   }
-  
-  public void testMerge() throws IOException {                             
-    SegmentMerger merger = new SegmentMerger(mergedDir, IndexWriterConfig.DEFAULT_TERM_INDEX_INTERVAL, mergedSegment, null, null, new FieldInfos());
-    merger.add(reader1);
-    merger.add(reader2);
-    int docsMerged = merger.merge();
+
+  public void testMerge() throws IOException {
+    final Codec codec = Codec.getDefault();
+    final SegmentInfo si = new SegmentInfo(mergedDir, Version.LATEST, mergedSegment, -1, false, codec, Collections.emptyMap(), StringHelper.randomId(), new HashMap<>(), null);
+
+    SegmentMerger merger = new SegmentMerger(Arrays.<CodecReader>asList(reader1, reader2),
+                                             si, InfoStream.getDefault(), mergedDir,
+                                             new FieldInfos.FieldNumbers(),
+                                             newIOContext(random(), new IOContext(new MergeInfo(-1, -1, false, -1))));
+    MergeState mergeState = merger.merge();
+    int docsMerged = mergeState.segmentInfo.maxDoc();
     assertTrue(docsMerged == 2);
     //Should be able to open a new SegmentReader against the new directory
-    SegmentReader mergedReader = SegmentReader.get(false, mergedDir,
-                                                   new SegmentInfo(mergedSegment, docsMerged, mergedDir, false, true,
-                                                                   merger.fieldInfos().hasProx(),
-                                                                   merger.fieldInfos().hasVectors()),
-                                                   BufferedIndexInput.BUFFER_SIZE, true, IndexReader.DEFAULT_TERMS_INDEX_DIVISOR);
-
+    SegmentReader mergedReader = new SegmentReader(new SegmentCommitInfo(
+                                                         mergeState.segmentInfo,
+                                                         0, -1L, -1L, -1L),
+                                                   newIOContext(random()));
     assertTrue(mergedReader != null);
     assertTrue(mergedReader.numDocs() == 2);
     Document newDoc1 = mergedReader.document(0);
@@ -96,92 +107,67 @@ public class TestSegmentMerger extends LuceneTestCase {
     Document newDoc2 = mergedReader.document(1);
     assertTrue(newDoc2 != null);
     assertTrue(DocHelper.numFields(newDoc2) == DocHelper.numFields(doc2) - DocHelper.unstored.size());
-    
-    TermDocs termDocs = mergedReader.termDocs(new Term(DocHelper.TEXT_FIELD_2_KEY, "field"));
+
+    PostingsEnum termDocs = TestUtil.docs(random(), mergedReader,
+        DocHelper.TEXT_FIELD_2_KEY,
+        new BytesRef("field"),
+        null,
+        0);
     assertTrue(termDocs != null);
-    assertTrue(termDocs.next() == true);
-    
+    assertTrue(termDocs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
+
     int tvCount = 0;
     for(FieldInfo fieldInfo : mergedReader.getFieldInfos()) {
-      if (fieldInfo.storeTermVector) {
+      if (fieldInfo.hasVectors()) {
         tvCount++;
       }
     }
     
     //System.out.println("stored size: " + stored.size());
     assertEquals("We do not have 3 fields that were indexed with term vector", 3, tvCount);
-    
-    TermFreqVector vector = mergedReader.getTermFreqVector(0, DocHelper.TEXT_FIELD_2_KEY);
-    assertTrue(vector != null);
-    String [] terms = vector.getTerms();
-    assertTrue(terms != null);
-    //System.out.println("Terms size: " + terms.length);
-    assertTrue(terms.length == 3);
-    int [] freqs = vector.getTermFrequencies();
-    assertTrue(freqs != null);
-    //System.out.println("Freqs size: " + freqs.length);
-    assertTrue(vector instanceof TermPositionVector == true);
-    
-    for (int i = 0; i < terms.length; i++) {
-      String term = terms[i];
-      int freq = freqs[i];
+
+    Terms vector = mergedReader.getTermVectors(0).terms(DocHelper.TEXT_FIELD_2_KEY);
+    assertNotNull(vector);
+    assertEquals(3, vector.size());
+    TermsEnum termsEnum = vector.iterator();
+
+    int i = 0;
+    while (termsEnum.next() != null) {
+      String term = termsEnum.term().utf8ToString();
+      int freq = (int) termsEnum.totalTermFreq();
       //System.out.println("Term: " + term + " Freq: " + freq);
       assertTrue(DocHelper.FIELD_2_TEXT.indexOf(term) != -1);
       assertTrue(DocHelper.FIELD_2_FREQS[i] == freq);
+      i++;
     }
 
     TestSegmentReader.checkNorms(mergedReader);
     mergedReader.close();
   }
-  
-  // LUCENE-3143
-  public void testInvalidFilesToCreateCompound() throws Exception {
-    Directory dir = newDirectory();
-    IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
-    IndexWriter w = new IndexWriter(dir, iwc);
-    
-    // Create an index w/ .del file
-    w.addDocument(new Document());
-    Document doc = new Document();
-    doc.add(new Field("c", "test", Store.NO, Index.ANALYZED));
-    w.addDocument(doc);
-    w.commit();
-    w.deleteDocuments(new Term("c", "test"));
-    w.close();
-    
-    // Assert that SM fails if .del exists
-    SegmentMerger sm = new SegmentMerger(dir, 1, "a", null, null, null);
-    boolean doFail = false;
-    try {
-      sm.createCompoundFile("b1", w.segmentInfos.info(0));
-      doFail = true;
-    } catch (AssertionError e) {
-      // expected
-    }
-    assertFalse("should not have been able to create a .cfs with .del and .s* files", doFail);
-    
-    // Create an index w/ .s*
-    w = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).setOpenMode(OpenMode.CREATE));
-    doc = new Document();
-    doc.add(new Field("c", "test", Store.NO, Index.ANALYZED));
-    w.addDocument(doc);
-    w.close();
-    IndexReader r = IndexReader.open(dir, false);
-    r.setNorm(0, "c", (byte) 1);
-    r.close();
-    
-    // Assert that SM fails if .s* exists
-    SegmentInfos sis = new SegmentInfos();
-    sis.read(dir);
-    try {
-      sm.createCompoundFile("b2", sis.info(0));
-      doFail = true;
-    } catch (AssertionError e) {
-      // expected
-    }
-    assertFalse("should not have been able to create a .cfs with .del and .s* files", doFail);
 
-    dir.close();
+  public void testBuildDocMap() {
+    final int maxDoc = TestUtil.nextInt(random(), 1, 128);
+    final int numDocs = TestUtil.nextInt(random(), 0, maxDoc);
+    final FixedBitSet liveDocs = new FixedBitSet(maxDoc);
+    for (int i = 0; i < numDocs; ++i) {
+      while (true) {
+        final int docID = random().nextInt(maxDoc);
+        if (!liveDocs.get(docID)) {
+          liveDocs.set(docID);
+          break;
+        }
+      }
+    }
+
+    final PackedLongValues docMap = MergeState.removeDeletes(maxDoc, liveDocs);
+
+    // assert the mapping is compact
+    for (int i = 0, del = 0; i < maxDoc; ++i) {
+      if (liveDocs.get(i) == false) {
+        ++del;
+      } else {
+        assertEquals(i - del, docMap.get(i));
+      }
+    }
   }
-  
 }

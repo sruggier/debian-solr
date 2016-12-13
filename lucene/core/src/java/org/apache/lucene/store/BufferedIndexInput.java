@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,23 +14,39 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.EOFException;
 import java.io.IOException;
 
 /** Base implementation class for buffered {@link IndexInput}. */
-public abstract class BufferedIndexInput extends IndexInput {
+public abstract class BufferedIndexInput extends IndexInput implements RandomAccessInput {
 
-  /** Default buffer size */
+  /** Default buffer size set to {@value #BUFFER_SIZE}. */
   public static final int BUFFER_SIZE = 1024;
+  
+  /** Minimum buffer size allowed */
+  public static final int MIN_BUFFER_SIZE = 8;
+  
+  // The normal read buffer size defaults to 1024, but
+  // increasing this during merging seems to yield
+  // performance gains.  However we don't want to increase
+  // it too much because there are quite a few
+  // BufferedIndexInputs created during merging.  See
+  // LUCENE-888 for details.
+  /**
+   * A buffer size for merges set to {@value #MERGE_BUFFER_SIZE}.
+   */
+  public static final int MERGE_BUFFER_SIZE = 4096;
 
   private int bufferSize = BUFFER_SIZE;
   
   protected byte[] buffer;
   
-  private long bufferStart = 0;			  // position in file of buffer
-  private int bufferLength = 0;			  // end of valid bytes
-  private int bufferPosition = 0;		  // next byte to read
+  private long bufferStart = 0;       // position in file of buffer
+  private int bufferLength = 0;       // end of valid bytes
+  private int bufferPosition = 0;     // next byte to read
 
   @Override
   public final byte readByte() throws IOException {
@@ -41,21 +55,12 @@ public abstract class BufferedIndexInput extends IndexInput {
     return buffer[bufferPosition++];
   }
 
-  /** @deprecated please pass resourceDesc */
-  @Deprecated
-  public BufferedIndexInput() {
-    this("anonymous BuffereIndexInput");
-  }
-
   public BufferedIndexInput(String resourceDesc) {
     this(resourceDesc, BUFFER_SIZE);
   }
 
-  /** Inits BufferedIndexInput with a specific bufferSize
-   *  @deprecated please pass resourceDesc */
-  @Deprecated
-  public BufferedIndexInput(int bufferSize) {
-    this("anonymous BuffereIndexInput", bufferSize);
+  public BufferedIndexInput(String resourceDesc, IOContext context) {
+    this(resourceDesc, bufferSize(context));
   }
 
   /** Inits BufferedIndexInput with a specific bufferSize */
@@ -102,8 +107,8 @@ public abstract class BufferedIndexInput extends IndexInput {
   }
 
   private void checkBufferSize(int bufferSize) {
-    if (bufferSize <= 0)
-      throw new IllegalArgumentException("bufferSize must be greater than 0 (got " + bufferSize + ")");
+    if (bufferSize < MIN_BUFFER_SIZE)
+      throw new IllegalArgumentException("bufferSize must be at least MIN_BUFFER_SIZE (got " + bufferSize + ")");
   }
 
   @Override
@@ -113,15 +118,14 @@ public abstract class BufferedIndexInput extends IndexInput {
 
   @Override
   public final void readBytes(byte[] b, int offset, int len, boolean useBuffer) throws IOException {
-
-    if(len <= (bufferLength-bufferPosition)){
+    int available = bufferLength - bufferPosition;
+    if(len <= available){
       // the buffer contains enough data to satisfy this request
       if(len>0) // to allow b to be null if len is 0...
         System.arraycopy(buffer, bufferPosition, b, offset, len);
       bufferPosition+=len;
     } else {
       // the buffer does not have enough data. First serve all we've got.
-      int available = bufferLength - bufferPosition;
       if(available > 0){
         System.arraycopy(buffer, bufferPosition, b, offset, available);
         offset += available;
@@ -197,17 +201,17 @@ public abstract class BufferedIndexInput extends IndexInput {
   public final int readVInt() throws IOException {
     if (5 <= (bufferLength-bufferPosition)) {
       byte b = buffer[bufferPosition++];
+      if (b >= 0) return b;
       int i = b & 0x7F;
-      if ((b & 0x80) == 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7F) << 7;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7F) << 14;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7F) << 21;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       // Warning: the next ands use 0x0F / 0xF0 - beware copy/paste errors:
       i |= (b & 0x0F) << 28;
@@ -222,42 +226,110 @@ public abstract class BufferedIndexInput extends IndexInput {
   public final long readVLong() throws IOException {
     if (9 <= bufferLength-bufferPosition) {
       byte b = buffer[bufferPosition++];
+      if (b >= 0) return b;
       long i = b & 0x7FL;
-      if ((b & 0x80) == 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 7;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 14;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 21;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 28;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 35;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 42;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 49;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       b = buffer[bufferPosition++];
       i |= (b & 0x7FL) << 56;
-      if ((b & 0x80) == 0) return i;
+      if (b >= 0) return i;
       throw new IOException("Invalid vLong detected (negative values disallowed)");
     } else {
       return super.readVLong();
     }
   }
   
+  @Override
+  public final byte readByte(long pos) throws IOException {
+    long index = pos - bufferStart;
+    if (index < 0 || index >= bufferLength) {
+      bufferStart = pos;
+      bufferPosition = 0;
+      bufferLength = 0;  // trigger refill() on read()
+      seekInternal(pos);
+      refill();
+      index = 0;
+    }
+    return buffer[(int)index];
+  }
+
+  @Override
+  public final short readShort(long pos) throws IOException {
+    long index = pos - bufferStart;
+    if (index < 0 || index >= bufferLength-1) {
+      bufferStart = pos;
+      bufferPosition = 0;
+      bufferLength = 0;  // trigger refill() on read()
+      seekInternal(pos);
+      refill();
+      index = 0;
+    }
+    return (short) (((buffer[(int)index]   & 0xFF) << 8) | 
+                     (buffer[(int)index+1] & 0xFF));
+  }
+
+  @Override
+  public final int readInt(long pos) throws IOException {
+    long index = pos - bufferStart;
+    if (index < 0 || index >= bufferLength-3) {
+      bufferStart = pos;
+      bufferPosition = 0;
+      bufferLength = 0;  // trigger refill() on read()
+      seekInternal(pos);
+      refill();
+      index = 0;
+    }
+    return ((buffer[(int)index]   & 0xFF) << 24) | 
+           ((buffer[(int)index+1] & 0xFF) << 16) |
+           ((buffer[(int)index+2] & 0xFF) << 8)  |
+            (buffer[(int)index+3] & 0xFF);
+  }
+
+  @Override
+  public final long readLong(long pos) throws IOException {
+    long index = pos - bufferStart;
+    if (index < 0 || index >= bufferLength-7) {
+      bufferStart = pos;
+      bufferPosition = 0;
+      bufferLength = 0;  // trigger refill() on read()
+      seekInternal(pos);
+      refill();
+      index = 0;
+    }
+    final int i1 = ((buffer[(int)index]   & 0xFF) << 24) | 
+                   ((buffer[(int)index+1] & 0xFF) << 16) |
+                   ((buffer[(int)index+2] & 0xFF) << 8)  | 
+                    (buffer[(int)index+3] & 0xFF);
+    final int i2 = ((buffer[(int)index+4] & 0xFF) << 24) | 
+                   ((buffer[(int)index+5] & 0xFF) << 16) |
+                   ((buffer[(int)index+6] & 0xFF) << 8)  | 
+                    (buffer[(int)index+7] & 0xFF);
+    return (((long)i1) << 32) | (i2 & 0xFFFFFFFFL);
+  }
+  
   private void refill() throws IOException {
     long start = bufferStart + bufferPosition;
     long end = start + bufferSize;
-    if (end > length())				  // don't read past EOF
+    if (end > length())  // don't read past EOF
       end = length();
     int newLength = (int)(end - start);
     if (newLength <= 0)
@@ -292,7 +364,7 @@ public abstract class BufferedIndexInput extends IndexInput {
     else {
       bufferStart = pos;
       bufferPosition = 0;
-      bufferLength = 0;				  // trigger refill() on read()
+      bufferLength = 0;  // trigger refill() on read()
       seekInternal(pos);
     }
   }
@@ -304,7 +376,7 @@ public abstract class BufferedIndexInput extends IndexInput {
   protected abstract void seekInternal(long pos) throws IOException;
 
   @Override
-  public Object clone() {
+  public BufferedIndexInput clone() {
     BufferedIndexInput clone = (BufferedIndexInput)super.clone();
 
     clone.buffer = null;
@@ -314,9 +386,14 @@ public abstract class BufferedIndexInput extends IndexInput {
 
     return clone;
   }
+  
+  @Override
+  public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+    return wrap(sliceDescription, this, offset, length);
+  }
 
   /**
-   * Flushes the in-memory bufer to the given output, copying at most
+   * Flushes the in-memory buffer to the given output, copying at most
    * <code>numBytes</code>.
    * <p>
    * <b>NOTE:</b> this method does not refill the buffer, however it does
@@ -336,16 +413,74 @@ public abstract class BufferedIndexInput extends IndexInput {
     return toCopy;
   }
   
-  @Override
-  public void copyBytes(IndexOutput out, long numBytes) throws IOException {
-    assert numBytes >= 0: "numBytes=" + numBytes;
-
-    while (numBytes > 0) {
-      if (bufferLength == bufferPosition) {
-        refill();
-      }
-      numBytes -= flushBuffer(out, numBytes);
+  /**
+   * Returns default buffer sizes for the given {@link IOContext}
+   */
+  public static int bufferSize(IOContext context) {
+    switch (context.context) {
+    case MERGE:
+      return MERGE_BUFFER_SIZE;
+    default:
+      return BUFFER_SIZE;
     }
   }
   
+  /** 
+   * Wraps a portion of another IndexInput with buffering.
+   * <p><b>Please note:</b> This is in most cases ineffective, because it may double buffer!
+   */
+  public static BufferedIndexInput wrap(String sliceDescription, IndexInput other, long offset, long length) {
+    return new SlicedIndexInput(sliceDescription, other, offset, length);
+  }
+  
+  /** 
+   * Implementation of an IndexInput that reads from a portion of a file.
+   */
+  private static final class SlicedIndexInput extends BufferedIndexInput {
+    IndexInput base;
+    long fileOffset;
+    long length;
+    
+    SlicedIndexInput(String sliceDescription, IndexInput base, long offset, long length) {
+      super((sliceDescription == null) ? base.toString() : (base.toString() + " [slice=" + sliceDescription + "]"), BufferedIndexInput.BUFFER_SIZE);
+      if (offset < 0 || length < 0 || offset + length > base.length()) {
+        throw new IllegalArgumentException("slice() " + sliceDescription + " out of bounds: "  + base);
+      }
+      this.base = base.clone();
+      this.fileOffset = offset;
+      this.length = length;
+    }
+    
+    @Override
+    public SlicedIndexInput clone() {
+      SlicedIndexInput clone = (SlicedIndexInput)super.clone();
+      clone.base = base.clone();
+      clone.fileOffset = fileOffset;
+      clone.length = length;
+      return clone;
+    }
+    
+    @Override
+    protected void readInternal(byte[] b, int offset, int len) throws IOException {
+      long start = getFilePointer();
+      if (start + len > length) {
+        throw new EOFException("read past EOF: " + this);
+      }
+      base.seek(fileOffset + start);
+      base.readBytes(b, offset, len, false);
+    }
+    
+    @Override
+    protected void seekInternal(long pos) {}
+    
+    @Override
+    public void close() throws IOException {
+      base.close();
+    }
+    
+    @Override
+    public long length() {
+      return length;
+    }
+  }
 }

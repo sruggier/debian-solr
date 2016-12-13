@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 
@@ -23,12 +23,18 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.index.FilteredTermsEnum;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
 import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.AttributeSource;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.StringHelper;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Create an index with random unicode terms
@@ -43,24 +49,17 @@ public class TestPrefixRandom extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir, 
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random, MockTokenizer.KEYWORD, false))
-        .setMaxBufferedDocs(_TestUtil.nextInt(random, 50, 1000)));
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir, 
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.KEYWORD, false))
+        .setMaxBufferedDocs(TestUtil.nextInt(random(), 50, 1000)));
     
     Document doc = new Document();
-    Field bogus1 = newField("bogus", "", Field.Store.NO, Field.Index.NOT_ANALYZED_NO_NORMS);
-    Field field = newField("field", "", Field.Store.NO, Field.Index.NOT_ANALYZED);
-    Field bogus2 = newField("zbogus", "", Field.Store.NO, Field.Index.NOT_ANALYZED_NO_NORMS);
+    Field field = newStringField("field", "", Field.Store.NO);
     doc.add(field);
-    doc.add(bogus1);
-    doc.add(bogus2);
-    
-    int num = atLeast(1000);
 
+    int num = atLeast(1000);
     for (int i = 0; i < num; i++) {
-      field.setValue(_TestUtil.randomUnicodeString(random, 10));
-      bogus1.setValue(_TestUtil.randomUnicodeString(random, 10));
-      bogus2.setValue(_TestUtil.randomUnicodeString(random, 10));
+      field.setStringValue(TestUtil.randomUnicodeString(random(), 10));
       writer.addDocument(doc);
     }
     reader = writer.getReader();
@@ -71,52 +70,36 @@ public class TestPrefixRandom extends LuceneTestCase {
   @Override
   public void tearDown() throws Exception {
     reader.close();
-    searcher.close();
     dir.close();
     super.tearDown();
   }
   
   /** a stupid prefix query that just blasts thru the terms */
   private class DumbPrefixQuery extends MultiTermQuery {
-    private final Term prefix;
+    private final BytesRef prefix;
     
     DumbPrefixQuery(Term term) {
-      super();
-      prefix = term;
+      super(term.field());
+      prefix = term.bytes();
     }
     
     @Override
-    protected FilteredTermEnum getEnum(IndexReader reader) throws IOException {
-      return new SimplePrefixTermEnum(reader, prefix);
+    protected TermsEnum getTermsEnum(Terms terms, AttributeSource atts) throws IOException {
+      return new SimplePrefixTermsEnum(terms.iterator(), prefix);
     }
 
-    private class SimplePrefixTermEnum extends FilteredTermEnum {
-      private final Term prefix;
-      private boolean endEnum;
+    private class SimplePrefixTermsEnum extends FilteredTermsEnum {
+      private final BytesRef prefix;
 
-      private SimplePrefixTermEnum(IndexReader reader, Term prefix) throws IOException {
+      private SimplePrefixTermsEnum(TermsEnum tenum, BytesRef prefix) {
+        super(tenum);
         this.prefix = prefix;
-        setEnum(reader.terms(new Term(prefix.field(), "")));
+        setInitialSeekTerm(new BytesRef(""));
       }
-
+      
       @Override
-      protected boolean termCompare(Term term) {
-        if (term.field() == prefix.field()) {
-          return term.text().startsWith(prefix.text());
-        } else {
-          endEnum = true;
-          return false;
-        }
-      }
-
-      @Override
-      public float difference() {
-        return 1.0F;
-      }
-
-      @Override
-      protected boolean endEnum() {
-        return endEnum;
+      protected AcceptStatus accept(BytesRef term) throws IOException {
+        return StringHelper.startsWith(term, prefix) ? AcceptStatus.YES : AcceptStatus.NO;
       }
     }
 
@@ -124,13 +107,22 @@ public class TestPrefixRandom extends LuceneTestCase {
     public String toString(String field) {
       return field.toString() + ":" + prefix.toString();
     }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (super.equals(obj) == false) {
+        return false;
+      }
+      final DumbPrefixQuery that = (DumbPrefixQuery) obj;
+      return prefix.equals(that.prefix);
+    }
   }
   
   /** test a bunch of random prefixes */
   public void testPrefixes() throws Exception {
       int num = atLeast(100);
       for (int i = 0; i < num; i++)
-        assertSame(_TestUtil.randomUnicodeString(random, 5));
+        assertSame(TestUtil.randomUnicodeString(random(), 5));
   }
   
   /** check that the # of hits is the same as from a very

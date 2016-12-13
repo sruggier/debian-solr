@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -22,26 +22,36 @@ import org.apache.solr.core.SolrConfig.JmxConfiguration;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.management.MBeanServerConnection;
 import javax.management.ObjectInstance;
+import javax.management.ObjectName;
 import javax.management.Query;
 import javax.management.remote.JMXConnector;
 import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.net.ServerSocket;
-import java.net.URL;
-import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
+import java.rmi.server.RMIServerSocketFactory;
 import java.util.Set;
+
+import static org.hamcrest.CoreMatchers.allOf;
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.instanceOf;
 
 /**
  * Test for JmxMonitoredMap
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TestJmxMonitoredMap extends LuceneTestCase {
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private int port = 0;
 
@@ -55,32 +65,35 @@ public class TestJmxMonitoredMap extends LuceneTestCase {
   @Before
   public void setUp() throws Exception {
     super.setUp();
-    int retries = 5;
-    for (int i = 0; i < retries; i++) {
-      try {
-        ServerSocket server = new ServerSocket(0);
-        try {
-          port = server.getLocalPort();
-        } finally {
-          server.close();
+    String oldHost = System.getProperty("java.rmi.server.hostname");
+    try {
+      // this stupid sysprop thing is needed, because remote stubs use an
+      // arbitrary local ip to connect
+      // See: http://weblogs.java.net/blog/emcmanus/archive/2006/12/multihomed_comp.html
+      System.setProperty("java.rmi.server.hostname", "127.0.0.1");
+      class LocalhostRMIServerSocketFactory implements RMIServerSocketFactory {
+        ServerSocket socket;
+        
+        @Override
+        public ServerSocket createServerSocket(int port) throws IOException {
+          return socket = new ServerSocket(port);
         }
-        // System.out.println("Using port: " + port);
-        try {
-          LocateRegistry.createRegistry(port);
-        } catch (RemoteException e) {
-          throw e;
-        }
-        String url = "service:jmx:rmi:///jndi/rmi://:" + port + "/solrjmx";
-        JmxConfiguration config = new JmxConfiguration(true, null, url);
-        monitoredMap = new JmxMonitoredMap<String, SolrInfoMBean>(null, "", config);
-        JMXServiceURL u = new JMXServiceURL(url);
-        connector = JMXConnectorFactory.connect(u);
-        mbeanServer = connector.getMBeanServerConnection();
-        break;
-      } catch (Exception e) {
-        if(retries == (i + 1)) {
-          throw e;
-        }
+      };
+      LocalhostRMIServerSocketFactory factory = new LocalhostRMIServerSocketFactory();
+      LocateRegistry.createRegistry(0, null, factory);
+      port = factory.socket.getLocalPort();
+      log.info("Using port: " + port);
+      String url = "service:jmx:rmi:///jndi/rmi://127.0.0.1:"+port+"/solrjmx";
+      JmxConfiguration config = new JmxConfiguration(true, null, url, null);
+      monitoredMap = new JmxMonitoredMap<>("", "", config);
+      JMXServiceURL u = new JMXServiceURL(url);
+      connector = JMXConnectorFactory.connect(u);
+      mbeanServer = connector.getMBeanServerConnection();
+    } finally {
+      if (oldHost == null) {
+        System.clearProperty("java.rmi.server.hostname");
+      } else {
+        System.setProperty("java.rmi.server.hostname", oldHost);
       }
     }
   }
@@ -96,70 +109,109 @@ public class TestJmxMonitoredMap extends LuceneTestCase {
   }
 
   @Test
+  public void testTypeName() throws Exception{
+    MockInfoMBean mock = new MockInfoMBean();
+    monitoredMap.put("mock", mock);
+
+    NamedList dynamicStats = mock.getStatistics();
+    assertTrue(dynamicStats.size() != 0);
+    assertTrue(dynamicStats.get("Integer") instanceof Integer);
+    assertTrue(dynamicStats.get("Double") instanceof Double);
+    assertTrue(dynamicStats.get("Long") instanceof Long);
+    assertTrue(dynamicStats.get("Short") instanceof Short);
+    assertTrue(dynamicStats.get("Byte") instanceof Byte);
+    assertTrue(dynamicStats.get("Float") instanceof Float);
+    assertTrue(dynamicStats.get("String") instanceof String);
+
+    Set<ObjectInstance> objects = mbeanServer.queryMBeans(null, Query.match(
+        Query.attr("name"), Query.value("mock")));
+
+    ObjectName name = objects.iterator().next().getObjectName();
+    assertMBeanTypeAndValue(name, "Integer", Integer.class, 123);
+    assertMBeanTypeAndValue(name, "Double", Double.class, 567.534);
+    assertMBeanTypeAndValue(name, "Long", Long.class, 32352463l);
+    assertMBeanTypeAndValue(name, "Short", Short.class, (short) 32768);
+    assertMBeanTypeAndValue(name, "Byte", Byte.class, (byte) 254);
+    assertMBeanTypeAndValue(name, "Float", Float.class, 3.456f);
+    assertMBeanTypeAndValue(name, "String",String.class, "testing");
+
+  }
+
+  @SuppressWarnings("unchecked")
+  public void assertMBeanTypeAndValue(ObjectName name, String attr, Class type, Object value) throws Exception {
+    assertThat(mbeanServer.getAttribute(name, attr), 
+        allOf(instanceOf(type), equalTo(value))
+    );
+  }
+
+  @Test
   public void testPutRemoveClear() throws Exception {
     MockInfoMBean mock = new MockInfoMBean();
     monitoredMap.put("mock", mock);
 
+
     Set<ObjectInstance> objects = mbeanServer.queryMBeans(null, Query.match(
-            Query.attr("name"), Query.value("mock")));
+        Query.attr("name"), Query.value("mock")));
     assertFalse("No MBean for mock object found in MBeanServer", objects
-            .isEmpty());
+        .isEmpty());
 
     monitoredMap.remove("mock");
     objects = mbeanServer.queryMBeans(null, Query.match(Query.attr("name"),
-            Query.value("mock")));
+        Query.value("mock")));
     assertTrue("MBean for mock object found in MBeanServer even after removal",
-            objects.isEmpty());
+        objects.isEmpty());
 
     monitoredMap.put("mock", mock);
     monitoredMap.put("mock2", mock);
     objects = mbeanServer.queryMBeans(null, Query.match(Query.attr("name"),
-            Query.value("mock")));
+        Query.value("mock")));
     assertFalse("No MBean for mock object found in MBeanServer", objects
-            .isEmpty());
+        .isEmpty());
 
     monitoredMap.clear();
     objects = mbeanServer.queryMBeans(null, Query.match(Query.attr("name"),
-            Query.value("mock")));
+        Query.value("mock")));
     assertTrue(
-            "MBean for mock object found in MBeanServer even after clear has been called",
-            objects.isEmpty());
+        "MBean for mock object found in MBeanServer even after clear has been called",
+        objects.isEmpty());
+
   }
 
-  private class MockInfoMBean implements SolrInfoMBean {
-    public String getName() {
-      return "mock";
-    }
+  @Test
+  public void testJmxAugmentedSolrInfoMBean() throws Exception {
+    final MockInfoMBean mock = new MockInfoMBean();
+    final String jmxKey = "jmx";
+    final String jmxValue = "jmxValue";
 
-    public Category getCategory() {
-      return Category.OTHER;
-    }
+    MockJmxAugmentedSolrInfoMBean mbean = new MockJmxAugmentedSolrInfoMBean(mock) {
+      @Override
+      public NamedList getStatisticsForJmx() {
+        NamedList stats = getStatistics();
+        stats.add(jmxKey, jmxValue);
+        return stats;
+      }
+    };
+    monitoredMap.put("mock", mbean);
 
-    public String getDescription() {
-      return "mock";
-    }
+    // assert getStatistics called when used as a map.  Note can't use equals here to compare
+    // because getStatistics returns a new Object each time.
+    assertNull(monitoredMap.get("mock").getStatistics().get(jmxKey));
 
-    public URL[] getDocs() {
-      // TODO Auto-generated method stub
-      return null;
-    }
-
-    public String getVersion() {
-      return "mock";
-    }
-
-    public String getSource() {
-      return "mock";
-    }
-
-    @SuppressWarnings("unchecked")
-    public NamedList getStatistics() {
-      return null;
-    }
-
-    public String getSourceId() {
-      return "mock";
-    }
+    //  assert getStatisticsForJmx called when used as jmx server
+    Set<ObjectInstance> objects = mbeanServer.queryMBeans(null, Query.match(
+        Query.attr("name"), Query.value("mock")));
+    ObjectName name = objects.iterator().next().getObjectName();
+    assertMBeanTypeAndValue(name, jmxKey, jmxValue.getClass(), jmxValue);
   }
 
+  private static abstract class MockJmxAugmentedSolrInfoMBean
+      extends SolrInfoMBeanWrapper implements JmxMonitoredMap.JmxAugmentedSolrInfoMBean {
+
+    public MockJmxAugmentedSolrInfoMBean(SolrInfoMBean mbean) {
+      super(mbean);
+    }
+
+    @Override
+    public abstract NamedList getStatisticsForJmx();
+  }
 }

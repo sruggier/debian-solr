@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
-import org.apache.lucene.search.Filter;
-import org.apache.lucene.util.OpenBitSet;
+import java.io.Closeable;
+
+import org.apache.lucene.util.Accountable;
 import org.apache.solr.common.SolrException;
 
 /**
@@ -29,10 +29,9 @@ import org.apache.solr.common.SolrException;
  * a cache and could be shared.
  * </p>
  *
- * @version $Id$
  * @since solr 0.9
  */
-public interface DocSet /* extends Collection<Integer> */ {
+public interface DocSet extends Closeable, Accountable /* extends Collection<Integer> */ {
   
   /**
    * Adds the specified document if it is not currently in the DocSet
@@ -49,7 +48,7 @@ public interface DocSet /* extends Collection<Integer> */ {
    *
    * <p>
    * This method may be faster then <code>add(doc)</code> in some
-   * implementaions provided the caller is certain of the precondition.
+   * implementations provided the caller is certain of the precondition.
    * </p>
    *
    * @see #add
@@ -78,28 +77,6 @@ public interface DocSet /* extends Collection<Integer> */ {
   public DocIterator iterator();
 
   /**
-   * Returns a BitSet view of the DocSet.  Any changes to this BitSet <b>may</b>
-   * be reflected in the DocSet, hence if the DocSet is shared or was returned from
-   * a SolrIndexSearcher method, it's not safe to modify the BitSet.
-   *
-   * @return
-   * An OpenBitSet with the bit number of every docid set in the set.
-   * 
-   * @deprecated Use {@link #iterator()} to access all docs instead.
-   */
-  @Deprecated
-  public OpenBitSet getBits();
-
-  /**
-   * Returns the approximate amount of memory taken by this DocSet.
-   * This is only an approximation and doesn't take into account java object overhead.
-   *
-   * @return
-   * the approximate memory consumption in bytes
-   */
-  public long memSize();
-
-  /**
    * Returns the intersection of this set with another set.  Neither set is modified - a new DocSet is
    * created and returned.
    * @return a DocSet representing the intersection
@@ -108,9 +85,12 @@ public interface DocSet /* extends Collection<Integer> */ {
 
   /**
    * Returns the number of documents of the intersection of this set with another set.
-   * May be more efficient than actually creating the intersection and then getting it's size.
+   * May be more efficient than actually creating the intersection and then getting its size.
    */
   public int intersectionSize(DocSet other);
+
+  /** Returns true if these sets have any elements in common */
+  public boolean intersects(DocSet other);
 
   /**
    * Returns the union of this set with another set.  Neither set is modified - a new DocSet is
@@ -121,7 +101,7 @@ public interface DocSet /* extends Collection<Integer> */ {
 
   /**
    * Returns the number of documents of the union of this set with another set.
-   * May be more efficient than actually creating the union and then getting it's size.
+   * May be more efficient than actually creating the union and then getting its size.
    */
   public int unionSize(DocSet other);
 
@@ -143,4 +123,13 @@ public interface DocSet /* extends Collection<Integer> */ {
    * methods will be invoked with.
    */
   public Filter getTopFilter();
+
+  /**
+   * Adds all the docs from this set to the target set. The target should be
+   * sized large enough to accommodate all of the documents before calling this
+   * method.
+   */
+  public void addAllTo(DocSet target);
+
+  public static DocSet EMPTY = new SortedIntDocSet(new int[0], 0);
 }

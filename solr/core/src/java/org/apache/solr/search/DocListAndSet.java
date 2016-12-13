@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 
@@ -28,7 +27,7 @@ package org.apache.solr.search;
  * Oh, if only java had "out" parameters or multiple return args...
  * <p>
  *
- * @version $Id$
+ *
  * @since solr 0.9
  */
 public final class DocListAndSet {

@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.distributed.requestfactory;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.search.grouping.distributed.requestfactory;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.distributed.requestfactory;
 
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.GroupParams;
@@ -36,6 +35,7 @@ public class SearchGroupsRequestFactory implements ShardRequestFactory {
   /**
    * {@inheritDoc}
    */
+  @Override
   public ShardRequest[] constructRequest(ResponseBuilder rb) {
     ShardRequest sreq = new ShardRequest();
     GroupingSpecification groupingSpecification = rb.getGroupingSpec();
@@ -72,7 +72,7 @@ public class SearchGroupsRequestFactory implements ShardRequestFactory {
 
     // in this first phase, request only the unique key field
     // and any fields needed for merging.
-    sreq.params.set(GroupParams.GROUP_DISTRIBUTED_FIRST,"true");
+    sreq.params.set(GroupParams.GROUP_DISTRIBUTED_FIRST, "true");
 
     if ( (rb.getFieldFlags() & SolrIndexSearcher.GET_SCORES)!=0 || rb.getSortSpec().includesScore()) {
       sreq.params.set(CommonParams.FL, rb.req.getSchema().getUniqueKeyField().getName() + ",score");

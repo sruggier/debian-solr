@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,12 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import org.apache.lucene.util.PriorityQueue;
 
 final class HitQueue extends PriorityQueue<ScoreDoc> {
-
-  private boolean prePopulate;
 
   /**
    * Creates a new instance with <code>size</code> elements. If
@@ -32,8 +30,8 @@ final class HitQueue extends PriorityQueue<ScoreDoc> {
    * <b>NOTE:</b> in case <code>prePopulate</code> is true, you should pop
    * elements from the queue using the following code example:
    * 
-   * <pre>
-   * PriorityQueue pq = new HitQueue(10, true); // pre-populate.
+   * <pre class="prettyprint">
+   * PriorityQueue&lt;ScoreDoc&gt; pq = new HitQueue(10, true); // pre-populate.
    * ScoreDoc top = pq.top();
    * 
    * // Add/Update one element.
@@ -63,17 +61,15 @@ final class HitQueue extends PriorityQueue<ScoreDoc> {
    * @see #getSentinelObject()
    */
   HitQueue(int size, boolean prePopulate) {
-    this.prePopulate = prePopulate;
-    initialize(size);
+    super(size, prePopulate);
   }
 
-  // Returns null if prePopulate is false.
   @Override
   protected ScoreDoc getSentinelObject() {
     // Always set the doc Id to MAX_VALUE so that it won't be favored by
     // lessThan. This generally should not happen since if score is not NEG_INF,
     // TopScoreDocCollector will always add the object to the queue.
-    return !prePopulate ? null : new ScoreDoc(Integer.MAX_VALUE, Float.NEGATIVE_INFINITY);
+    return new ScoreDoc(Integer.MAX_VALUE, Float.NEGATIVE_INFINITY);
   }
   
   @Override

@@ -1,5 +1,4 @@
-package org.apache.solr.search.function.distance;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,14 +14,15 @@ package org.apache.solr.search.function.distance;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.Searcher;
-import org.apache.lucene.spatial.DistanceUtils;
+package org.apache.solr.search.function.distance;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.docvalues.DoubleDocValues;
+import org.apache.lucene.queries.function.valuesource.MultiValueSource;
+import org.apache.lucene.search.IndexSearcher;
+import org.locationtech.spatial4j.distance.DistanceUtils;
 import org.apache.solr.common.SolrException;
-import org.apache.solr.search.function.MultiValueSource;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.ValueSource;
 
 import java.io.IOException;
 import java.util.Map;
@@ -31,9 +31,9 @@ import java.util.Map;
 /**
  * Calculate the Haversine formula (distance) between any two points on a sphere
  * Takes in four value sources: (latA, lonA); (latB, lonB).
- * <p/>
+ * <p>
  * Assumes the value sources are in radians unless
- * <p/>
+ * <p>
  * See http://en.wikipedia.org/wiki/Great-circle_distance and
  * http://en.wikipedia.org/wiki/Haversine_formula for the actual formula and
  * also http://www.movable-type.co.uk/scripts/latlong.html
@@ -65,11 +65,9 @@ public class HaversineFunction extends ValueSource {
 
   /**
    * @param doc  The doc to score
-   * @param p1DV
-   * @param p2DV
    * @return The haversine distance formula
    */
-  protected double distance(int doc, DocValues p1DV, DocValues p2DV) {
+  protected double distance(int doc, FunctionValues p1DV, FunctionValues p2DV) {
 
     double[] p1D = new double[2];
     double[] p2D = new double[2];
@@ -90,41 +88,20 @@ public class HaversineFunction extends ValueSource {
       y2 = p2D[0];
       x2 = p2D[1];
     }
-    return DistanceUtils.haversine(y1, x1, y2, x2, radius);
+    return DistanceUtils.distHaversineRAD(y1,x1,y2,x2)*radius;
   }
 
 
   @Override
-  public DocValues getValues(Map context, IndexReader reader) throws IOException {
-    final DocValues vals1 = p1.getValues(context, reader);
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
+    final FunctionValues vals1 = p1.getValues(context, readerContext);
 
-    final DocValues vals2 = p2.getValues(context, reader);
-    return new DocValues() {
-      @Override
-      public float floatVal(int doc) {
-        return (float) doubleVal(doc);
-      }
-
-      @Override
-      public int intVal(int doc) {
-        return (int) doubleVal(doc);
-      }
-
-      @Override
-      public long longVal(int doc) {
-        return (long) doubleVal(doc);
-      }
-
+    final FunctionValues vals2 = p2.getValues(context, readerContext);
+    return new DoubleDocValues(this) {
       @Override
       public double doubleVal(int doc) {
         return distance(doc, vals1, vals2);
       }
-
-      @Override
-      public String strVal(int doc) {
-        return Double.toString(doubleVal(doc));
-      }
-
       @Override
       public String toString(int doc) {
         StringBuilder sb = new StringBuilder();
@@ -137,7 +114,7 @@ public class HaversineFunction extends ValueSource {
   }
 
   @Override
-  public void createWeight(Map context, Searcher searcher) throws IOException {
+  public void createWeight(Map context, IndexSearcher searcher) throws IOException {
     p1.createWeight(context, searcher);
     p2.createWeight(context, searcher);
 

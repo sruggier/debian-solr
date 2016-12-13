@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +14,17 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 
+import org.apache.lucene.document.Field;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.store.Directory;
 
@@ -46,7 +48,7 @@ public class TestSegmentTermEnum extends LuceneTestCase {
   public void testTermEnum() throws IOException {
     IndexWriter writer = null;
 
-    writer  = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    writer  = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
 
     // ADD 100 documents with term : aaa
     // add 100 documents with terms: aaa bbb
@@ -62,7 +64,8 @@ public class TestSegmentTermEnum extends LuceneTestCase {
     verifyDocFreq();
 
     // merge segments
-    writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)).setOpenMode(OpenMode.APPEND));
+    writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                    .setOpenMode(OpenMode.APPEND));
     writer.forceMerge(1);
     writer.close();
 
@@ -72,61 +75,68 @@ public class TestSegmentTermEnum extends LuceneTestCase {
 
   public void testPrevTermAtEnd() throws IOException
   {
-    IndexWriter writer  = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    IndexWriter writer  = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                .setCodec(TestUtil.alwaysPostingsFormat(TestUtil.getDefaultPostingsFormat())));
     addDoc(writer, "aaa bbb");
     writer.close();
-    SegmentReader reader = SegmentReader.getOnlySegmentReader(dir);
-    SegmentTermEnum termEnum = (SegmentTermEnum) reader.terms();
-    assertTrue(termEnum.next());
-    assertEquals("aaa", termEnum.term().text());
-    assertTrue(termEnum.next());
-    assertEquals("aaa", termEnum.prev().text());
-    assertEquals("bbb", termEnum.term().text());
-    assertFalse(termEnum.next());
-    assertEquals("bbb", termEnum.prev().text());
+    LeafReader reader = getOnlyLeafReader(DirectoryReader.open(dir));
+    TermsEnum terms = reader.fields().terms("content").iterator();
+    assertNotNull(terms.next());
+    assertEquals("aaa", terms.term().utf8ToString());
+    assertNotNull(terms.next());
+    long ordB;
+    try {
+      ordB = terms.ord();
+    } catch (UnsupportedOperationException uoe) {
+      // ok -- codec is not required to support ord
+      reader.close();
+      return;
+    }
+    assertEquals("bbb", terms.term().utf8ToString());
+    assertNull(terms.next());
+
+    terms.seekExact(ordB);
+    assertEquals("bbb", terms.term().utf8ToString());
     reader.close();
   }
 
   private void verifyDocFreq()
       throws IOException
   {
-      IndexReader reader = IndexReader.open(dir, true);
-      TermEnum termEnum = null;
+      IndexReader reader = DirectoryReader.open(dir);
+      TermsEnum termEnum = MultiFields.getTerms(reader, "content").iterator();
 
     // create enumeration of all terms
-    termEnum = reader.terms();
     // go to the first term (aaa)
     termEnum.next();
     // assert that term is 'aaa'
-    assertEquals("aaa", termEnum.term().text());
+    assertEquals("aaa", termEnum.term().utf8ToString());
     assertEquals(200, termEnum.docFreq());
     // go to the second term (bbb)
     termEnum.next();
     // assert that term is 'bbb'
-    assertEquals("bbb", termEnum.term().text());
+    assertEquals("bbb", termEnum.term().utf8ToString());
     assertEquals(100, termEnum.docFreq());
 
-    termEnum.close();
 
-
-    // create enumeration of terms after term 'aaa', including 'aaa'
-    termEnum = reader.terms(new Term("content", "aaa"));
+    // create enumeration of terms after term 'aaa',
+    // including 'aaa'
+    termEnum.seekCeil(new BytesRef("aaa"));
     // assert that term is 'aaa'
-    assertEquals("aaa", termEnum.term().text());
+    assertEquals("aaa", termEnum.term().utf8ToString());
     assertEquals(200, termEnum.docFreq());
     // go to term 'bbb'
     termEnum.next();
     // assert that term is 'bbb'
-    assertEquals("bbb", termEnum.term().text());
+    assertEquals("bbb", termEnum.term().utf8ToString());
     assertEquals(100, termEnum.docFreq());
-    termEnum.close();
     reader.close();
   }
 
   private void addDoc(IndexWriter writer, String value) throws IOException
   {
     Document doc = new Document();
-    doc.add(newField("content", value, Field.Store.NO, Field.Index.ANALYZED));
+    doc.add(newTextField("content", value, Field.Store.NO));
     writer.addDocument(doc);
   }
 }

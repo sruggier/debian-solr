@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,17 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
-
-import org.apache.solr.common.util.StrUtils;
 
 import java.util.Iterator;
 import java.util.Map;
-import java.io.IOException;
 
 /**
- * @version $Id$
+ *
  */
 public class MapSolrParams extends SolrParams {
   protected final Map<String,String> map;
@@ -35,13 +31,22 @@ public class MapSolrParams extends SolrParams {
 
   @Override
   public String get(String name) {
-    return map.get(name);
+    Object  o = map.get(name);
+    if(o == null) return null;
+    if (o instanceof String) return  (String) o;
+    if (o instanceof String[]) {
+      String[] strings = (String[]) o;
+      if(strings.length == 0) return null;
+      return strings[0];
+    }
+    return String.valueOf(o);
   }
 
   @Override
   public String[] getParams(String name) {
-    String val = map.get(name);
-    return val==null ? null : new String[]{val};
+    Object val = map.get(name);
+    if (val instanceof String[]) return (String[]) val;
+    return val==null ? null : new String[]{String.valueOf(val)};
   }
 
   @Override
@@ -51,25 +56,4 @@ public class MapSolrParams extends SolrParams {
 
   public Map<String,String> getMap() { return map; }
 
-  @Override
-  public String toString() {
-    StringBuilder sb = new StringBuilder(128);
-    try {
-      boolean first=true;
-
-      for (Map.Entry<String,String> entry : map.entrySet()) {
-        String key = entry.getKey();
-        String val = entry.getValue();
-
-        if (!first) sb.append('&');
-        first=false;
-        sb.append(key);
-        sb.append('=');
-        StrUtils.partialURLEncodeVal(sb, val==null ? "" : val);
-      }
-    }
-    catch (IOException e) {throw new RuntimeException(e);}  // can't happen
-
-    return sb.toString();
-  }
 }

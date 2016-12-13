@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,8 +16,10 @@
  */
 package org.apache.solr.handler.dataimport;
 
+import java.lang.invoke.MethodHandles;
 import java.util.HashMap;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,40 +29,38 @@ import org.slf4j.LoggerFactory;
  * A {@link Transformer} which can put values into a column by resolving an expression
  * containing other columns
  * </p>
- * <p/>
  * <p>
- * For example:<br />
+ * For example:<br>
  * &lt;field column="name" template="${e.lastName}, ${e.firstName}
  * ${e.middleName}" /&gt; will produce the name by combining values from
  * lastName, firstName and middleName fields as given in the template attribute.
  * </p>
- * <p/>
  * <p>
  * Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
  * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TemplateTransformer extends Transformer {
 
-  private static final Logger LOG = LoggerFactory.getLogger(TemplateTransformer.class);
-  private Map<String ,List<String>> templateVsVars = new HashMap<String, List<String>>();
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  private Map<String ,List<String>> templateVsVars = new HashMap<>();
 
   @Override
   @SuppressWarnings("unchecked")
   public Object transformRow(Map<String, Object> row, Context context) {
 
-    VariableResolverImpl resolver = (VariableResolverImpl) context
-            .getVariableResolver();
+
+    VariableResolver resolver = context.getVariableResolver();
     // Add current row to the copy of resolver map
-//    for (Map.Entry<String, Object> entry : row.entrySet())
 
     for (Map<String, String> map : context.getAllEntityFields()) {
+      map.entrySet();
       String expr = map.get(TEMPLATE);
       if (expr == null)
         continue;
@@ -69,7 +69,11 @@ public class TemplateTransformer extends Transformer {
 
       // Verify if all variables can be resolved or not
       boolean resolvable = true;
-      List<String> variables = getVars(expr);
+      List<String> variables = this.templateVsVars.get(expr);
+      if(variables == null){
+        variables = resolver.getVariables(expr);
+        this.templateVsVars.put(expr, variables);
+      }
       for (String v : variables) {
         if (resolver.resolve(v) == null) {
           LOG.warn("Unable to resolve variable: " + v
@@ -81,25 +85,30 @@ public class TemplateTransformer extends Transformer {
       if (!resolvable)
         continue;
       if(variables.size() == 1 && expr.startsWith("${") && expr.endsWith("}")){
-        row.put(column, resolver.resolve(variables.get(0)));
+        addToRow(column, row, resolver.resolve(variables.get(0)));
       } else {
-        row.put(column, resolver.replaceTokens(expr));
+        addToRow(column, row, resolver.replaceTokens(expr));
       }
-
     }
-
 
     return row;
   }
 
-  private List<String> getVars(String expr) {
-    List<String> result = this.templateVsVars.get(expr);
-    if(result == null){
-      result = TemplateString.getVariables(expr);
-      this.templateVsVars.put(expr, result);
+  private void addToRow(String key, Map<String, Object> row, Object value) {
+    Object prevVal = row.get(key);
+    if (prevVal != null) {
+      if (prevVal instanceof List) {
+        ((List) prevVal).add(value);
+      } else {
+        ArrayList<Object> valList = new ArrayList<Object>();
+        valList.add(prevVal);
+        valList.add(value);
+        row.put(key, valList);
+      }
+    } else {
+      row.put(key, value);
     }
-    return result;
   }
-
+    
   public static final String TEMPLATE = "template";
 }

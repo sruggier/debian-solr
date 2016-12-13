@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
-import java.io.IOException;
-import java.net.URLEncoder;
 import java.util.LinkedHashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -39,10 +36,10 @@ public class ModifiableSolrParams extends SolrParams
   public ModifiableSolrParams()
   {
     // LinkedHashMap so params show up in CGI in the same order as they are entered
-    vals = new LinkedHashMap<String, String[]>();
+    vals = new LinkedHashMap<>();
   }
 
-  /** Constructs a new ModifiableSolrParams directly using the provided Map<String,String[]> */
+  /** Constructs a new ModifiableSolrParams directly using the provided Map&lt;String,String[]&gt; */
   public ModifiableSolrParams( Map<String,String[]> v )
   {
     vals = v;
@@ -51,11 +48,20 @@ public class ModifiableSolrParams extends SolrParams
   /** Constructs a new ModifiableSolrParams, copying values from an existing SolrParams */
   public ModifiableSolrParams(SolrParams params)
   {
-    vals = new LinkedHashMap<String, String[]>();
+    vals = new LinkedHashMap<>();
     if( params != null ) {
       this.add( params );
     }
   }
+
+  public int size() {
+    return vals == null ? 0 : vals.size();
+  }
+
+  public Map<String,String[]> getMap() {
+    return vals;
+  }
+
 
   //----------------------------------------------------------------
   //----------------------------------------------------------------
@@ -181,30 +187,5 @@ public class ModifiableSolrParams extends SolrParams
   @Override
   public String[] getParams(String param) {
     return vals.get( param );
-  }
-
-  @Override
-  public String toString() {
-    StringBuilder sb = new StringBuilder(128);
-    try {
-      boolean first=true;
-
-      for (Map.Entry<String,String[]> entry : vals.entrySet()) {
-        String key = entry.getKey();
-        String[] valarr = entry.getValue();
-        for (String val : valarr) {
-          if (!first) sb.append('&');
-          first=false;
-          sb.append(key);
-          sb.append('=');
-          if( val != null ) {
-            sb.append( URLEncoder.encode( val, "UTF-8" ) );
-          }
-        }
-      }
-    }
-    catch (IOException e) {throw new RuntimeException(e);}  // can't happen
-
-    return sb.toString();
   }
 }

@@ -1,20 +1,4 @@
-package org.apache.lucene.document;
-
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.GregorianCalendar;
-import java.util.TimeZone;
-import java.util.Locale;
-
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.SystemPropertiesRestoreRule;
-import org.junit.Rule;
-import org.junit.rules.RuleChain;
-import org.junit.rules.TestRule;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -30,11 +14,15 @@ import org.junit.rules.TestRule;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-public class TestDateTools extends LuceneTestCase {
-  @Rule
-  public TestRule testRules = 
-    RuleChain.outerRule(new SystemPropertiesRestoreRule());
+package org.apache.lucene.document;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+import org.apache.lucene.util.LuceneTestCase;
+
+public class TestDateTools extends LuceneTestCase {
   public void testStringToDate() throws ParseException {
     
     Date d = null;
@@ -47,29 +35,27 @@ public class TestDateTools extends LuceneTestCase {
     d = DateTools.stringToDate("20040705091055990");
     assertEquals("2004-07-05 09:10:55:990", isoFormat(d));
 
-    try {
-      d = DateTools.stringToDate("97");    // no date
-      fail();
-    } catch(ParseException e) { /* expected exception */ }
-    try {
-      d = DateTools.stringToDate("200401011235009999");    // no date
-      fail();
-    } catch(ParseException e) { /* expected exception */ }
-    try {
-      d = DateTools.stringToDate("aaaa");    // no date
-      fail();
-    } catch(ParseException e) { /* expected exception */ }
+    expectThrows(ParseException.class, () -> {
+      DateTools.stringToDate("97");    // no date
+    });
 
+    expectThrows(ParseException.class, () -> {
+      DateTools.stringToDate("200401011235009999");    // no date
+    });
+
+    expectThrows(ParseException.class, () -> {
+      DateTools.stringToDate("aaaa");    // no date
+    });
   }
   
   public void testStringtoTime() throws ParseException {
     long time = DateTools.stringToTime("197001010000");
-    Calendar cal = new GregorianCalendar();
+    // we use default locale since LuceneTestCase randomizes it
+    Calendar cal = new GregorianCalendar(TimeZone.getTimeZone("GMT"), Locale.getDefault());
     cal.clear();
     cal.set(1970, 0, 1,    // year=1970, month=january, day=1
         0, 0, 0);          // hour, minute, second
     cal.set(Calendar.MILLISECOND, 0);
-    cal.setTimeZone(TimeZone.getTimeZone("GMT"));
     assertEquals(cal.getTime().getTime(), time);
     cal.set(1980, 1, 2,    // year=1980, month=february, day=2
         11, 5, 0);          // hour, minute, second
@@ -79,9 +65,9 @@ public class TestDateTools extends LuceneTestCase {
   }
   
   public void testDateAndTimetoString() throws ParseException {
-    Calendar cal = new GregorianCalendar();
+    // we use default locale since LuceneTestCase randomizes it
+    Calendar cal = new GregorianCalendar(TimeZone.getTimeZone("GMT"), Locale.getDefault());
     cal.clear();
-    cal.setTimeZone(TimeZone.getTimeZone("GMT"));
     cal.set(2004, 1, 3,   // year=2004, month=february(!), day=3
         22, 8, 56);       // hour, minute, second
     cal.set(Calendar.MILLISECOND, 333);
@@ -144,9 +130,9 @@ public class TestDateTools extends LuceneTestCase {
   }
   
   public void testRound() {
-    Calendar cal = new GregorianCalendar();
+    // we use default locale since LuceneTestCase randomizes it
+    Calendar cal = new GregorianCalendar(TimeZone.getTimeZone("GMT"), Locale.getDefault());
     cal.clear();
-    cal.setTimeZone(TimeZone.getTimeZone("GMT"));
     cal.set(2004, 1, 3,   // year=2004, month=february(!), day=3
         22, 8, 56);       // hour, minute, second
     cal.set(Calendar.MILLISECOND, 333);
@@ -183,7 +169,7 @@ public class TestDateTools extends LuceneTestCase {
   }
 
   private String isoFormat(Date date) {
-    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss:SSS", Locale.US);
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss:SSS", Locale.ROOT);
     sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
     return sdf.format(date);
   }

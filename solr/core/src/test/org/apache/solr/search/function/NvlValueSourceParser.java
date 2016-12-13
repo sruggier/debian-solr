@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,17 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search.function;
 
-import org.apache.lucene.queryParser.ParseException;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.valuesource.SimpleFloatFunction;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.search.FunctionQParser;
+import org.apache.solr.search.SyntaxError;
 import org.apache.solr.search.ValueSourceParser;
 
 /**
  * A sample ValueSourceParser for testing. Approximates the oracle NVL function,
- * letting you substitude a value when a "null" is encountered. In this case,
+ * letting you substitute a value when a "null" is encountered. In this case,
  * null is approximated by a float value, since ValueSource always returns a
  * float, even if the field is undefined for a document.
  * 
@@ -43,34 +45,34 @@ public class NvlValueSourceParser extends ValueSourceParser {
     private float nvlFloatValue = 0.0f;
 
     @Override
-    public ValueSource parse(FunctionQParser fp) throws ParseException {
-	ValueSource source = fp.parseValueSource();
-	final float nvl = fp.parseFloat();
+    public ValueSource parse(FunctionQParser fp) throws SyntaxError {
+      ValueSource source = fp.parseValueSource();
+      final float nvl = fp.parseFloat();
 
-	return new SimpleFloatFunction(source) {
-	    @Override
+      return new SimpleFloatFunction(source) {
+        @Override
       protected String name() {
-		return "nvl";
-	    }
+          return "nvl";
+        }
 
-	    @Override
-      protected float func(int doc, DocValues vals) {
-		float v = vals.floatVal(doc);
-		if (v == nvlFloatValue) {
-		    return nvl;
-		} else {
-		    return v;
-		}
-	    }
-	};
+        @Override
+        protected float func(int doc, FunctionValues vals) {
+          float v = vals.floatVal(doc);
+          if (v == nvlFloatValue) {
+            return nvl;
+          } else {
+            return v;
+          }
+        }
+      };
     }
 
-    @Override
-    public void init(NamedList args) {
-	/* initialize the value to consider as null */
-	Float nvlFloatValueArg = (Float) args.get("nvlFloatValue");
-	if (nvlFloatValueArg != null) {
-	    this.nvlFloatValue = nvlFloatValueArg;
-	}
+  @Override
+  public void init(NamedList args) {
+    /* initialize the value to consider as null */
+    Float nvlFloatValueArg = (Float) args.get("nvlFloatValue");
+    if (nvlFloatValueArg != null) {
+      this.nvlFloatValue = nvlFloatValueArg;
     }
+  }
 }

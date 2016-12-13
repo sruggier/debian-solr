@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,47 +14,66 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
-import junit.framework.Assert;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.CharacterCodingException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.solr.analysis.KeywordTokenizerFactory;
-import org.apache.solr.analysis.NGramFilterFactory;
+import junit.framework.Assert;
+import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.core.KeywordTokenizerFactory;
+import org.apache.lucene.analysis.ngram.NGramFilterFactory;
+import org.apache.lucene.analysis.util.ResourceLoaderAware;
+import org.apache.lucene.analysis.util.TokenFilterFactory;
+import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.handler.admin.LukeRequestHandler;
 import org.apache.solr.handler.component.FacetComponent;
 import org.apache.solr.response.JSONResponseWriter;
-import org.apache.solr.util.plugin.ResourceLoaderAware;
 import org.apache.solr.util.plugin.SolrCoreAware;
 
-import java.io.File;
-import java.io.InputStream;
-import java.nio.charset.CharacterCodingException;
-import java.util.Arrays;
-import java.util.List;
+import static org.apache.solr.core.SolrResourceLoader.assertAwareCompatibility;
+import static org.hamcrest.core.Is.is;
 
-public class ResourceLoaderTest extends LuceneTestCase 
-{
+public class ResourceLoaderTest extends SolrTestCaseJ4 {
+
   public void testInstanceDir() throws Exception {
-    SolrResourceLoader loader = new SolrResourceLoader(null);
-    String instDir = loader.getInstanceDir();
-    assertTrue(instDir + " is not equal to " + "solr/", instDir.equals("solr/") == true);
-
-    loader = new SolrResourceLoader("solr");
-    instDir = loader.getInstanceDir();
-    assertTrue(instDir + " is not equal to " + "solr/", instDir.equals("solr" + File.separator) == true);
+    try (SolrResourceLoader loader = new SolrResourceLoader()) {
+      assertThat(loader.getInstancePath(), is(Paths.get("solr").toAbsolutePath()));
+    }
   }
 
-  public void testAwareCompatibility() 
-  {
-    SolrResourceLoader loader = new SolrResourceLoader( "." );
+  public void testEscapeInstanceDir() throws Exception {
+
+    Path temp = createTempDir("testEscapeInstanceDir");
+    Files.write(temp.resolve("dummy.txt"), new byte[]{});
+    Path instanceDir = temp.resolve("instance");
+    Files.createDirectories(instanceDir.resolve("conf"));
+    try (SolrResourceLoader loader = new SolrResourceLoader(instanceDir)) {
+      loader.openResource("../../dummy.txt").close();
+      fail();
+    } catch (IOException ioe) {
+      assertTrue(ioe.getMessage().contains("is outside resource loader dir"));
+    }
+
+  }
+
+  public void testAwareCompatibility() throws Exception {
     
-    Class clazz = ResourceLoaderAware.class;
+    Class<?> clazz = ResourceLoaderAware.class;
     // Check ResourceLoaderAware valid objects
-    loader.assertAwareCompatibility( clazz, new NGramFilterFactory() );
-    loader.assertAwareCompatibility( clazz, new KeywordTokenizerFactory() );
+    assertAwareCompatibility(clazz, new NGramFilterFactory(new HashMap<>()));
+    assertAwareCompatibility(clazz, new KeywordTokenizerFactory(new HashMap<>()));
     
     // Make sure it throws an error for invalid objects
     Object[] invalid = new Object[] {
@@ -65,7 +84,7 @@ public class ResourceLoaderTest extends LuceneTestCase
     };
     for( Object obj : invalid ) {
       try {
-        loader.assertAwareCompatibility( clazz, obj );
+        assertAwareCompatibility(clazz, obj);
         Assert.fail( "Should be invalid class: "+obj + " FOR " + clazz );
       }
       catch( SolrException ex ) { } // OK
@@ -74,28 +93,29 @@ public class ResourceLoaderTest extends LuceneTestCase
 
     clazz = SolrCoreAware.class;
     // Check ResourceLoaderAware valid objects
-    loader.assertAwareCompatibility( clazz, new LukeRequestHandler() );
-    loader.assertAwareCompatibility( clazz, new FacetComponent() );
-    loader.assertAwareCompatibility( clazz, new JSONResponseWriter() );
+    assertAwareCompatibility(clazz, new LukeRequestHandler());
+    assertAwareCompatibility(clazz, new FacetComponent());
+    assertAwareCompatibility(clazz, new JSONResponseWriter());
     
     // Make sure it throws an error for invalid objects
     invalid = new Object[] {
-        new NGramFilterFactory(),
+        new NGramFilterFactory(new HashMap<>()),
         "hello",  new Float( 12.3f ),
-        new KeywordTokenizerFactory()
+        new KeywordTokenizerFactory(new HashMap<>())
     };
     for( Object obj : invalid ) {
       try {
-        loader.assertAwareCompatibility( clazz, obj );
+        assertAwareCompatibility(clazz, obj);
         Assert.fail( "Should be invalid class: "+obj + " FOR " + clazz );
       }
       catch( SolrException ex ) { } // OK
     }
+
   }
   
   public void testBOMMarkers() throws Exception {
     final String fileWithBom = "stopwithbom.txt";
-    SolrResourceLoader loader = new SolrResourceLoader(null);
+    SolrResourceLoader loader = new SolrResourceLoader(TEST_PATH().resolve("collection1"));
 
     // preliminary sanity check
     InputStream bomStream = loader.openResource(fileWithBom);
@@ -117,17 +137,84 @@ public class ResourceLoaderTest extends LuceneTestCase
     List<String> lines = loader.getLines(fileWithBom);
     assertEquals(1, lines.size());
     assertEquals("BOMsAreEvil", lines.get(0));
+    
+    loader.close();
   }
   
   public void testWrongEncoding() throws Exception {
     String wrongEncoding = "stopwordsWrongEncoding.txt";
-    SolrResourceLoader loader = new SolrResourceLoader(null);
+    SolrResourceLoader loader = new SolrResourceLoader(TEST_PATH().resolve("collection1"));
     // ensure we get our exception
     try {
-      List<String> lines = loader.getLines(wrongEncoding);
+      loader.getLines(wrongEncoding);
       fail();
     } catch (SolrException expected) {
       assertTrue(expected.getCause() instanceof CharacterCodingException);
     }
+    loader.close();
+  }
+
+  public void testClassLoaderLibs() throws Exception {
+    Path tmpRoot = createTempDir("testClassLoaderLibs");
+
+    Path lib = tmpRoot.resolve("lib");
+    Files.createDirectories(lib);
+
+    try (JarOutputStream os = new JarOutputStream(Files.newOutputStream(lib.resolve("jar1.jar")))) {
+      os.putNextEntry(new JarEntry("aLibFile"));
+      os.closeEntry();
+    }
+
+    Path otherLib = tmpRoot.resolve("otherLib");
+    Files.createDirectories(otherLib);
+
+    try (JarOutputStream os = new JarOutputStream(Files.newOutputStream(otherLib.resolve("jar2.jar")))) {
+      os.putNextEntry(new JarEntry("explicitFile"));
+      os.closeEntry();
+    }
+    try (JarOutputStream os = new JarOutputStream(Files.newOutputStream(otherLib.resolve("jar3.jar")))) {
+      os.putNextEntry(new JarEntry("otherFile"));
+      os.closeEntry();
+    }
+
+    SolrResourceLoader loader = new SolrResourceLoader(tmpRoot);
+
+    // ./lib is accessible by default
+    assertNotNull(loader.getClassLoader().getResource("aLibFile"));
+
+    // add inidividual jars from other paths
+    loader.addToClassLoader(otherLib.resolve("jar2.jar").toUri().toURL());
+
+    assertNotNull(loader.getClassLoader().getResource("explicitFile"));
+    assertNull(loader.getClassLoader().getResource("otherFile"));
+
+    // add all jars from another path
+    loader.addToClassLoader(SolrResourceLoader.getURLs(otherLib));
+    assertNotNull(loader.getClassLoader().getResource("otherFile"));
+    loader.close();
+  }
+  
+  @Deprecated
+  public static final class DeprecatedTokenFilterFactory extends TokenFilterFactory {
+
+    public DeprecatedTokenFilterFactory(Map<String,String> args) {
+      super(args);
+    }
+
+    @Override
+    public TokenStream create(TokenStream input) {
+      return null;
+    }
+    
+  }
+
+  @SuppressWarnings("deprecation")
+  public void testLoadDeprecatedFactory() throws Exception {
+    SolrResourceLoader loader = new SolrResourceLoader(Paths.get("solr/collection1"));
+    // ensure we get our exception
+    loader.newInstance(DeprecatedTokenFilterFactory.class.getName(), TokenFilterFactory.class, null,
+        new Class[] { Map.class }, new Object[] { new HashMap<String,String>() });
+    // TODO: How to check that a warning was printed to log file?
+    loader.close();    
   }
 }

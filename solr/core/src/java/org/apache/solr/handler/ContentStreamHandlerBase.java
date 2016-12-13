@@ -1,5 +1,4 @@
-package org.apache.solr.handler;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,31 +14,42 @@ package org.apache.solr.handler;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.handler;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStream;
+import org.apache.solr.common.util.NamedList;
+import org.apache.solr.handler.loader.ContentStreamLoader;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.update.processor.UpdateRequestProcessor;
 import org.apache.solr.update.processor.UpdateRequestProcessorChain;
-import org.apache.solr.util.SolrPluginUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 
 /**
- * Shares common code between various handlers that manipulate {@link org.apache.solr.common.util.ContentStream} objects.
- *
- **/
+ * Shares common code between various handlers that manipulate 
+ * {@link org.apache.solr.common.util.ContentStream} objects.
+ */
 public abstract class ContentStreamHandlerBase extends RequestHandlerBase {
-  public static Logger log = LoggerFactory.getLogger(XmlUpdateRequestHandler.class);
 
+  @Override
+  public void init(NamedList args) {
+    super.init(args);
+
+    // Caching off by default
+    httpCaching = false;
+    if (args != null) {
+      Object caching = args.get("httpCaching");
+      if(caching!=null) {
+        httpCaching = Boolean.parseBoolean(caching.toString());
+      }
+    }
+  }
+  
   @Override
   public void handleRequestBody(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception {
     SolrParams params = req.getParams();
     UpdateRequestProcessorChain processorChain =
-            req.getCore().getUpdateProcessingChain(SolrPluginUtils.resolveUpdateChainParam(params, log));
+        req.getCore().getUpdateProcessorChain(params);
 
     UpdateRequestProcessor processor = processorChain.createProcessor(req, rsp);
 
@@ -49,18 +59,18 @@ public abstract class ContentStreamHandlerBase extends RequestHandlerBase {
 
       Iterable<ContentStream> streams = req.getContentStreams();
       if (streams == null) {
-        if (!RequestHandlerUtils.handleCommit(processor, params, false) && !RequestHandlerUtils.handleRollback(processor, params, false)) {
+        if (!RequestHandlerUtils.handleCommit(req, processor, params, false) && !RequestHandlerUtils.handleRollback(req, processor, params, false)) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "missing content stream");
         }
       } else {
 
         for (ContentStream stream : streams) {
-          documentLoader.load(req, rsp, stream);
+          documentLoader.load(req, rsp, stream, processor);
         }
 
         // Perhaps commit from the parameters
-        RequestHandlerUtils.handleCommit(processor, params, false);
-        RequestHandlerUtils.handleRollback(processor, params, false);
+        RequestHandlerUtils.handleCommit(req, processor, params, false);
+        RequestHandlerUtils.handleRollback(req, processor, params, false);
       }
     } finally {
       // finish the request

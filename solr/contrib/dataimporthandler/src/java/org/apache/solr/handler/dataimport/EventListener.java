@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -21,7 +21,6 @@ package org.apache.solr.handler.dataimport;
  *
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id$
  * @since solr 1.4
  */
 public interface EventListener {
@@ -31,6 +30,6 @@ public interface EventListener {
    *
    * @param ctx the Context in which this event was called
    */
-  public void onEvent(Context ctx);
+  void onEvent(Context ctx);
 
 }

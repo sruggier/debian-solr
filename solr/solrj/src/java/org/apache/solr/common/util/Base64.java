@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -52,12 +52,16 @@ public class Base64 {
           35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
   };
 
+  public static String byteArrayToBase64(byte[] a) {
+    return byteArrayToBase64(a, 0, a.length);
+  }
+
   public static String byteArrayToBase64(byte[] a, int offset, int len) {
     int aLen = len;
     int numFullGroups = aLen / 3;
     int numBytesInPartialGroup = aLen - 3 * numFullGroups;
     int resultLen = 4 * ((aLen + 2) / 3);
-    StringBuffer result = new StringBuffer(resultLen);
+    StringBuilder result = new StringBuilder(resultLen);
     char[] intToAlpha = intToBase64;
 
     // Translate all full groups from byte array elements to Base64

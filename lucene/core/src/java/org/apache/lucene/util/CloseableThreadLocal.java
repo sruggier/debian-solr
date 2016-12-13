@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
 
 import java.io.Closeable;
 import java.lang.ref.WeakReference;
@@ -55,11 +55,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class CloseableThreadLocal<T> implements Closeable {
 
-  private ThreadLocal<WeakReference<T>> t = new ThreadLocal<WeakReference<T>>();
+  private ThreadLocal<WeakReference<T>> t = new ThreadLocal<>();
 
   // Use a WeakHashMap so that if a Thread exits and is
   // GC'able, its entry may be removed:
-  private Map<Thread,T> hardRefs = new WeakHashMap<Thread,T>();
+  private Map<Thread,T> hardRefs = new WeakHashMap<>();
   
   // Increase this to decrease frequency of purging in get:
   private static int PURGE_MULTIPLIER = 20;
@@ -92,7 +92,7 @@ public class CloseableThreadLocal<T> implements Closeable {
 
   public void set(T object) {
 
-    t.set(new WeakReference<T>(object));
+    t.set(new WeakReference<>(object));
 
     synchronized(hardRefs) {
       hardRefs.put(Thread.currentThread(), object);
@@ -128,6 +128,7 @@ public class CloseableThreadLocal<T> implements Closeable {
     }
   }
 
+  @Override
   public void close() {
     // Clear the hard refs; then, the only remaining refs to
     // all values we were storing are weak (unless somewhere

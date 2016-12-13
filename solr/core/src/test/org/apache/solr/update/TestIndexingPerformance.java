@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,18 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
 
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.document.Fieldable;
+import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.util.AbstractSolrTestCase;
 import org.apache.solr.common.util.StrUtils;
+import org.apache.solr.util.RTimer;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.Arrays;
 
 /** Bypass the normal Solr pipeline and just text indexing performance
@@ -34,17 +37,32 @@ import java.util.Arrays;
  * $ ant test -Dtestcase=TestIndexingPerformance -Dargs="-server -Diter=100000"; grep throughput build/test-results/*TestIndexingPerformance.xml
  */
 public class TestIndexingPerformance extends AbstractSolrTestCase {
+  
+  // TODO: fix this test to not require FSDirectory
+  static String savedFactory;
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    savedFactory = System.getProperty("solr.DirectoryFactory");
+    System.setProperty("solr.directoryFactory", "org.apache.solr.core.MockFSDirectoryFactory");
 
-  @Override
-  public String getSchemaFile() { return "schema12.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solrconfig_perf.xml"; }
+    initCore("solrconfig_perf.xml", "schema12.xml");
+  }
+  @AfterClass
+  public static void afterClass() {
+    if (savedFactory == null) {
+      System.clearProperty("solr.directoryFactory");
+    } else {
+      System.setProperty("solr.directoryFactory", savedFactory);
+    }
+  }
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  
 
   public void testIndexingPerf() throws IOException {
     int iter=1000;
     String iterS = System.getProperty("iter");
     if (iterS != null) iter=Integer.parseInt(iterS);
-    boolean includeDoc = Boolean.parseBoolean(System.getProperty("includeDoc","true")); // include the time to create the document
     boolean overwrite = Boolean.parseBoolean(System.getProperty("overwrite","false"));
     String doc = System.getProperty("doc");
     if (doc != null) {
@@ -53,16 +71,16 @@ public class TestIndexingPerformance extends AbstractSolrTestCase {
 
 
     SolrQueryRequest req = lrf.makeRequest();
-    IndexSchema schema = req.getSchema();
     UpdateHandler updateHandler = req.getCore().getUpdateHandler();
+    String field = "textgap";
 
-    String[] fields = {"text","simple"
-            ,"text","test"
-            ,"text","how now brown cow"
-            ,"text","what's that?"
-            ,"text","radical!"
-            ,"text","what's all this about, anyway?"
-            ,"text","just how fast is this text indexing?"
+    String[] fields = {field,"simple"
+            ,field,"test"
+            ,field,"how now brown cow"
+            ,field,"what's that?"
+            ,field,"radical!"
+            ,field,"what's all this about, anyway?"
+            ,field,"just how fast is this text indexing?"
     };
 
 
@@ -82,36 +100,28 @@ public class TestIndexingPerformance extends AbstractSolrTestCase {
     };
    ***/
 
-    long start = System.currentTimeMillis();
+    final RTimer timer = new RTimer();
 
-    AddUpdateCommand add = new AddUpdateCommand();
-    add.allowDups = !overwrite;
-    add.overwriteCommitted = overwrite;
-    add.overwritePending = overwrite;
-
-    Field idField=null;
+    AddUpdateCommand add = new AddUpdateCommand(req);
+    add.overwrite = overwrite;
 
     for (int i=0; i<iter; i++) {
-      if (includeDoc || add.doc==null) {
-        add.doc = new Document();
-        idField = new Field("id","", Field.Store.YES, Field.Index.NOT_ANALYZED);
-        add.doc.add(idField);
-        for (int j=0; j<fields.length; j+=2) {
-          String field = fields[j];
-          String val = fields[j+1];
-          Fieldable f = schema.getField(field).createField(val, 1.0f);
-          add.doc.add(f);
-        }
+      add.clear();
+      add.solrDoc = new SolrInputDocument();
+      add.solrDoc.addField("id", Integer.toString(i));
+      for (int j=0; j<fields.length; j+=2) {
+        String f = fields[j];
+        String val = fields[j+1];
+        add.solrDoc.addField(f, val);
       }
-      idField.setValue(Integer.toString(i));
       updateHandler.addDoc(add);
     }
-    long end = System.currentTimeMillis();
-    System.out.println("includeDoc="+includeDoc+" doc="+ Arrays.toString(fields));
-    System.out.println("iter="+iter +" time=" + (end-start) + " throughput=" + ((long)iter*1000)/(end-start));
+    log.info("doc="+ Arrays.toString(fields));
+    double elapsed = timer.getTime();
+    log.info("iter="+iter +" time=" + elapsed + " throughput=" + ((long)iter*1000)/elapsed);
 
     //discard all the changes
-    updateHandler.rollback(new RollbackUpdateCommand());
+    updateHandler.rollback(new RollbackUpdateCommand(req));
 
     req.close();
   }

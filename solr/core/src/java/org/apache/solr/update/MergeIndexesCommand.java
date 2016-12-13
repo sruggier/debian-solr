@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,35 +14,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
 
-import org.apache.lucene.index.IndexReader;
+import com.google.common.base.Function;
+import com.google.common.base.Joiner;
+import com.google.common.collect.Iterables;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.solr.request.SolrQueryRequest;
+
+import java.util.List;
 
 /**
  * A merge indexes command encapsulated in an object.
  *
  * @since solr 1.4
- * @version $Id$
+ *
  */
 public class MergeIndexesCommand extends UpdateCommand {
-  public IndexReader[] readers;
+  public List<DirectoryReader> readers;
 
-  public MergeIndexesCommand(IndexReader[] readers) {
-    super("mergeIndexes");
+  public MergeIndexesCommand(List<DirectoryReader> readers, SolrQueryRequest req) {
+    super(req);
     this.readers = readers;
   }
 
   @Override
+  public String name() {
+    return "mergeIndexes";
+  }
+
+  @Override
   public String toString() {
-    StringBuilder sb = new StringBuilder(commandName);
-    sb.append(':');
-    if (readers != null && readers.length > 0) {
-      sb.append(readers[0].directory());
-      for (int i = 1; i < readers.length; i++) {
-        sb.append(",").append(readers[i].directory());
+    StringBuilder sb = new StringBuilder(super.toString());
+    Joiner joiner = Joiner.on(",");
+    Iterable<String> directories = Iterables.transform(readers, new Function<DirectoryReader, String>() {
+      public String apply(DirectoryReader reader) {
+        return reader.directory().toString();
       }
-    }
+    });
+    joiner.skipNulls().join(sb, directories);
+    sb.append('}');
     return sb.toString();
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -25,7 +25,7 @@ import java.util.Map;
 /**
  * Test for FieldReaderDataSource
  *
- * @version $Id$
+ *
  * @see org.apache.solr.handler.dataimport.FieldReaderDataSource
  * @since 1.4
  */
@@ -35,9 +35,11 @@ public class TestFieldReader extends AbstractDataImportHandlerTestCase {
   public void simple() {
     DataImporter di = new DataImporter();
     di.loadAndInit(config);
+    redirectTempProperties(di);
+
     TestDocBuilder.SolrWriterImpl sw = new TestDocBuilder.SolrWriterImpl();
-    DataImporter.RequestParams rp = new DataImporter.RequestParams(createMap("command", "full-import"));
-    List<Map<String, Object>> l = new ArrayList<Map<String, Object>>();
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
+    List<Map<String, Object>> l = new ArrayList<>();
     l.add(createMap("xml", xml));
     MockDataSource.setIterator("select * from a", l.iterator());
     di.runCmd(rp, sw);

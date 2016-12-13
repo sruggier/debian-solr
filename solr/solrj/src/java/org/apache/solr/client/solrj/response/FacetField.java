@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.response;
 
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Date;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.solr.client.solrj.util.ClientUtils;
@@ -28,7 +27,6 @@ import org.apache.solr.client.solrj.util.ClientUtils;
   * A utility class to hold the facet response.  It could use the NamedList container,
   * but for JSTL, it is nice to have something that implements List so it can be iterated
   * 
-  * @version $Id$
   * @since solr 1.3
   */
  public class FacetField implements Serializable
@@ -87,45 +85,19 @@ import org.apache.solr.client.solrj.util.ClientUtils;
    
    private String      _name   = null;
    private List<Count> _values = null;
-   private String _gap = null;
-   private Date _end = null;
    
    public FacetField( final String n )
    {
      _name = n;
    }
    
-   public FacetField(String name, String gap, Date end) {
-     _name = name;
-     _gap = gap;
-     _end = end;
-   }
-   
-   /**
-    * Date Gap Facet parameter
-    * 
-    * @return the value specified for facet.date.gap
-    */
-   public String getGap()   {
-     return _gap;
-   }
-   
-   /**
-    * Date End Facet parameter
-    * 
-    * @return the value specified for facet.date.end
-    */
-   public Date getEnd() {
-     return _end;
-   }
-
    /**
     * Insert at the end of the list
     */
    public void add( String name, long cnt )
    {
      if( _values == null ) {
-       _values = new ArrayList<Count>( 30 );
+       _values = new ArrayList<>( 30 );
      }
      _values.add( new Count( this, name, cnt ) );
    }
@@ -136,7 +108,7 @@ import org.apache.solr.client.solrj.util.ClientUtils;
    public void insert( String name, long cnt )
    {
      if( _values == null ) {
-       _values = new ArrayList<Count>( 30 );
+       _values = new ArrayList<>( 30 );
      }
      _values.add( 0, new Count( this, name, cnt ) );
    }
@@ -146,7 +118,7 @@ import org.apache.solr.client.solrj.util.ClientUtils;
    }
 
    public List<Count> getValues() {
-     return _values;
+     return _values == null ? Collections.<Count>emptyList() : _values;
    }
    
    public int getValueCount()
@@ -158,7 +130,7 @@ import org.apache.solr.client.solrj.util.ClientUtils;
    {
      FacetField ff = new FacetField( _name );
      if( _values != null ) {
-       ff._values = new ArrayList<Count>( _values.size() );
+       ff._values = new ArrayList<>( _values.size() );
        for( Count c : _values ) {
          if( c._count < max ) { // !equal to
            ff._values.add( c );

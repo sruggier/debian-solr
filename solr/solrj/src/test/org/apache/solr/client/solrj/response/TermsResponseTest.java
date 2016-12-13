@@ -1,5 +1,4 @@
-package org.apache.solr.client.solrj.response;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.client.solrj.response;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.client.solrj.response;
 import java.util.List;
 import junit.framework.Assert;
 
@@ -24,7 +23,7 @@ import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.client.solrj.request.QueryRequest;
 import org.apache.solr.client.solrj.response.TermsResponse.Term;
-import org.apache.solr.util.ExternalPaths;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -35,7 +34,16 @@ public class TermsResponseTest extends SolrJettyTestBase {
 
   @BeforeClass
   public static void beforeTest() throws Exception {
-    initCore(ExternalPaths.EXAMPLE_CONFIG, ExternalPaths.EXAMPLE_SCHEMA, ExternalPaths.EXAMPLE_HOME);
+    initCore();
+  }
+  
+  @Before
+  @Override
+  public void setUp() throws Exception{
+    super.setUp();
+    clearIndex();
+    assertU(commit());
+    assertU(optimize());
   }
 
   @Test
@@ -43,11 +51,11 @@ public class TermsResponseTest extends SolrJettyTestBase {
     SolrInputDocument doc = new SolrInputDocument();
     doc.setField("id", 1);
     doc.setField("terms_s", "samsung");
-    getSolrServer().add(doc);
-    getSolrServer().commit(true, true);
+    getSolrClient().add(doc);
+    getSolrClient().commit(true, true);
 
     SolrQuery query = new SolrQuery();
-    query.setQueryType("/terms");
+    query.setRequestHandler("/terms");
     query.setTerms(true);
     query.setTermsLimit(5);
     query.setTermsLower("s");
@@ -56,7 +64,7 @@ public class TermsResponseTest extends SolrJettyTestBase {
     query.setTermsMinCount(1);
     
     QueryRequest request = new QueryRequest(query);
-    List<Term> terms = request.process(getSolrServer()).getTermsResponse().getTerms("terms_s");
+    List<Term> terms = request.process(getSolrClient()).getTermsResponse().getTerms("terms_s");
 
     Assert.assertNotNull(terms);
     Assert.assertEquals(terms.size(), 1);

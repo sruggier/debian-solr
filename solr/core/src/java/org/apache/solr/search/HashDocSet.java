@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,10 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
+import java.util.Collection;
+import java.util.Collections;
+
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.BitUtil;
+import org.apache.lucene.util.RamUsageEstimator;
 
 
 /**
@@ -26,10 +30,12 @@ import org.apache.lucene.util.BitUtil;
  * in the set because it takes up less memory and is faster to iterate and take
  * set intersections.
  *
- * @version $Id$
+ *
  * @since solr 0.9
  */
 public final class HashDocSet extends DocSetBase {
+  private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(HashDocSet.class) + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
+
   /** Default load factor to use for HashDocSets.  We keep track of the inverse
    *  since multiplication is so much faster than division.  The default
    *  is 1.0f / 0.75f
@@ -45,8 +51,13 @@ public final class HashDocSet extends DocSetBase {
   private final static int EMPTY=-1;
   private final int[] table;
   private final int size;
-
   private final int mask;
+
+  public HashDocSet(HashDocSet set) {
+    this.table = set.table.clone();
+    this.size = set.size;
+    this.mask = set.mask;
+  }
 
   /** Create a HashDocSet from a list of *unique* ids */
   public HashDocSet(int[] docs, int offset, int len) {
@@ -90,6 +101,7 @@ public final class HashDocSet extends DocSetBase {
     table[s]=doc;
   }
 
+  @Override
   public boolean exists(int doc) {
     int s = doc & mask;
     for(;;) {
@@ -102,24 +114,29 @@ public final class HashDocSet extends DocSetBase {
   }
 
 
+  @Override
   public int size() {
     return size;
   }
 
+  @Override
   public DocIterator iterator() {
     return new DocIterator() {
       int pos=0;
       int doc;
       { goNext(); }
 
+      @Override
       public boolean hasNext() {
         return pos < table.length;
       }
 
+      @Override
       public Integer next() {
         return nextDoc();
       }
 
+      @Override
       public void remove() {
       }
 
@@ -128,6 +145,7 @@ public final class HashDocSet extends DocSetBase {
       }
 
       // modify to return -1 at end of iteration?
+      @Override
       public int nextDoc() {
         int doc = table[pos];
         pos++;
@@ -135,14 +153,11 @@ public final class HashDocSet extends DocSetBase {
         return doc;
       }
 
+      @Override
       public float score() {
         return 0.0f;
       }
     };
-  }
-
-  public long memSize() {
-    return (table.length<<2) + 20;
   }
 
   @Override
@@ -207,6 +222,31 @@ public final class HashDocSet extends DocSetBase {
 
   }
 
+  @Override
+  public boolean intersects(DocSet other) {
+   if (other instanceof HashDocSet) {
+     // set "a" to the smallest doc set for the most efficient
+     // intersection.
+     final HashDocSet a = size()<=other.size() ? this : (HashDocSet)other;
+     final HashDocSet b = size()<=other.size() ? (HashDocSet)other : this;
+
+     for (int i=0; i<a.table.length; i++) {
+       int id=a.table[i];
+       if (id >= 0 && b.exists(id)) {
+         return true;
+       }
+     }
+     return false;
+   } else {
+     for (int i=0; i<table.length; i++) {
+       int id=table[i];
+       if (id >= 0 && other.exists(id)) {
+         return true;
+       }
+     }
+     return false;
+   }
+  }
 
   @Override
   public DocSet andNot(DocSet other) {
@@ -249,7 +289,22 @@ public final class HashDocSet extends DocSetBase {
    }
   }
 
+  @Override
+  protected HashDocSet clone() {
+    return new HashDocSet(this);
+  }
 
   // don't implement andNotSize() and unionSize() on purpose... they are implemented
   // in BaseDocSet in terms of intersectionSize().
+
+
+  @Override
+  public long ramBytesUsed() {
+    return BASE_RAM_BYTES_USED + (table.length<<2);
+  }
+
+  @Override
+  public Collection<Accountable> getChildResources() {
+    return Collections.emptyList();
+  }
 }

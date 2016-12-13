@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,16 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.util;
 
 import java.io.IOException;
 import java.io.StringWriter;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.solr.common.util.XML;
 
 /** Test (some of the) character escaping functions of the XML class
- *  $Id$
  */
 
 public class TestXMLEscaping extends LuceneTestCase {
@@ -31,7 +28,7 @@ public class TestXMLEscaping extends LuceneTestCase {
     final StringWriter sw = new StringWriter();
     XML.escapeCharData(input, sw);
     final String result = sw.toString();
-    assertEquals("Escaped output matches '" + expectedOutput + "'",result,expectedOutput);
+    assertEquals("Escaped output does not match expected value",expectedOutput,result);
   }
   
   public void testNoEscape() throws IOException {

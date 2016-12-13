@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,21 +14,131 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.solr.common.SolrException;
+import org.apache.solr.common.util.NamedList;
 
 /**
  */
-public class SolrParamTest extends LuceneTestCase 
-{  
+public class SolrParamTest extends LuceneTestCase {  
+
+  public void testParamIterators() {
+
+    ModifiableSolrParams aaa = new ModifiableSolrParams();
+    aaa.add("foo", "a1");
+    aaa.add("foo", "a2");
+
+    assertIterSize("aaa: foo", 1, aaa);
+    assertIterSize("required aaa: foo", 1, aaa.required());
+
+    assertEquals(new String[] { "a1", "a2" }, aaa.getParams("foo"));
+
+    aaa.add("yak", "a3");
+
+    assertIterSize("aaa: foo & yak", 2, aaa);
+    assertIterSize("required aaa: foo & yak", 2, aaa.required());
+
+    assertEquals(new String[] { "a1", "a2" }, aaa.getParams("foo"));
+    assertEquals(new String[] { "a3" }, aaa.getParams("yak"));
+
+    ModifiableSolrParams bbb = new ModifiableSolrParams();
+    bbb.add("foo", "b1");
+    bbb.add("foo", "b2");
+    bbb.add("zot", "b3");
+
+    assertIterSize("bbb: foo & zot", 2, bbb);
+    assertIterSize("required bbb: foo & zot", 2, bbb.required());
+
+    assertEquals(new String[] { "b1", "b2" }, bbb.getParams("foo"));
+    assertEquals(new String[] { "b3" }, bbb.getParams("zot"));
+
+    SolrParams def = SolrParams.wrapDefaults(aaa, bbb);
+
+    assertIterSize("def: aaa + bbb", 3, def);
+    assertIterSize("required def: aaa + bbb", 3, def.required());
+
+    assertEquals(new String[] { "a1", "a2" }, def.getParams("foo"));
+    assertEquals(new String[] { "a3" }, def.getParams("yak"));
+    assertEquals(new String[] { "b3" }, def.getParams("zot"));
+
+    SolrParams append = SolrParams.wrapAppended(aaa, bbb);
+
+    assertIterSize("append: aaa + bbb", 3, append);
+    assertIterSize("required appended: aaa + bbb", 3, append.required());
+
+    assertEquals(new String[] { "a1", "a2", "b1", "b2", }, append.getParams("foo"));
+    assertEquals(new String[] { "a3" }, append.getParams("yak"));
+    assertEquals(new String[] { "b3" }, append.getParams("zot"));
+
+  }
+
+  public void testMultiValues() {
+    NamedList nl = new NamedList();
+    nl.add("x", "X1");
+    nl.add("x", "X2");
+    nl.add("x", new String[]{"X3", "X4"});
+    Map<String, String[]> m = SolrParams.toMultiMap(nl);
+    String[] r = m.get("x");
+    assertTrue(Arrays.asList(r).containsAll(Arrays.asList(new String[]{"X1", "X2", "X3", "X4"})));
+  }
+
+  public void testGetAll() {
+    ModifiableSolrParams params = new ModifiableSolrParams();
+    params.add("x", "X1");
+    params.add("x", "X2");
+    params.add("y", "Y");
+    Map<String, Object> m = params.getAll(null, "x", "y");
+    String[] x = (String[]) m.get("x");
+    assertEquals(2, x.length);
+    assertEquals("X1", x[0]);
+    assertEquals("X2", x[1]);
+    assertEquals("Y", m.get("y"));
+    try {
+      params.required().getAll(null, "z");
+      fail("Error expected");
+    } catch (SolrException e) {
+      assertEquals(e.code(), SolrException.ErrorCode.BAD_REQUEST.code);
+
+    }
+  }
+
+  public void testModParamAddParams() {
+
+    ModifiableSolrParams aaa = new ModifiableSolrParams();
+    aaa.add("foo", "a1");
+    aaa.add("foo", "a2");
+    aaa.add("yak", "a3");
+    
+    ModifiableSolrParams bbb = new ModifiableSolrParams();
+    bbb.add("foo", "b1");
+    bbb.add("foo", "b2");
+    bbb.add("zot", "b3");
+    
+    SolrParams def = SolrParams.wrapDefaults(aaa, bbb);
+    assertEquals(new String[] { "a1", "a2" }, def.getParams("foo"));
+    assertEquals(new String[] { "a3" }, def.getParams("yak"));
+    assertEquals(new String[] { "b3" }, def.getParams("zot"));
+
+    ModifiableSolrParams combined = new ModifiableSolrParams();
+    combined.add(def);
+
+    assertEquals(new String[] { "a1", "a2" }, combined.getParams("foo"));
+    assertEquals(new String[] { "a3" }, combined.getParams("yak"));
+    assertEquals(new String[] { "b3" }, combined.getParams("zot"));
+
+  }
+
   public void testGetParams() {
-    Map<String,String> pmap = new HashMap<String, String>();
+    Map<String,String> pmap = new HashMap<>();
     pmap.put( "str"        , "string"   );
     pmap.put( "bool"       , "true"     );
     pmap.put( "true-0"     , "true"     );
@@ -91,9 +201,9 @@ public class SolrParamTest extends LuceneTestCase
     }
     
     // Malformed params: These should throw a 400
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { params.getInt(   "f.bad.int" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { params.getBool(  "f.bad.bool" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { params.getFloat( "f.bad.float" ); } } ) );
+    assertEquals(400, getReturnCode(() -> params.getInt("f.bad.int")));
+    assertEquals(400, getReturnCode(() -> params.getBool("f.bad.bool")));
+    assertEquals(400, getReturnCode(() -> params.getFloat("f.bad.float")));
     
     // Ask for params that arent there
     assertNull( params.get( "asagdsaga" ) );
@@ -130,15 +240,15 @@ public class SolrParamTest extends LuceneTestCase
     assertEquals( pfloat , required.getFieldFloat( "fakefield", "float" ) );
     
     // Required params which are missing: These should throw a 400
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { required.get( "aaaa" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { required.getInt(   "f.bad.int" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { required.getBool(  "f.bad.bool" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { required.getFloat( "f.bad.float" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { required.getInt(   "aaa" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { required.getBool(  "aaa" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { required.getFloat( "aaa" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { params.getFieldBool(  "bad", "bool" ); } } ) );
-    assertEquals( 400, getReturnCode( new Runnable() { public void run() { params.getFieldInt(   "bad", "int"  ); } } ) );
+    assertEquals(400, getReturnCode(() -> required.get("aaaa")));
+    assertEquals(400, getReturnCode(() -> required.getInt("f.bad.int")));
+    assertEquals(400, getReturnCode(() -> required.getBool("f.bad.bool")));
+    assertEquals(400, getReturnCode(() -> required.getFloat("f.bad.float")));
+    assertEquals(400, getReturnCode(() -> required.getInt("aaa")));
+    assertEquals(400, getReturnCode(() -> required.getBool("aaa")));
+    assertEquals(400, getReturnCode(() -> required.getFloat("aaa")));
+    assertEquals(400, getReturnCode(() -> params.getFieldBool("bad", "bool")));
+    assertEquals(400, getReturnCode(() -> params.getFieldInt("bad", "int")));
 
     // Fields with default use their parent value:
     assertEquals(
@@ -149,7 +259,7 @@ public class SolrParamTest extends LuceneTestCase
         required.getInt( "f.bad.nnnn", pint ) );
     
     // Check default SolrParams
-    Map<String,String> dmap = new HashMap<String, String>();
+    Map<String,String> dmap = new HashMap<>();
     // these are not defined in params
     dmap.put( "dstr"               , "default"   );
     dmap.put( "dint"               , "123"       );
@@ -182,4 +292,18 @@ public class SolrParamTest extends LuceneTestCase
     }
     return 200;
   }
+
+  static <T> List<T> iterToList(Iterator<T> iter) {
+    List<T> result = new ArrayList<>();
+    while (iter.hasNext()) {
+      result.add(iter.next());
+    }
+    return result;
+  }
+
+  static void assertIterSize(String msg, int expectedSize, SolrParams p) {
+    List<String> keys = iterToList(p.getParameterNamesIterator());
+    assertEquals(msg + " " + keys.toString(), expectedSize, keys.size());
+  }
+
 }

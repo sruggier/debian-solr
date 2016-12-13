@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,15 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.extraction;
+
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayDeque;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
 
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.DateUtil;
-import org.apache.solr.schema.DateField;
 import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.schema.SchemaField;
+import org.apache.solr.schema.TrieDateField;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.metadata.TikaMetadataKeys;
 import org.slf4j.Logger;
@@ -31,15 +41,13 @@ import org.xml.sax.Attributes;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
 
-import java.text.DateFormat;
-import java.util.*;
-
 
 /**
  * The class responsible for handling Tika events and translating them into {@link org.apache.solr.common.SolrInputDocument}s.
  * <B>This class is not thread-safe.</B>
- * <p/>
- * <p/>
+ * <p>
+ * This class cannot be reused, you have to create a new instance per document!
+ * <p>
  * User's may wish to override this class to provide their own functionality.
  *
  * @see org.apache.solr.handler.extraction.SolrContentHandlerFactory
@@ -47,33 +55,39 @@ import java.util.*;
  * @see org.apache.solr.handler.extraction.ExtractingDocumentLoader
  */
 public class SolrContentHandler extends DefaultHandler implements ExtractingParams {
-  private transient static Logger log = LoggerFactory.getLogger(SolrContentHandler.class);
-  protected SolrInputDocument document;
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  protected Collection<String> dateFormats = DateUtil.DEFAULT_DATE_FORMATS;
+  public static final String contentFieldName = "content";
 
-  protected Metadata metadata;
-  protected SolrParams params;
-  protected StringBuilder catchAllBuilder = new StringBuilder(2048);
-  protected IndexSchema schema;
-  protected Map<String, StringBuilder> fieldBuilders = Collections.emptyMap();
-  private LinkedList<StringBuilder> bldrStack = new LinkedList<StringBuilder>();
+  protected final SolrInputDocument document;
 
-  protected boolean captureAttribs;
-  protected boolean lowerNames;
-  protected String contentFieldName = "content";
+  protected final Collection<String> dateFormats;
 
-  protected String unknownFieldPrefix = "";
-  protected String defaultField = "";
+  protected final Metadata metadata;
+  protected final SolrParams params;
+  protected final StringBuilder catchAllBuilder = new StringBuilder(2048);
+  protected final IndexSchema schema;
+  protected final Map<String, StringBuilder> fieldBuilders;
+  private final Deque<StringBuilder> bldrStack = new ArrayDeque<>();
 
+  protected final boolean captureAttribs;
+  protected final boolean lowerNames;
+  
+  protected final String unknownFieldPrefix;
+  protected final String defaultField;
+
+  private final boolean literalsOverride;
+  
+  private Set<String> literalFieldNames = null;
+  
   public SolrContentHandler(Metadata metadata, SolrParams params, IndexSchema schema) {
-    this(metadata, params, schema, DateUtil.DEFAULT_DATE_FORMATS);
+    this(metadata, params, schema, ExtractionDateUtil.DEFAULT_DATE_FORMATS);
   }
 
 
   public SolrContentHandler(Metadata metadata, SolrParams params,
                             IndexSchema schema, Collection<String> dateFormats) {
-    document = new SolrInputDocument();
+    this.document = new SolrInputDocument();
     this.metadata = metadata;
     this.params = params;
     this.schema = schema;
@@ -81,14 +95,18 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
 
     this.lowerNames = params.getBool(LOWERNAMES, false);
     this.captureAttribs = params.getBool(CAPTURE_ATTRIBUTES, false);
+    this.literalsOverride = params.getBool(LITERALS_OVERRIDE, true);
     this.unknownFieldPrefix = params.get(UNKNOWN_FIELD_PREFIX, "");
     this.defaultField = params.get(DEFAULT_FIELD, "");
+    
     String[] captureFields = params.getParams(CAPTURE_ELEMENTS);
     if (captureFields != null && captureFields.length > 0) {
-      fieldBuilders = new HashMap<String, StringBuilder>();
+      fieldBuilders = new HashMap<>();
       for (int i = 0; i < captureFields.length; i++) {
         fieldBuilders.put(captureFields[i], new StringBuilder());
       }
+    } else {
+      fieldBuilders = Collections.emptyMap();
     }
     bldrStack.add(catchAllBuilder);
   }
@@ -107,13 +125,11 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
    * @see #addLiterals()
    */
   public SolrInputDocument newDocument() {
-    float boost = 1.0f;
-    //handle the metadata extracted from the document
-    addMetadata();
-
-    //handle the literals from the params
+    //handle the literals from the params. NOTE: This MUST be called before the others in order for literals to override other values
     addLiterals();
 
+    //handle the metadata extracted from the document
+    addMetadata();
 
     //add in the content
     addContent();
@@ -134,8 +150,10 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
   protected void addCapturedContent() {
     for (Map.Entry<String, StringBuilder> entry : fieldBuilders.entrySet()) {
       if (entry.getValue().length() > 0) {
-        addField(entry.getKey(), entry.getValue().toString(), null);
-      }
+        String fieldName = entry.getKey();
+        if (literalsOverride && literalFieldNames.contains(fieldName))
+          continue;
+        addField(fieldName, entry.getValue().toString(), null);      }
     }
   }
 
@@ -144,6 +162,8 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
    * and the {@link #catchAllBuilder}
    */
   protected void addContent() {
+    if (literalsOverride && literalFieldNames.contains(contentFieldName))
+      return;
     addField(contentFieldName, catchAllBuilder.toString(), null);
   }
 
@@ -152,12 +172,14 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
    */
   protected void addLiterals() {
     Iterator<String> paramNames = params.getParameterNamesIterator();
+    literalFieldNames = new HashSet<>();
     while (paramNames.hasNext()) {
       String pname = paramNames.next();
       if (!pname.startsWith(LITERALS_PREFIX)) continue;
 
       String name = pname.substring(LITERALS_PREFIX.length());
       addField(name, null, params.getParams(pname));
+      literalFieldNames.add(name);
     }
   }
 
@@ -166,6 +188,8 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
    */
   protected void addMetadata() {
     for (String name : metadata.names()) {
+      if (literalsOverride && literalFieldNames.contains(name))
+        continue;
       String[] vals = metadata.getValues(name);
       addField(name, null, vals);
     }
@@ -244,19 +268,6 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
     // if (vals==null && fval==null) throw new RuntimeException(name + " has no non-null value ");
   }
 
-
-  @Override
-  public void startDocument() throws SAXException {
-    document.clear();
-    catchAllBuilder.setLength(0);
-    for (StringBuilder builder : fieldBuilders.values()) {
-      builder.setLength(0);
-    }
-    bldrStack.clear();
-    bldrStack.add(catchAllBuilder);
-  }
-
-
   @Override
   public void startElement(String uri, String localName, String qName, Attributes attributes) throws SAXException {
     StringBuilder theBldr = fieldBuilders.get(localName);
@@ -270,7 +281,7 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
       }
     } else {
       for (int i = 0; i < attributes.getLength(); i++) {
-        bldrStack.getLast().append(attributes.getValue(i)).append(' ');
+        bldrStack.getLast().append(' ').append(attributes.getValue(i));
       }
     }
     bldrStack.getLast().append(' ');
@@ -293,11 +304,18 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
     bldrStack.getLast().append(chars, offset, length);
   }
 
+  /**
+   * Treat the same as any other characters
+   */
+  @Override
+  public void ignorableWhitespace(char[] chars, int offset, int length) throws SAXException {
+    characters(chars, offset, length);
+  }
 
   /**
    * Can be used to transform input values based on their {@link org.apache.solr.schema.SchemaField}
-   * <p/>
-   * This implementation only formats dates using the {@link org.apache.solr.common.util.DateUtil}.
+   * <p>
+   * This implementation only formats dates using the {@link ExtractionDateUtil}.
    *
    * @param val    The value to transform
    * @param schFld The {@link org.apache.solr.schema.SchemaField}
@@ -305,13 +323,11 @@ public class SolrContentHandler extends DefaultHandler implements ExtractingPara
    */
   protected String transformValue(String val, SchemaField schFld) {
     String result = val;
-    if (schFld != null && schFld.getType() instanceof DateField) {
+    if (schFld != null && schFld.getType() instanceof TrieDateField) {
       //try to transform the date
       try {
-        Date date = DateUtil.parseDate(val, dateFormats);
-        DateFormat df = DateUtil.getThreadLocalDateFormat();
-        result = df.format(date);
-
+        Date date = ExtractionDateUtil.parseDate(val, dateFormats); // may throw
+        result = date.toInstant().toString();//ISO format
       } catch (Exception e) {
         // Let the specific fieldType handle errors
         // throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Invalid value: " + val + " for field: " + schFld, e);

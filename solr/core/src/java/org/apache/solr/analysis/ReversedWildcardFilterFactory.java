@@ -1,5 +1,4 @@
-package org.apache.solr.analysis;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,11 +14,12 @@ package org.apache.solr.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.analysis;
 import java.util.Map;
 
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.reverse.ReverseStringFilter;
+import org.apache.lucene.analysis.util.TokenFilterFactory;
 
 /**
  * Factory for {@link ReversedWildcardFilter}-s. When this factory is
@@ -59,9 +59,9 @@ import org.apache.lucene.analysis.reverse.ReverseStringFilter;
  *     &lt;tokenizer class="solr.WhitespaceTokenizerFactory"/&gt;
  *   &lt;/analyzer&gt;
  * &lt;/fieldType&gt;</pre>
- * @version $Id$
+ *
  */
-public class ReversedWildcardFilterFactory extends BaseTokenFilterFactory {
+public class ReversedWildcardFilterFactory extends TokenFilterFactory {
   
   private char markerChar = ReverseStringFilter.START_OF_HEADING_MARKER;
   private boolean withOriginal;
@@ -70,17 +70,21 @@ public class ReversedWildcardFilterFactory extends BaseTokenFilterFactory {
   private int minTrailing;
   private float maxFractionAsterisk;
 
-  @Override
-  public void init(Map<String, String> args) {
-    super.init(args);
-    withOriginal = getBoolean("withOriginal", true);
-    maxPosAsterisk = getInt("maxPosAsterisk", 2);
-    maxPosQuestion = getInt("maxPosQuestion", 1);
-    minTrailing = getInt("minTrailing", 2);
-    maxFractionAsterisk = getFloat("maxFractionAsterisk", 0.0f);
+  /** Creates a new ReversedWildcardFilterFactory */
+  public ReversedWildcardFilterFactory(Map<String,String> args) {
+    super(args);
+    withOriginal = getBoolean(args, "withOriginal", true);
+    maxPosAsterisk = getInt(args, "maxPosAsterisk", 2);
+    maxPosQuestion = getInt(args, "maxPosQuestion", 1);
+    minTrailing = getInt(args, "minTrailing", 2);
+    maxFractionAsterisk = getFloat(args, "maxFractionAsterisk", 0.0f);
+    if (!args.isEmpty()) {
+      throw new IllegalArgumentException("Unknown parameters: " + args);
+    }
   }
 
 
+  @Override
   public TokenStream create(TokenStream input) {
     return new ReversedWildcardFilter(input, withOriginal, markerChar);
   }
@@ -130,14 +134,5 @@ public class ReversedWildcardFilterFactory extends BaseTokenFilterFactory {
   
   public char getMarkerChar() {
     return markerChar;
-  }
-  
-  protected float getFloat(String name, float defValue) {
-    String val = args.get(name);
-    if (val == null) {
-      return defValue;
-    } else {
-      return Float.parseFloat(val);
-    }
   }
 }

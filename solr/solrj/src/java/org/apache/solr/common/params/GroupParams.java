@@ -1,6 +1,4 @@
-package org.apache.solr.common.params;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,16 +14,17 @@ package org.apache.solr.common.params;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.common.params;
 
 /**
- * Group parameters.
+ * Group parameters
  */
 public interface GroupParams {
-
   public static final String GROUP = "group";
 
   public static final String GROUP_QUERY = GROUP + ".query";
   public static final String GROUP_FIELD = GROUP + ".field";
+  public static final String GROUP_FUNC = GROUP + ".func";
   public static final String GROUP_SORT = GROUP + ".sort";
 
   /** the limit for the number of documents in each group */
@@ -55,6 +54,9 @@ public interface GroupParams {
   /** Whether the group count should be included in the response. */
   public static final String GROUP_TOTAL_COUNT = GROUP + ".ngroups";
 
+  /** Whether to compute grouped facets based on the first specified group. */
+  public static final String GROUP_FACET = GROUP + ".facet";
+
   /** Retrieve the top search groups (top group values) from the shards being queried.  */
   public static final String GROUP_DISTRIBUTED_FIRST = GROUP + ".distributed.first";
 
@@ -64,5 +66,5 @@ public interface GroupParams {
   public static final String GROUP_DISTRIBUTED_SECOND = GROUP + ".distributed.second";
 
   public static final String GROUP_DISTRIBUTED_TOPGROUPS_PREFIX = GROUP + ".topgroups.";
-
 }
+

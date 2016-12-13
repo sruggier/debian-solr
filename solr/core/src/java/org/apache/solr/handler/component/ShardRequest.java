@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -38,21 +38,26 @@ public class ShardRequest {
   public final static int PURPOSE_GET_STATS       =0x200;
   public final static int PURPOSE_GET_TERMS       =0x400;
   public final static int PURPOSE_GET_TOP_GROUPS  =0x800;
+  public final static int PURPOSE_GET_MLT_RESULTS =0x1000;
+  public final static int PURPOSE_REFINE_PIVOT_FACETS =0x2000;
+  public final static int PURPOSE_SET_TERM_STATS  =0x4000;
+  public final static int PURPOSE_GET_TERM_STATS  = 0x8000;
 
   public int purpose;  // the purpose of this request
 
   public String[] shards;  // the shards this request should be sent to, null for all
-// TODO: how to request a specific shard address?
-
 
   public ModifiableSolrParams params;
 
 
   /** list of responses... filled out by framework */
-  public List<ShardResponse> responses = new ArrayList<ShardResponse>();
+  public List<ShardResponse> responses = new ArrayList<>();
 
   /** actual shards to send the request to, filled out by framework */
   public String[] actualShards;
+
+  /** may be null */
+  public String nodeName;
 
   // TODO: one could store a list of numbers to correlate where returned docs
   // go in the top-level response rather than looking up by id...

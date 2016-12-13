@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common;
 
 import java.util.ArrayList;
@@ -55,7 +54,7 @@ public class SolrDocumentTest extends LuceneTestCase
     assertNull( doc.getFieldValue( "xxxxx" ) );
     assertNull( doc.getFieldValues( "xxxxx" ) );
     
-    List<String> keys = new ArrayList<String>();
+    List<String> keys = new ArrayList<>();
     for( String s : doc.getFieldNames() ) {
       keys.add( s );
     }
@@ -105,7 +104,7 @@ public class SolrDocumentTest extends LuceneTestCase
   
   public void testAddCollections()
   {
-    final List<String> c0 = new ArrayList<String>();
+    final List<String> c0 = new ArrayList<>();
     c0.add( "aaa" );
     c0.add( "aaa" );
     c0.add( "aaa" );
@@ -131,6 +130,7 @@ public class SolrDocumentTest extends LuceneTestCase
     assertEquals( 0, doc.getFieldNames().size() );
     
     Iterable iter = new Iterable() {
+      @Override
       public Iterator iterator() {
         return c0.iterator();
       }
@@ -158,6 +158,28 @@ public class SolrDocumentTest extends LuceneTestCase
     assertFalse( doc.getFieldValuesMap().containsKey( "g" ) );
     assertFalse( doc.getFieldValueMap().keySet().contains( "g" ) );
     assertFalse( doc.getFieldValuesMap().keySet().contains( "g" ) );
+
+    // A read-only list shouldn't break addField("v", ...).
+    List<String> ro = Collections.unmodifiableList(c0);
+    doc = new SolrDocument();
+    doc.addField( "v", ro );
+
+    // This should NOT throw an UnsupportedOperationException.
+    doc.addField( "v", "asdf" );
+
+    // set field using a collection is documented to be backed by 
+    // that collection, so changes should affect it.
+    Collection<String> tmp = new ArrayList<>(3);
+    tmp.add("one");
+    doc.setField( "collection_backed", tmp );
+    assertEquals("collection not the same", 
+                 tmp, doc.getFieldValues( "collection_backed" ));
+    tmp.add("two");
+    assertEquals("wrong size", 
+                 2, doc.getFieldValues( "collection_backed" ).size());
+    assertEquals("collection not the same", 
+                 tmp, doc.getFieldValues( "collection_backed" ));
+    
   }
    
   public void testDuplicate() 

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,32 +14,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.util;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.StringReader;
+import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
-
 
 /**
  * Three concrete implementations for ContentStream - one for File/URL/String
  * 
- * @version $Id$
+ *
  * @since solr 1.2
  */
 public abstract class ContentStreamBase implements ContentStream
 {
-  public static final String DEFAULT_CHARSET = "utf-8";
+  public static final String DEFAULT_CHARSET = StandardCharsets.UTF_8.name();
   
   protected String name;
   protected String sourceInfo;
@@ -52,7 +51,7 @@ public abstract class ContentStreamBase implements ContentStream
   public static String getCharsetFromContentType( String contentType )
   {
     if( contentType != null ) {
-      int idx = contentType.toLowerCase(Locale.ENGLISH).indexOf( "charset=" );
+      int idx = contentType.toLowerCase(Locale.ROOT).indexOf( "charset=" );
       if( idx > 0 ) {
         return contentType.substring( idx + "charset=".length() ).trim();
       }
@@ -73,11 +72,12 @@ public abstract class ContentStreamBase implements ContentStream
   {
     private final URL url;
     
-    public URLStream( URL url ) throws IOException {
+    public URLStream( URL url ) {
       this.url = url; 
       sourceInfo = "url";
     }
 
+    @Override
     public InputStream getStream() throws IOException {
       URLConnection conn = this.url.openConnection();
       
@@ -95,7 +95,7 @@ public abstract class ContentStreamBase implements ContentStream
   {
     private final File file;
     
-    public FileStream( File f ) throws IOException {
+    public FileStream( File f ) {
       file = f; 
       
       contentType = null; // ??
@@ -104,40 +104,85 @@ public abstract class ContentStreamBase implements ContentStream
       sourceInfo = file.toURI().toString();
     }
 
-    public InputStream getStream() throws IOException {
-      return new FileInputStream( file );
+    @Override
+    public String getContentType() {
+      if(contentType==null) {
+        // TODO: this is buggy... does not allow for whitespace, JSON comments, etc.
+        InputStream stream = null;
+        try {
+          stream = new FileInputStream(file);
+          char first = (char)stream.read();
+          if(first == '<') {
+            return "application/xml";
+          }
+          if(first == '{') {
+            return "application/json";
+          }
+        } catch(Exception ex) {
+        } finally {
+          if (stream != null) try {
+            stream.close();
+          } catch (IOException ioe) {}
+        }
+      }
+      return contentType;
     }
 
-    /**
-     * If an charset is defined (by the contentType) use that, otherwise 
-     * use a file reader
-     */
     @Override
-    public Reader getReader() throws IOException {
-      String charset = getCharsetFromContentType( contentType );
-      return charset == null 
-        ? new FileReader( file )
-        : new InputStreamReader( getStream(), charset );
+    public InputStream getStream() throws IOException {
+      return new FileInputStream( file );
     }
   }
   
 
   /**
-   * Construct a <code>ContentStream</code> from a <code>File</code>
+   * Construct a <code>ContentStream</code> from a <code>String</code>
    */
   public static class StringStream extends ContentStreamBase
   {
     private final String str;
-    
+
     public StringStream( String str ) {
-      this.str = str; 
-      
-      contentType = null;
+      this(str, detect(str));
+    }
+
+    public StringStream( String str, String contentType ) {
+      this.str = str;
+      this.contentType = contentType;
       name = null;
-      size = new Long( str.length() );
+      try {
+        size = new Long( str.getBytes(DEFAULT_CHARSET).length );
+      } catch (UnsupportedEncodingException e) {
+        // won't happen
+        throw new RuntimeException(e);
+      }
       sourceInfo = "string";
     }
 
+    public static String detect(String str) {
+      String detectedContentType = null;
+      int lim = str.length() - 1;
+      for (int i=0; i<lim; i++) {
+        char ch = str.charAt(i);
+        if (Character.isWhitespace(ch)) {
+          continue;
+        }
+        // first non-whitespace chars
+        if (ch == '#'                         // single line comment
+            || (ch == '/' && (str.charAt(i + 1) == '/' || str.charAt(i + 1) == '*'))  // single line or multi-line comment
+            || (ch == '{' || ch == '[')       // start of JSON object
+            )
+        {
+          detectedContentType = "application/json";
+        } else if (ch == '<') {
+          detectedContentType = "text/xml";
+        }
+        break;
+      }
+      return detectedContentType;
+    }
+
+    @Override
     public InputStream getStream() throws IOException {
       return new ByteArrayInputStream( str.getBytes(DEFAULT_CHARSET) );
     }
@@ -159,6 +204,7 @@ public abstract class ContentStreamBase implements ContentStream
    * Base reader implementation.  If the contentType declares a 
    * charset use it, otherwise use "utf-8".
    */
+  @Override
   public Reader getReader() throws IOException {
     String charset = getCharsetFromContentType( getContentType() );
     return charset == null 
@@ -170,6 +216,7 @@ public abstract class ContentStreamBase implements ContentStream
   // Getters / Setters for overrideable attributes
   //------------------------------------------------------------------
 
+  @Override
   public String getContentType() {
     return contentType;
   }
@@ -178,6 +225,7 @@ public abstract class ContentStreamBase implements ContentStream
     this.contentType = contentType;
   }
 
+  @Override
   public String getName() {
     return name;
   }
@@ -186,6 +234,7 @@ public abstract class ContentStreamBase implements ContentStream
     this.name = name;
   }
 
+  @Override
   public Long getSize() {
     return size;
   }
@@ -194,6 +243,7 @@ public abstract class ContentStreamBase implements ContentStream
     this.size = size;
   }
 
+  @Override
   public String getSourceInfo() {
     return sourceInfo;
   }
@@ -201,4 +251,27 @@ public abstract class ContentStreamBase implements ContentStream
   public void setSourceInfo(String sourceInfo) {
     this.sourceInfo = sourceInfo;
   }
+  
+  /**
+   * Construct a <code>ContentStream</code> from a <code>File</code>
+   */
+  public static class ByteArrayStream extends ContentStreamBase
+  {
+    private final byte[] bytes;
+    
+    public ByteArrayStream( byte[] bytes, String source ) {
+      this.bytes = bytes; 
+      
+      this.contentType = null;
+      name = source;
+      size = new Long(bytes.length);
+      sourceInfo = source;
+    }
+
+
+    @Override
+    public InputStream getStream() throws IOException {
+      return new ByteArrayInputStream( bytes );
+    }
+  }  
 }

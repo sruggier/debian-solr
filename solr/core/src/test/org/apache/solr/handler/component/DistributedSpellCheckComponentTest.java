@@ -1,6 +1,4 @@
-package org.apache.solr.handler.component;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,50 +14,49 @@ package org.apache.solr.handler.component;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.component;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import junit.framework.Assert;
-import junit.framework.TestCase;
 
+import org.apache.lucene.util.LuceneTestCase.Slow;
+import org.apache.lucene.util.LuceneTestCase.SuppressTempFileChecks;
 import org.apache.solr.BaseDistributedSearchTestCase;
-import org.apache.solr.client.solrj.SolrServer;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SpellingParams;
 import org.apache.solr.common.util.NamedList;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 /**
  * Test for SpellCheckComponent's distributed querying
  *
  * @since solr 1.5
- * @version $Id$
+ *
  * @see org.apache.solr.handler.component.SpellCheckComponent
  */
+@Slow
+@SuppressTempFileChecks(bugUrl = "https://issues.apache.org/jira/browse/SOLR-1877 Spellcheck IndexReader leak bug?")
 public class DistributedSpellCheckComponentTest extends BaseDistributedSearchTestCase {
   
-	public DistributedSpellCheckComponentTest()
-	{
-		//fixShardCount=true;
-		//shardCount=2;
-	}
-	
-  private String saveProp;
-  @Override
-  public void setUp() throws Exception {
-    // this test requires FSDir
-    saveProp = System.getProperty("solr.directoryFactory");
-    System.setProperty("solr.directoryFactory", "solr.StandardDirectoryFactory");
-    super.setUp();
+  public DistributedSpellCheckComponentTest()
+  {
+    //Helpful for debugging
+    //fixShardCount=true;
+    //shardCount=2;
+    //stress=0;
   }
-  
-  @Override
-  public void tearDown() throws Exception {
-    super.tearDown();
-    if (saveProp == null)
-      System.clearProperty("solr.directoryFactory");
-    else
-      System.setProperty("solr.directoryFactory", saveProp);
+
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    useFactory(null); // need an FS factory
   }
-  
+
   private void q(Object... q) throws Exception {
     final ModifiableSolrParams params = new ModifiableSolrParams();
 
@@ -72,24 +69,26 @@ public class DistributedSpellCheckComponentTest extends BaseDistributedSearchTes
     // query a random server
     params.set("shards", shards);
     int which = r.nextInt(clients.size());
-    SolrServer client = clients.get(which);
+    SolrClient client = clients.get(which);
     client.query(params);
   }
   
   @Override
   public void validateControlData(QueryResponse control) throws Exception
   {    
-    NamedList nl = control.getResponse();
-    NamedList sc = (NamedList) nl.get("spellcheck");
-    NamedList sug = (NamedList) sc.get("suggestions");
+    NamedList<Object> nl = control.getResponse();
+    @SuppressWarnings("unchecked")
+    NamedList<Object> sc = (NamedList<Object>) nl.get("spellcheck");
+    @SuppressWarnings("unchecked")
+    NamedList<Object> sug = (NamedList<Object>) sc.get("suggestions");
     if(sug.size()==0) {
       Assert.fail("Control data did not return any suggestions.");
     }
   }
-  
-  @Override
-  public void doTest() throws Exception {
-  	del("*:*");
+
+  @Test
+  public void test() throws Exception {
+    del("*:*");
     index(id, "1", "lowerfilt", "toyota");
     index(id, "2", "lowerfilt", "chevrolet");
     index(id, "3", "lowerfilt", "suzuki");
@@ -113,23 +112,117 @@ public class DistributedSpellCheckComponentTest extends BaseDistributedSearchTes
     index(id, "22", "lowerfilt", "The quote red fox jumped over the lazy brown dogs.");
     index(id, "23", "lowerfilt", "The quote red fox jumped over the lazy brown dogs.");
     index(id, "24", "lowerfilt", "The quote red fox jumped over the lazy brown dogs.");
+    index(id, "25", "lowerfilt", "The quicker red fox jumped over the lazy brown dogs.");
+    index(id, "26", "lowerfilt", "rod fix");
     commit();
 
     handle.clear();
-    handle.put("QTime", SKIPVAL);
     handle.put("timestamp", SKIPVAL);
     handle.put("maxScore", SKIPVAL);
     // we care only about the spellcheck results
     handle.put("response", SKIP);
-    q("q", "*:*", "spellcheck", "true", SpellingParams.SPELLCHECK_BUILD, "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH");
+    handle.put("grouped", SKIP);
     
-    query("q", "*:*", "fl", "id,lowerfilt", "spellcheck.q","toyata", "spellcheck", "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH");
-    query("q", "*:*", "fl", "id,lowerfilt", "spellcheck.q","toyata", "spellcheck", "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH", SpellingParams.SPELLCHECK_EXTENDED_RESULTS, "true");
-    query("q", "*:*", "fl", "id,lowerfilt", "spellcheck.q","bluo", "spellcheck", "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH", SpellingParams.SPELLCHECK_EXTENDED_RESULTS, "true", SpellingParams.SPELLCHECK_COUNT, "4");
-    query("q", "The quick reb fox jumped over the lazy brown dogs", "fl", "id,lowerfilt", "spellcheck", "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH", SpellingParams.SPELLCHECK_EXTENDED_RESULTS, "true", SpellingParams.SPELLCHECK_COUNT, "4", SpellingParams.SPELLCHECK_COLLATE, "true");
-
-    query("q", "lowerfilt:(+quock +reb)", "fl", "id,lowerfilt", "spellcheck", "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH", SpellingParams.SPELLCHECK_EXTENDED_RESULTS, "true", SpellingParams.SPELLCHECK_COUNT, "10", SpellingParams.SPELLCHECK_COLLATE, "true", SpellingParams.SPELLCHECK_MAX_COLLATION_TRIES, "10", SpellingParams.SPELLCHECK_MAX_COLLATIONS, "10", SpellingParams.SPELLCHECK_COLLATE_EXTENDED_RESULTS, "true");
-    query("q", "lowerfilt:(+quock +reb)", "fl", "id,lowerfilt", "spellcheck", "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH", SpellingParams.SPELLCHECK_EXTENDED_RESULTS, "true", SpellingParams.SPELLCHECK_COUNT, "10", SpellingParams.SPELLCHECK_COLLATE, "true", SpellingParams.SPELLCHECK_MAX_COLLATION_TRIES, "10", SpellingParams.SPELLCHECK_MAX_COLLATIONS, "10", SpellingParams.SPELLCHECK_COLLATE_EXTENDED_RESULTS, "false");
-    query("q", "lowerfilt:(+quock +reb)", "fl", "id,lowerfilt", "spellcheck", "true", "qt", "spellCheckCompRH", "shards.qt", "spellCheckCompRH", SpellingParams.SPELLCHECK_EXTENDED_RESULTS, "true", SpellingParams.SPELLCHECK_COUNT, "10", SpellingParams.SPELLCHECK_COLLATE, "true", SpellingParams.SPELLCHECK_MAX_COLLATION_TRIES, "0", SpellingParams.SPELLCHECK_MAX_COLLATIONS, "1", SpellingParams.SPELLCHECK_COLLATE_EXTENDED_RESULTS, "false");
+    //Randomly select either IndexBasedSpellChecker or DirectSolrSpellChecker
+    String requestHandlerName = "spellCheckCompRH_Direct";
+    String reqHandlerWithWordbreak = "spellCheckWithWordbreak_Direct";
+    if(random().nextBoolean()) {
+      requestHandlerName = "spellCheckCompRH";
+      reqHandlerWithWordbreak = "spellCheckWithWordbreak";   
+    } 
+    
+    //Shortcut names
+    String build = SpellingParams.SPELLCHECK_BUILD;
+    String extended = SpellingParams.SPELLCHECK_EXTENDED_RESULTS;
+    String count = SpellingParams.SPELLCHECK_COUNT;
+    String collate = SpellingParams.SPELLCHECK_COLLATE;
+    String collateExtended = SpellingParams.SPELLCHECK_COLLATE_EXTENDED_RESULTS;
+    String maxCollationTries = SpellingParams.SPELLCHECK_MAX_COLLATION_TRIES;
+    String maxCollations = SpellingParams.SPELLCHECK_MAX_COLLATIONS;
+    String altTermCount = SpellingParams.SPELLCHECK_ALTERNATIVE_TERM_COUNT;
+    String maxResults = SpellingParams.SPELLCHECK_MAX_RESULTS_FOR_SUGGEST;
+     
+    //Build the dictionary for IndexBasedSpellChecker
+    q(buildRequest("*:*", false, "spellCheckCompRH", false, build, "true"));
+    
+    //Test Basic Functionality
+    query(buildRequest("toyata", true, requestHandlerName, random().nextBoolean(), (String[]) null));
+    query(buildRequest("toyata", true, requestHandlerName, random().nextBoolean(), extended, "true"));
+    query(buildRequest("bluo", true, requestHandlerName, random().nextBoolean(), extended, "true", count, "4"));
+    
+    //Test Collate functionality
+    query(buildRequest("The quick reb fox jumped over the lazy brown dogs", 
+        false, requestHandlerName, random().nextBoolean(), extended, "true", count, "4", collate, "true"));    
+    query(buildRequest("lowerfilt:(+quock +reb)", 
+        false, requestHandlerName, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "10", maxCollations, "10", collateExtended, "true"));
+    query(buildRequest("lowerfilt:(+quock +reb)", 
+        false, requestHandlerName, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "10", maxCollations, "10", collateExtended, "false"));
+    query(buildRequest("lowerfilt:(+quock +reb)", 
+        false, requestHandlerName, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "0", maxCollations, "1", collateExtended, "false"));
+    
+    //Test context-sensitive collate
+    query(buildRequest("lowerfilt:(\"quick red fox\")", 
+        false, requestHandlerName, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "10", maxCollations, "1", collateExtended, "false",
+        altTermCount, "5", maxResults, "10"));
+    query(buildRequest("lowerfilt:(\"rod fix\")", 
+        false, requestHandlerName, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "10", maxCollations, "1", collateExtended, "false",
+        altTermCount, "5", maxResults, "10"));
+    query(buildRequest("lowerfilt:(\"rod fix\")", 
+        false, requestHandlerName, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "10", maxCollations, "1", collateExtended, "false",
+        altTermCount, "5", maxResults, ".10", "fq", "id:[13 TO 22]"));
+    
+    //Test word-break spellchecker
+    query(buildRequest("lowerfilt:(+quock +redfox +jum +ped)", 
+        false, reqHandlerWithWordbreak, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "0", maxCollations, "1", collateExtended, "true"));
+    query(buildRequest("lowerfilt:(+rodfix)", 
+        false, reqHandlerWithWordbreak, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "0", maxCollations, "1", collateExtended, "true"));
+    query(buildRequest("lowerfilt:(+son +ata)", 
+        false, reqHandlerWithWordbreak, random().nextBoolean(), extended, "true", count, "10", 
+        collate, "true", maxCollationTries, "0", maxCollations, "1", collateExtended, "true"));
   }
+  private Object[] buildRequest(String q, boolean useSpellcheckQ, String handlerName, boolean useGrouping, String... addlParams) {
+    List<Object> params = new ArrayList<>();
+    
+    params.add("q");
+    params.add(useSpellcheckQ ? "*:*" : q);
+    
+    if(useSpellcheckQ) {
+      params.add("spellcheck.q");
+      params.add(q);
+    }
+    
+    params.add("fl");
+    params.add("id,lowerfilt");
+    
+    params.add("qt");
+    params.add(handlerName);
+    
+    params.add("shards.qt");
+    params.add(handlerName);
+    
+    params.add("spellcheck");
+    params.add("true");
+    
+    if(useGrouping) {
+      params.add("group");
+      params.add("true");
+      
+      params.add("group.field");
+      params.add("id");
+    }
+    
+    if(addlParams!=null) {
+      params.addAll(Arrays.asList(addlParams));
+    }
+    return params.toArray(new Object[params.size()]);    
+  }
+  
 }

@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,45 +14,49 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.IOException;
-import java.util.Arrays;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.codecs.compressing.CompressingStoredFieldsWriter;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexNotFoundException;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.TestIndexWriterReader;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
-public class TestFileSwitchDirectory extends LuceneTestCase {
+public class TestFileSwitchDirectory extends BaseDirectoryTestCase {
+
   /**
    * Test if writing doc stores to disk and everything else to ram works.
-   * @throws IOException
    */
   public void testBasic() throws IOException {
-    Set<String> fileExtensions = new HashSet<String>();
-    fileExtensions.add(IndexFileNames.FIELDS_EXTENSION);
-    fileExtensions.add(IndexFileNames.FIELDS_INDEX_EXTENSION);
+    Set<String> fileExtensions = new HashSet<>();
+    fileExtensions.add(CompressingStoredFieldsWriter.FIELDS_EXTENSION);
+    fileExtensions.add(CompressingStoredFieldsWriter.FIELDS_INDEX_EXTENSION);
     
-    MockDirectoryWrapper primaryDir = new MockDirectoryWrapper(random, new RAMDirectory());
+    MockDirectoryWrapper primaryDir = new MockDirectoryWrapper(random(), new RAMDirectory());
     primaryDir.setCheckIndexOnClose(false); // only part of an index
-    MockDirectoryWrapper secondaryDir = new MockDirectoryWrapper(random, new RAMDirectory());
+    MockDirectoryWrapper secondaryDir = new MockDirectoryWrapper(random(), new RAMDirectory());
     secondaryDir.setCheckIndexOnClose(false); // only part of an index
     
     FileSwitchDirectory fsd = new FileSwitchDirectory(fileExtensions, primaryDir, secondaryDir, true);
+    // for now we wire the default codec because we rely upon its specific impl
     IndexWriter writer = new IndexWriter(
         fsd,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).
-            setMergePolicy(newLogMergePolicy(false))
+        new IndexWriterConfig(new MockAnalyzer(random())).
+            setMergePolicy(newLogMergePolicy(false)).setCodec(TestUtil.getDefaultCodec()).setUseCompoundFile(false)
     );
     TestIndexWriterReader.createIndexNoClose(true, "ram", writer);
-    IndexReader reader = IndexReader.open(writer, true);
+    IndexReader reader = DirectoryReader.open(writer);
     assertEquals(100, reader.maxDoc());
     writer.commit();
     // we should see only fdx,fdt files here
@@ -82,34 +84,50 @@ public class TestFileSwitchDirectory extends LuceneTestCase {
   }
   
   private Directory newFSSwitchDirectory(Set<String> primaryExtensions) throws IOException {
-    Directory a = new SimpleFSDirectory(_TestUtil.getTempDir("foo"));
-    Directory b = new SimpleFSDirectory(_TestUtil.getTempDir("bar"));
-    FileSwitchDirectory switchDir = new FileSwitchDirectory(primaryExtensions, a, b, true);
-    return new MockDirectoryWrapper(random, switchDir);
+    Path primDir = createTempDir("foo");
+    Path secondDir = createTempDir("bar");
+    return newFSSwitchDirectory(primDir, secondDir, primaryExtensions);
+  }
+
+  private Directory newFSSwitchDirectory(Path aDir, Path bDir, Set<String> primaryExtensions) throws IOException {
+    Directory a = new SimpleFSDirectory(aDir);
+    Directory b = new SimpleFSDirectory(bDir);
+    return new FileSwitchDirectory(primaryExtensions, a, b, true);
   }
   
   // LUCENE-3380 -- make sure we get exception if the directory really does not exist.
   public void testNoDir() throws Throwable {
-    Directory dir = newFSSwitchDirectory(Collections.<String>emptySet());
-    try {
-      IndexReader.open(dir, true);
-      fail("did not hit expected exception");
-    } catch (NoSuchDirectoryException nsde) {
-      // expected
-    }
+    Path primDir = createTempDir("foo");
+    Path secondDir = createTempDir("bar");
+    Directory dir = newFSSwitchDirectory(primDir, secondDir, Collections.<String>emptySet());
+    expectThrows(IndexNotFoundException.class, () -> {
+      DirectoryReader.open(dir);
+    });
+
     dir.close();
   }
-  
-  // LUCENE-3380 test that we can add a file, and then when we call list() we get it back
-  public void testDirectoryFilter() throws IOException {
-    Directory dir = newFSSwitchDirectory(Collections.<String>emptySet());
-    String name = "file";
-    try {
-      dir.createOutput(name).close();
-      assertTrue(dir.fileExists(name));
-      assertTrue(Arrays.asList(dir.listAll()).contains(name));
-    } finally {
-      dir.close();
+
+  @Override
+  protected Directory getDirectory(Path path) throws IOException {
+    Set<String> extensions = new HashSet<String>();
+    if (random().nextBoolean()) {
+      extensions.add("cfs");
     }
+    if (random().nextBoolean()) {
+      extensions.add("prx");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("frq");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("tip");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("tim");
+    }
+    if (random().nextBoolean()) {
+      extensions.add("del");
+    }
+    return newFSSwitchDirectory(extensions);
   }
 }

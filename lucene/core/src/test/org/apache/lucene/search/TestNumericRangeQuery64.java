@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,24 +14,32 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.document.NumericField;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.LegacyDoubleField;
+import org.apache.lucene.document.LegacyLongField;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
+import org.apache.lucene.index.MultiFields;
 import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.LegacyNumericUtils;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.NumericUtils;
-import org.apache.lucene.util.TestNumericUtils; // NaN arrays
-import org.apache.lucene.util.StringHelper;
-import org.apache.lucene.util._TestUtil;
-
-import org.junit.Test;
+import org.apache.lucene.util.TestLegacyNumericUtils;
+import org.apache.lucene.util.TestUtil;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
+import org.junit.Test;
 
 public class TestNumericRangeQuery64 extends LuceneTestCase {
   // distance of entries
@@ -52,22 +58,55 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
     noDocs = atLeast(4096);
     distance = (1L << 60) / noDocs;
     directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(_TestUtil.nextInt(random, 100, 1000))
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory,
+        newIndexWriterConfig(new MockAnalyzer(random()))
+        .setMaxBufferedDocs(TestUtil.nextInt(random(), 100, 1000))
         .setMergePolicy(newLogMergePolicy()));
-    
-    NumericField
-      field8 = new NumericField("field8", 8, Field.Store.YES, true),
-      field6 = new NumericField("field6", 6, Field.Store.YES, true),
-      field4 = new NumericField("field4", 4, Field.Store.YES, true),
-      field2 = new NumericField("field2", 2, Field.Store.YES, true),
-      fieldNoTrie = new NumericField("field"+Integer.MAX_VALUE, Integer.MAX_VALUE, Field.Store.YES, true),
-      ascfield8 = new NumericField("ascfield8", 8, Field.Store.NO, true),
-      ascfield6 = new NumericField("ascfield6", 6, Field.Store.NO, true),
-      ascfield4 = new NumericField("ascfield4", 4, Field.Store.NO, true),
-      ascfield2 = new NumericField("ascfield2", 2, Field.Store.NO, true);
-    
+
+    final FieldType storedLong = new FieldType(LegacyLongField.TYPE_NOT_STORED);
+    storedLong.setStored(true);
+    storedLong.freeze();
+
+    final FieldType storedLong8 = new FieldType(storedLong);
+    storedLong8.setNumericPrecisionStep(8);
+
+    final FieldType storedLong4 = new FieldType(storedLong);
+    storedLong4.setNumericPrecisionStep(4);
+
+    final FieldType storedLong6 = new FieldType(storedLong);
+    storedLong6.setNumericPrecisionStep(6);
+
+    final FieldType storedLong2 = new FieldType(storedLong);
+    storedLong2.setNumericPrecisionStep(2);
+
+    final FieldType storedLongNone = new FieldType(storedLong);
+    storedLongNone.setNumericPrecisionStep(Integer.MAX_VALUE);
+
+    final FieldType unstoredLong = LegacyLongField.TYPE_NOT_STORED;
+
+    final FieldType unstoredLong8 = new FieldType(unstoredLong);
+    unstoredLong8.setNumericPrecisionStep(8);
+
+    final FieldType unstoredLong6 = new FieldType(unstoredLong);
+    unstoredLong6.setNumericPrecisionStep(6);
+
+    final FieldType unstoredLong4 = new FieldType(unstoredLong);
+    unstoredLong4.setNumericPrecisionStep(4);
+
+    final FieldType unstoredLong2 = new FieldType(unstoredLong);
+    unstoredLong2.setNumericPrecisionStep(2);
+
+    LegacyLongField
+      field8 = new LegacyLongField("field8", 0L, storedLong8),
+      field6 = new LegacyLongField("field6", 0L, storedLong6),
+      field4 = new LegacyLongField("field4", 0L, storedLong4),
+      field2 = new LegacyLongField("field2", 0L, storedLong2),
+      fieldNoTrie = new LegacyLongField("field"+Integer.MAX_VALUE, 0L, storedLongNone),
+      ascfield8 = new LegacyLongField("ascfield8", 0L, unstoredLong8),
+      ascfield6 = new LegacyLongField("ascfield6", 0L, unstoredLong6),
+      ascfield4 = new LegacyLongField("ascfield4", 0L, unstoredLong4),
+      ascfield2 = new LegacyLongField("ascfield2", 0L, unstoredLong2);
+
     Document doc = new Document();
     // add fields, that have a distance to test general functionality
     doc.add(field8); doc.add(field6); doc.add(field4); doc.add(field2); doc.add(fieldNoTrie);
@@ -90,7 +129,6 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
       ascfield2.setLongValue(val);
       writer.addDocument(doc);
     }
-  
     reader = writer.getReader();
     searcher=newSearcher(reader);
     writer.close();
@@ -98,7 +136,6 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
   
   @AfterClass
   public static void afterClass() throws Exception {
-    searcher.close();
     searcher = null;
     reader.close();
     reader = null;
@@ -119,25 +156,20 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
     String field="field"+precisionStep;
     int count=3000;
     long lower=(distance*3/2)+startOffset, upper=lower + count*distance + (distance/3);
-    NumericRangeQuery<Long> q = NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, true);
-    NumericRangeFilter<Long> f = NumericRangeFilter.newLongRange(field, precisionStep, lower, upper, true, true);
-    for (byte i=0; i<3; i++) {
+    LegacyNumericRangeQuery<Long> q = LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, true);
+    for (byte i=0; i<2; i++) {
       TopDocs topDocs;
       String type;
       switch (i) {
         case 0:
           type = " (constant score filter rewrite)";
-          q.setRewriteMethod(MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE);
-          topDocs = searcher.search(q, null, noDocs, Sort.INDEXORDER);
+          q.setRewriteMethod(MultiTermQuery.CONSTANT_SCORE_REWRITE);
+          topDocs = searcher.search(q, noDocs, Sort.INDEXORDER);
           break;
         case 1:
           type = " (constant score boolean rewrite)";
-          q.setRewriteMethod(MultiTermQuery.CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE);
-          topDocs = searcher.search(q, null, noDocs, Sort.INDEXORDER);
-          break;
-        case 2:
-          type = " (filter)";
-          topDocs = searcher.search(new MatchAllDocsQuery(), f, noDocs, Sort.INDEXORDER);
+          q.setRewriteMethod(MultiTermQuery.CONSTANT_SCORE_BOOLEAN_REWRITE);
+          topDocs = searcher.search(q, noDocs, Sort.INDEXORDER);
           break;
         default:
           return;
@@ -146,9 +178,9 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
       assertNotNull(sd);
       assertEquals("Score doc count"+type, count, sd.length );
       Document doc=searcher.doc(sd[0].doc);
-      assertEquals("First doc"+type, 2*distance+startOffset, Long.parseLong(doc.get(field)) );
+      assertEquals("First doc"+type, 2*distance+startOffset, doc.getField(field).numericValue().longValue() );
       doc=searcher.doc(sd[sd.length-1].doc);
-      assertEquals("Last doc"+type, (1+count)*distance+startOffset, Long.parseLong(doc.get(field)) );
+      assertEquals("Last doc"+type, (1+count)*distance+startOffset, doc.getField(field).numericValue().longValue() );
     }
   }
 
@@ -173,21 +205,8 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
   }
   
   @Test
-  public void testInverseRange() throws Exception {
-    NumericRangeFilter<Long> f = NumericRangeFilter.newLongRange("field8", 8, 1000L, -1000L, true, true);
-    assertSame("A inverse range should return the EMPTY_DOCIDSET instance", DocIdSet.EMPTY_DOCIDSET, f.getDocIdSet(searcher.getIndexReader()));
-    f = NumericRangeFilter.newLongRange("field8", 8, Long.MAX_VALUE, null, false, false);
-    assertSame("A exclusive range starting with Long.MAX_VALUE should return the EMPTY_DOCIDSET instance",
-      DocIdSet.EMPTY_DOCIDSET, f.getDocIdSet(searcher.getIndexReader()));
-    f = NumericRangeFilter.newLongRange("field8", 8, null, Long.MIN_VALUE, false, false);
-    assertSame("A exclusive range ending with Long.MIN_VALUE should return the EMPTY_DOCIDSET instance",
-      DocIdSet.EMPTY_DOCIDSET, f.getDocIdSet(searcher.getIndexReader()));
-  }
-  
-  @Test
   public void testOneMatchQuery() throws Exception {
-    NumericRangeQuery<Long> q = NumericRangeQuery.newLongRange("ascfield8", 8, 1000L, 1000L, true, true);
-    assertSame(MultiTermQuery.CONSTANT_SCORE_BOOLEAN_QUERY_REWRITE, q.getRewriteMethod());
+    LegacyNumericRangeQuery<Long> q = LegacyNumericRangeQuery.newLongRange("ascfield8", 8, 1000L, 1000L, true, true);
     TopDocs topDocs = searcher.search(q, noDocs);
     ScoreDoc[] sd = topDocs.scoreDocs;
     assertNotNull(sd);
@@ -198,25 +217,25 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
     String field="field"+precisionStep;
     int count=3000;
     long upper=(count-1)*distance + (distance/3) + startOffset;
-    NumericRangeQuery<Long> q=NumericRangeQuery.newLongRange(field, precisionStep, null, upper, true, true);
-    TopDocs topDocs = searcher.search(q, null, noDocs, Sort.INDEXORDER);
+    LegacyNumericRangeQuery<Long> q= LegacyNumericRangeQuery.newLongRange(field, precisionStep, null, upper, true, true);
+    TopDocs topDocs = searcher.search(q, noDocs, Sort.INDEXORDER);
     ScoreDoc[] sd = topDocs.scoreDocs;
     assertNotNull(sd);
     assertEquals("Score doc count", count, sd.length );
     Document doc=searcher.doc(sd[0].doc);
-    assertEquals("First doc", startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("First doc", startOffset, doc.getField(field).numericValue().longValue() );
     doc=searcher.doc(sd[sd.length-1].doc);
-    assertEquals("Last doc", (count-1)*distance+startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("Last doc", (count-1)*distance+startOffset, doc.getField(field).numericValue().longValue() );
 
-    q=NumericRangeQuery.newLongRange(field, precisionStep, null, upper, false, true);
-    topDocs = searcher.search(q, null, noDocs, Sort.INDEXORDER);
+    q= LegacyNumericRangeQuery.newLongRange(field, precisionStep, null, upper, false, true);
+    topDocs = searcher.search(q, noDocs, Sort.INDEXORDER);
     sd = topDocs.scoreDocs;
     assertNotNull(sd);
     assertEquals("Score doc count", count, sd.length );
     doc=searcher.doc(sd[0].doc);
-    assertEquals("First doc", startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("First doc", startOffset, doc.getField(field).numericValue().longValue() );
     doc=searcher.doc(sd[sd.length-1].doc);
-    assertEquals("Last doc", (count-1)*distance+startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("Last doc", (count-1)*distance+startOffset, doc.getField(field).numericValue().longValue() );
   }
   
   @Test
@@ -243,25 +262,25 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
     String field="field"+precisionStep;
     int count=3000;
     long lower=(count-1)*distance + (distance/3) +startOffset;
-    NumericRangeQuery<Long> q=NumericRangeQuery.newLongRange(field, precisionStep, lower, null, true, true);
-    TopDocs topDocs = searcher.search(q, null, noDocs, Sort.INDEXORDER);
+    LegacyNumericRangeQuery<Long> q= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, null, true, true);
+    TopDocs topDocs = searcher.search(q, noDocs, Sort.INDEXORDER);
     ScoreDoc[] sd = topDocs.scoreDocs;
     assertNotNull(sd);
     assertEquals("Score doc count", noDocs-count, sd.length );
     Document doc=searcher.doc(sd[0].doc);
-    assertEquals("First doc", count*distance+startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("First doc", count*distance+startOffset, doc.getField(field).numericValue().longValue() );
     doc=searcher.doc(sd[sd.length-1].doc);
-    assertEquals("Last doc", (noDocs-1)*distance+startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("Last doc", (noDocs-1)*distance+startOffset, doc.getField(field).numericValue().longValue() );
 
-    q=NumericRangeQuery.newLongRange(field, precisionStep, lower, null, true, false);
-    topDocs = searcher.search(q, null, noDocs, Sort.INDEXORDER);
+    q= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, null, true, false);
+    topDocs = searcher.search(q, noDocs, Sort.INDEXORDER);
     sd = topDocs.scoreDocs;
     assertNotNull(sd);
     assertEquals("Score doc count", noDocs-count, sd.length );
     doc=searcher.doc(sd[0].doc);
-    assertEquals("First doc", count*distance+startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("First doc", count*distance+startOffset, doc.getField(field).numericValue().longValue() );
     doc=searcher.doc(sd[sd.length-1].doc);
-    assertEquals("Last doc", (noDocs-1)*distance+startOffset, Long.parseLong(doc.get(field)) );
+    assertEquals("Last doc", (noDocs-1)*distance+startOffset, doc.getField(field).numericValue().longValue() );
   }
   
   @Test
@@ -287,120 +306,126 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
   @Test
   public void testInfiniteValues() throws Exception {
     Directory dir = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir,
-      newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir,
+      newIndexWriterConfig(new MockAnalyzer(random())));
     Document doc = new Document();
-    doc.add(new NumericField("double").setDoubleValue(Double.NEGATIVE_INFINITY));
-    doc.add(new NumericField("long").setLongValue(Long.MIN_VALUE));
+    doc.add(new LegacyDoubleField("double", Double.NEGATIVE_INFINITY, Field.Store.NO));
+    doc.add(new LegacyLongField("long", Long.MIN_VALUE, Field.Store.NO));
     writer.addDocument(doc);
     
     doc = new Document();
-    doc.add(new NumericField("double").setDoubleValue(Double.POSITIVE_INFINITY));
-    doc.add(new NumericField("long").setLongValue(Long.MAX_VALUE));
+    doc.add(new LegacyDoubleField("double", Double.POSITIVE_INFINITY, Field.Store.NO));
+    doc.add(new LegacyLongField("long", Long.MAX_VALUE, Field.Store.NO));
     writer.addDocument(doc);
     
     doc = new Document();
-    doc.add(new NumericField("double").setDoubleValue(0.0));
-    doc.add(new NumericField("long").setLongValue(0L));
+    doc.add(new LegacyDoubleField("double", 0.0, Field.Store.NO));
+    doc.add(new LegacyLongField("long", 0L, Field.Store.NO));
     writer.addDocument(doc);
     
-    for (double d : TestNumericUtils.DOUBLE_NANs) {
+    for (double d : TestLegacyNumericUtils.DOUBLE_NANs) {
       doc = new Document();
-      doc.add(new NumericField("double").setDoubleValue(d));
+      doc.add(new LegacyDoubleField("double", d, Field.Store.NO));
       writer.addDocument(doc);
     }
     
     writer.close();
     
-    IndexReader r = IndexReader.open(dir);
-    IndexSearcher s = new IndexSearcher(r);
+    IndexReader r = DirectoryReader.open(dir);
+    IndexSearcher s = newSearcher(r);
     
-    Query q=NumericRangeQuery.newLongRange("long", null, null, true, true);
+    Query q= LegacyNumericRangeQuery.newLongRange("long", null, null, true, true);
     TopDocs topDocs = s.search(q, 10);
     assertEquals("Score doc count", 3,  topDocs.scoreDocs.length );
     
-    q=NumericRangeQuery.newLongRange("long", null, null, false, false);
+    q= LegacyNumericRangeQuery.newLongRange("long", null, null, false, false);
     topDocs = s.search(q, 10);
     assertEquals("Score doc count", 3,  topDocs.scoreDocs.length );
 
-    q=NumericRangeQuery.newLongRange("long", Long.MIN_VALUE, Long.MAX_VALUE, true, true);
+    q= LegacyNumericRangeQuery.newLongRange("long", Long.MIN_VALUE, Long.MAX_VALUE, true, true);
     topDocs = s.search(q, 10);
     assertEquals("Score doc count", 3,  topDocs.scoreDocs.length );
     
-    q=NumericRangeQuery.newLongRange("long", Long.MIN_VALUE, Long.MAX_VALUE, false, false);
+    q= LegacyNumericRangeQuery.newLongRange("long", Long.MIN_VALUE, Long.MAX_VALUE, false, false);
     topDocs = s.search(q, 10);
     assertEquals("Score doc count", 1,  topDocs.scoreDocs.length );
 
-    q=NumericRangeQuery.newDoubleRange("double", null, null, true, true);
+    q= LegacyNumericRangeQuery.newDoubleRange("double", null, null, true, true);
     topDocs = s.search(q, 10);
     assertEquals("Score doc count", 3,  topDocs.scoreDocs.length );
 
-    q=NumericRangeQuery.newDoubleRange("double", null, null, false, false);
+    q= LegacyNumericRangeQuery.newDoubleRange("double", null, null, false, false);
     topDocs = s.search(q, 10);
     assertEquals("Score doc count", 3,  topDocs.scoreDocs.length );
 
-    q=NumericRangeQuery.newDoubleRange("double", Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true, true);
+    q= LegacyNumericRangeQuery.newDoubleRange("double", Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true, true);
     topDocs = s.search(q, 10);
     assertEquals("Score doc count", 3,  topDocs.scoreDocs.length );
 
-    q=NumericRangeQuery.newDoubleRange("double", Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, false, false);
+    q= LegacyNumericRangeQuery.newDoubleRange("double", Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, false, false);
     topDocs = s.search(q, 10);
     assertEquals("Score doc count", 1,  topDocs.scoreDocs.length );
 
-    q=NumericRangeQuery.newDoubleRange("double", Double.NaN, Double.NaN, true, true);
+    q= LegacyNumericRangeQuery.newDoubleRange("double", Double.NaN, Double.NaN, true, true);
     topDocs = s.search(q, 10);
-    assertEquals("Score doc count", TestNumericUtils.DOUBLE_NANs.length,  topDocs.scoreDocs.length );
+    assertEquals("Score doc count", TestLegacyNumericUtils.DOUBLE_NANs.length,  topDocs.scoreDocs.length );
 
-    s.close();
     r.close();
     dir.close();
   }
   
   private void testRandomTrieAndClassicRangeQuery(int precisionStep) throws Exception {
-    final String field=StringHelper.intern("field"+precisionStep);
+    String field="field"+precisionStep;
     int totalTermCountT=0,totalTermCountC=0,termCountT,termCountC;
-    int num = _TestUtil.nextInt(random, 10, 20);
+    int num = TestUtil.nextInt(random(), 10, 20);
     for (int i = 0; i < num; i++) {
-      long lower=(long)(random.nextDouble()*noDocs*distance)+startOffset;
-      long upper=(long)(random.nextDouble()*noDocs*distance)+startOffset;
+      long lower=(long)(random().nextDouble()*noDocs*distance)+startOffset;
+      long upper=(long)(random().nextDouble()*noDocs*distance)+startOffset;
       if (lower>upper) {
         long a=lower; lower=upper; upper=a;
       }
+      final BytesRef lowerBytes, upperBytes;
+      BytesRefBuilder b = new BytesRefBuilder();
+      LegacyNumericUtils.longToPrefixCoded(lower, 0, b);
+      lowerBytes = b.toBytesRef();
+      LegacyNumericUtils.longToPrefixCoded(upper, 0, b);
+      upperBytes = b.toBytesRef();
+      
       // test inclusive range
-      NumericRangeQuery<Long> tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, true);
-      TermRangeQuery cq=new TermRangeQuery(field, NumericUtils.longToPrefixCoded(lower), NumericUtils.longToPrefixCoded(upper), true, true);
+      LegacyNumericRangeQuery<Long> tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, true);
+      TermRangeQuery cq=new TermRangeQuery(field, lowerBytes, upperBytes, true, true);
       TopDocs tTopDocs = searcher.search(tq, 1);
       TopDocs cTopDocs = searcher.search(cq, 1);
-      assertEquals("Returned count for NumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
-      totalTermCountT += termCountT = countTerms(tq, field);
-      totalTermCountC += termCountC = countTerms(cq, field);
+      assertEquals("Returned count for LegacyNumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
+      totalTermCountT += termCountT = countTerms(tq);
+      totalTermCountC += termCountC = countTerms(cq);
       checkTermCounts(precisionStep, termCountT, termCountC);
       // test exclusive range
-      tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, false);
-      cq=new TermRangeQuery(field, NumericUtils.longToPrefixCoded(lower), NumericUtils.longToPrefixCoded(upper), false, false);
+      tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, false);
+      cq=new TermRangeQuery(field, lowerBytes, upperBytes, false, false);
       tTopDocs = searcher.search(tq, 1);
       cTopDocs = searcher.search(cq, 1);
-      assertEquals("Returned count for NumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
-      totalTermCountT += termCountT = countTerms(tq, field);
-      totalTermCountC += termCountC = countTerms(cq, field);
+      assertEquals("Returned count for LegacyNumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
+      totalTermCountT += termCountT = countTerms(tq);
+      totalTermCountC += termCountC = countTerms(cq);
       checkTermCounts(precisionStep, termCountT, termCountC);
       // test left exclusive range
-      tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, true);
-      cq=new TermRangeQuery(field, NumericUtils.longToPrefixCoded(lower), NumericUtils.longToPrefixCoded(upper), false, true);
+      tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, true);
+      cq=new TermRangeQuery(field, lowerBytes, upperBytes, false, true);
       tTopDocs = searcher.search(tq, 1);
       cTopDocs = searcher.search(cq, 1);
-      assertEquals("Returned count for NumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
-      totalTermCountT += termCountT = countTerms(tq, field);
-      totalTermCountC += termCountC = countTerms(cq, field);
+      assertEquals("Returned count for LegacyNumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
+      totalTermCountT += termCountT = countTerms(tq);
+      totalTermCountC += termCountC = countTerms(cq);
       checkTermCounts(precisionStep, termCountT, termCountC);
       // test right exclusive range
-      tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, false);
-      cq=new TermRangeQuery(field, NumericUtils.longToPrefixCoded(lower), NumericUtils.longToPrefixCoded(upper), true, false);
+      tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, false);
+      cq=new TermRangeQuery(field, lowerBytes, upperBytes, true, false);
       tTopDocs = searcher.search(tq, 1);
       cTopDocs = searcher.search(cq, 1);
-      assertEquals("Returned count for NumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
-      totalTermCountT += termCountT = countTerms(tq, field);
-      totalTermCountC += termCountC = countTerms(cq, field);
+      assertEquals("Returned count for LegacyNumericRangeQuery and TermRangeQuery must be equal", cTopDocs.totalHits, tTopDocs.totalHits );
+      totalTermCountT += termCountT = countTerms(tq);
+      totalTermCountC += termCountC = countTerms(cq);
       checkTermCounts(precisionStep, termCountT, termCountC);
     }
     
@@ -418,36 +443,33 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
     long lower=(distance*3/2)+startOffset, upper=lower + count*distance + (distance/3);
     // test empty enum
     assert lower < upper;
-    assertTrue(0 < countTerms(NumericRangeQuery.newLongRange("field4", 4, lower, upper, true, true), "field4"));
-    assertEquals(0, countTerms(NumericRangeQuery.newLongRange("field4", 4, upper, lower, true, true), "field4"));
+    assertTrue(0 < countTerms(LegacyNumericRangeQuery.newLongRange("field4", 4, lower, upper, true, true)));
+    assertEquals(0, countTerms(LegacyNumericRangeQuery.newLongRange("field4", 4, upper, lower, true, true)));
     // test empty enum outside of bounds
     lower = distance*noDocs+startOffset;
     upper = 2L * lower;
     assert lower < upper;
-    assertEquals(0, countTerms(NumericRangeQuery.newLongRange("field4", 4, lower, upper, true, true), "field4"));
+    assertEquals(0, countTerms(LegacyNumericRangeQuery.newLongRange("field4", 4, lower, upper, true, true)));
   }
   
-  private int countTerms(MultiTermQuery q, String field) throws Exception {
-    FilteredTermEnum termEnum = q.getEnum(reader);
-    try {
-      int count = 0;
-      Term last = null;
-      do {
-        final Term cur = termEnum.term();
-        if (cur != null) {
-          count++;
-          assertSame(field, cur.field());
-          if (last != null) {
-            assertTrue(last.text().compareTo(cur.text()) < 0);
-          }
-          last = cur;
-        } else break;
-      } while (termEnum.next());
-      assertFalse(termEnum.next());
-      return count;
-    } finally {
-      termEnum.close();
-    }
+  private int countTerms(MultiTermQuery q) throws Exception {
+    final Terms terms = MultiFields.getTerms(reader, q.getField());
+    if (terms == null)
+      return 0;
+    final TermsEnum termEnum = q.getTermsEnum(terms);
+    assertNotNull(termEnum);
+    int count = 0;
+    BytesRef cur, last = null;
+    while ((cur = termEnum.next()) != null) {
+      count++;
+      if (last != null) {
+        assertTrue(last.compareTo(cur) < 0);
+      }
+      last = BytesRef.deepCopyOf(cur);
+    } 
+    // LUCENE-3314: the results after next() already returned null are undefined,
+    // assertNull(termEnum.next());
+    return count;
   }
   
   private void checkTermCounts(int precisionStep, int termCountT, int termCountC) {
@@ -486,27 +508,27 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
   private void testRangeSplit(int precisionStep) throws Exception {
     String field="ascfield"+precisionStep;
     // 10 random tests
-    int num = _TestUtil.nextInt(random, 10, 20);
+    int num = TestUtil.nextInt(random(), 10, 20);
     for (int i = 0; i < num; i++) {
-      long lower=(long)(random.nextDouble()*noDocs - noDocs/2);
-      long upper=(long)(random.nextDouble()*noDocs - noDocs/2);
+      long lower=(long)(random().nextDouble()*noDocs - noDocs/2);
+      long upper=(long)(random().nextDouble()*noDocs - noDocs/2);
       if (lower>upper) {
         long a=lower; lower=upper; upper=a;
       }
       // test inclusive range
-      Query tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, true);
+      Query tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, true);
       TopDocs tTopDocs = searcher.search(tq, 1);
       assertEquals("Returned count of range query must be equal to inclusive range length", upper-lower+1, tTopDocs.totalHits );
       // test exclusive range
-      tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, false);
+      tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, false);
       tTopDocs = searcher.search(tq, 1);
       assertEquals("Returned count of range query must be equal to exclusive range length", Math.max(upper-lower-1, 0), tTopDocs.totalHits );
       // test left exclusive range
-      tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, true);
+      tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, false, true);
       tTopDocs = searcher.search(tq, 1);
       assertEquals("Returned count of range query must be equal to half exclusive range length", upper-lower, tTopDocs.totalHits );
       // test right exclusive range
-      tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, false);
+      tq= LegacyNumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, false);
       tTopDocs = searcher.search(tq, 1);
       assertEquals("Returned count of range query must be equal to half exclusive range length", upper-lower, tTopDocs.totalHits );
     }
@@ -532,20 +554,15 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
     testRangeSplit(2);
   }
   
-  /** we fake a double test using long2double conversion of NumericUtils */
+  /** we fake a double test using long2double conversion of LegacyNumericUtils */
   private void testDoubleRange(int precisionStep) throws Exception {
     final String field="ascfield"+precisionStep;
     final long lower=-1000L, upper=+2000L;
     
-    Query tq=NumericRangeQuery.newDoubleRange(field, precisionStep,
-      NumericUtils.sortableLongToDouble(lower), NumericUtils.sortableLongToDouble(upper), true, true);
+    Query tq= LegacyNumericRangeQuery.newDoubleRange(field, precisionStep,
+        NumericUtils.sortableLongToDouble(lower), NumericUtils.sortableLongToDouble(upper), true, true);
     TopDocs tTopDocs = searcher.search(tq, 1);
     assertEquals("Returned count of range query must be equal to inclusive range length", upper-lower+1, tTopDocs.totalHits );
-    
-    Filter tf=NumericRangeFilter.newDoubleRange(field, precisionStep,
-      NumericUtils.sortableLongToDouble(lower), NumericUtils.sortableLongToDouble(upper), true, true);
-    tTopDocs = searcher.search(new MatchAllDocsQuery(), tf, 1);
-    assertEquals("Returned count of range filter must be equal to inclusive range length", upper-lower+1, tTopDocs.totalHits );
   }
 
   @Test
@@ -568,85 +585,39 @@ public class TestNumericRangeQuery64 extends LuceneTestCase {
     testDoubleRange(2);
   }
   
-  private void testSorting(int precisionStep) throws Exception {
-    String field="field"+precisionStep;
-    // 10 random tests, the index order is ascending,
-    // so using a reverse sort field should retun descending documents
-    int num = _TestUtil.nextInt(random, 10, 20);
-    for (int i = 0; i < num; i++) {
-      long lower=(long)(random.nextDouble()*noDocs*distance)+startOffset;
-      long upper=(long)(random.nextDouble()*noDocs*distance)+startOffset;
-      if (lower>upper) {
-        long a=lower; lower=upper; upper=a;
-      }
-      Query tq=NumericRangeQuery.newLongRange(field, precisionStep, lower, upper, true, true);
-      TopDocs topDocs = searcher.search(tq, null, noDocs, new Sort(new SortField(field, SortField.LONG, true)));
-      if (topDocs.totalHits==0) continue;
-      ScoreDoc[] sd = topDocs.scoreDocs;
-      assertNotNull(sd);
-      long last=Long.parseLong(searcher.doc(sd[0].doc).get(field));
-      for (int j=1; j<sd.length; j++) {
-        long act=Long.parseLong(searcher.doc(sd[j].doc).get(field));
-        assertTrue("Docs should be sorted backwards", last>act );
-        last=act;
-      }
-    }
-  }
-
-  @Test
-  public void testSorting_8bit() throws Exception {
-    testSorting(8);
-  }
-  
-  @Test
-  public void testSorting_6bit() throws Exception {
-    testSorting(6);
-  }
-  
-  @Test
-  public void testSorting_4bit() throws Exception {
-    testSorting(4);
-  }
-  
-  @Test
-  public void testSorting_2bit() throws Exception {
-    testSorting(2);
-  }
-  
   @Test
   public void testEqualsAndHash() throws Exception {
-    QueryUtils.checkHashEquals(NumericRangeQuery.newLongRange("test1", 4, 10L, 20L, true, true));
-    QueryUtils.checkHashEquals(NumericRangeQuery.newLongRange("test2", 4, 10L, 20L, false, true));
-    QueryUtils.checkHashEquals(NumericRangeQuery.newLongRange("test3", 4, 10L, 20L, true, false));
-    QueryUtils.checkHashEquals(NumericRangeQuery.newLongRange("test4", 4, 10L, 20L, false, false));
-    QueryUtils.checkHashEquals(NumericRangeQuery.newLongRange("test5", 4, 10L, null, true, true));
-    QueryUtils.checkHashEquals(NumericRangeQuery.newLongRange("test6", 4, null, 20L, true, true));
-    QueryUtils.checkHashEquals(NumericRangeQuery.newLongRange("test7", 4, null, null, true, true));
+    QueryUtils.checkHashEquals(LegacyNumericRangeQuery.newLongRange("test1", 4, 10L, 20L, true, true));
+    QueryUtils.checkHashEquals(LegacyNumericRangeQuery.newLongRange("test2", 4, 10L, 20L, false, true));
+    QueryUtils.checkHashEquals(LegacyNumericRangeQuery.newLongRange("test3", 4, 10L, 20L, true, false));
+    QueryUtils.checkHashEquals(LegacyNumericRangeQuery.newLongRange("test4", 4, 10L, 20L, false, false));
+    QueryUtils.checkHashEquals(LegacyNumericRangeQuery.newLongRange("test5", 4, 10L, null, true, true));
+    QueryUtils.checkHashEquals(LegacyNumericRangeQuery.newLongRange("test6", 4, null, 20L, true, true));
+    QueryUtils.checkHashEquals(LegacyNumericRangeQuery.newLongRange("test7", 4, null, null, true, true));
     QueryUtils.checkEqual(
-      NumericRangeQuery.newLongRange("test8", 4, 10L, 20L, true, true), 
-      NumericRangeQuery.newLongRange("test8", 4, 10L, 20L, true, true)
+      LegacyNumericRangeQuery.newLongRange("test8", 4, 10L, 20L, true, true),
+      LegacyNumericRangeQuery.newLongRange("test8", 4, 10L, 20L, true, true)
     );
     QueryUtils.checkUnequal(
-      NumericRangeQuery.newLongRange("test9", 4, 10L, 20L, true, true), 
-      NumericRangeQuery.newLongRange("test9", 8, 10L, 20L, true, true)
+      LegacyNumericRangeQuery.newLongRange("test9", 4, 10L, 20L, true, true),
+      LegacyNumericRangeQuery.newLongRange("test9", 8, 10L, 20L, true, true)
     );
     QueryUtils.checkUnequal(
-      NumericRangeQuery.newLongRange("test10a", 4, 10L, 20L, true, true), 
-      NumericRangeQuery.newLongRange("test10b", 4, 10L, 20L, true, true)
+      LegacyNumericRangeQuery.newLongRange("test10a", 4, 10L, 20L, true, true),
+      LegacyNumericRangeQuery.newLongRange("test10b", 4, 10L, 20L, true, true)
     );
     QueryUtils.checkUnequal(
-      NumericRangeQuery.newLongRange("test11", 4, 10L, 20L, true, true), 
-      NumericRangeQuery.newLongRange("test11", 4, 20L, 10L, true, true)
+      LegacyNumericRangeQuery.newLongRange("test11", 4, 10L, 20L, true, true),
+      LegacyNumericRangeQuery.newLongRange("test11", 4, 20L, 10L, true, true)
     );
     QueryUtils.checkUnequal(
-      NumericRangeQuery.newLongRange("test12", 4, 10L, 20L, true, true), 
-      NumericRangeQuery.newLongRange("test12", 4, 10L, 20L, false, true)
+      LegacyNumericRangeQuery.newLongRange("test12", 4, 10L, 20L, true, true),
+      LegacyNumericRangeQuery.newLongRange("test12", 4, 10L, 20L, false, true)
     );
     QueryUtils.checkUnequal(
-      NumericRangeQuery.newLongRange("test13", 4, 10L, 20L, true, true), 
-      NumericRangeQuery.newFloatRange("test13", 4, 10f, 20f, true, true)
+      LegacyNumericRangeQuery.newLongRange("test13", 4, 10L, 20L, true, true),
+      LegacyNumericRangeQuery.newFloatRange("test13", 4, 10f, 20f, true, true)
     );
      // difference to int range is tested in TestNumericRangeQuery32
   }
-  
 }

@@ -1,5 +1,3 @@
-package org.apache.solr;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,39 +14,66 @@ package org.apache.solr;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.search.FieldCache;
-import org.apache.noggit.JSONUtil;
-import org.apache.noggit.ObjectBuilder;
-import org.apache.solr.client.solrj.impl.BinaryResponseParser;
-import org.apache.solr.common.params.CommonParams;
-import org.apache.solr.common.params.GroupParams;
-import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.request.SolrRequestInfo;
-import org.apache.solr.response.BinaryResponseWriter;
-import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.schema.IndexSchema;
-import org.apache.solr.search.DocSlice;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+package org.apache.solr;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.util.*;
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
-/**
- *
- */
+import org.apache.lucene.index.LogDocMergePolicy;
+import org.apache.solr.client.solrj.impl.BinaryResponseParser;
+import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.params.GroupParams;
+import org.apache.solr.index.LogDocMergePolicyFactory;
+import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.request.SolrRequestInfo;
+import org.apache.solr.response.BinaryResponseWriter;
+import org.apache.solr.response.ResultContext;
+import org.apache.solr.response.SolrQueryResponse;
+import org.apache.solr.schema.IndexSchema;
+import org.junit.AfterClass;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
+import org.noggit.JSONUtil;
+import org.noggit.ObjectBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class TestGroupingSearch extends SolrTestCaseJ4 {
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   public static final String FOO_STRING_FIELD = "foo_s1";
   public static final String SMALL_STRING_FIELD = "small_s1";
   public static final String SMALL_INT_FIELD = "small_i";
+  static final String EMPTY_FACETS = "'facet_ranges':{},'facet_intervals':{},'facet_heatmaps':{}";
 
   @BeforeClass
   public static void beforeTests() throws Exception {
-    initCore("solrconfig.xml","schema12.xml");
+    // force LogDocMergePolicy so that we get a predictable doc order
+    // when doing unsorted group collection
+    systemSetPropertySolrTestsMergePolicy(LogDocMergePolicy.class.getName());
+    systemSetPropertySolrTestsMergePolicyFactory(LogDocMergePolicyFactory.class.getName());
+
+    System.setProperty("enable.update.log", "false"); // schema12 doesn't support _version_
+    initCore("solrconfig.xml", "schema12.xml");
+  }
+
+  @AfterClass
+  public static void afterTests() {
+    systemClearPropertySolrTestsMergePolicy();
+    systemClearPropertySolrTestsMergePolicyFactory();
   }
 
   @Before
@@ -59,140 +84,119 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
 
   @Test
   public void testGroupingGroupSortingScore_basic() {
-    assertU(add(doc("id", "1","name", "author1", "title", "a book title", "group_sI", "1")));
-    assertU(add(doc("id", "2","name", "author1", "title", "the title", "group_sI", "2")));
-    assertU(add(doc("id", "3","name", "author2", "title", "a book title", "group_sI", "1")));
-    assertU(add(doc("id", "4","name", "author2", "title", "title", "group_sI", "2")));
-    assertU(add(doc("id", "5","name", "author3", "title", "the title of a title", "group_sI", "1")));
+    assertU(add(doc("id", "1", "id_i", "1", "name", "author1", "title", "a book title", "group_i", "1")));
+    assertU(add(doc("id", "2", "id_i", "2", "name", "author1", "title", "the title", "group_i", "2")));
+    assertU(add(doc("id", "3", "id_i", "3", "name", "author2", "title", "a book title", "group_i", "1")));
+    assertU(add(doc("id", "4", "id_i", "4", "name", "author2", "title", "title", "group_i", "2")));
+    assertU(add(doc("id", "5", "id_i", "5", "name", "author3", "title", "the title of a title", "group_i", "1")));
     assertU(commit());
 
-    assertQ(req("q","title:title", "group", "true", "group.field","name")
+    // function based query for predictable scores not affect by similarity
+    assertQ(req("q","{!func}id_i", "group", "true", "group.field","name", "fl", "id, score")
             ,"//lst[@name='grouped']/lst[@name='name']"
             ,"*[count(//arr[@name='groups']/lst) = 3]"
 
-            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author2']"
-    //        ,"//arr[@name='groups']/lst[1]/int[@name='matches'][.='2']"
-            ,"//arr[@name='groups']/lst[1]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='4']"
-
-            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author1']"
-    //       ,"//arr[@name='groups']/lst[2]/int[@name='matches'][.='2']"
+            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author3']"
+            ,"//arr[@name='groups']/lst[1]/result[@numFound='1']"
+            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='5']"
+            
+            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author2']"
             ,"//arr[@name='groups']/lst[2]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='2']"
+            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='4']"
 
-            ,"//arr[@name='groups']/lst[3]/str[@name='groupValue'][.='author3']"
-    //        ,"//arr[@name='groups']/lst[3]/int[@name='matches'][.='1']"
-            ,"//arr[@name='groups']/lst[3]/result[@numFound='1']"
-            ,"//arr[@name='groups']/lst[3]/result/doc/*[@name='id'][.='5']"
+            ,"//arr[@name='groups']/lst[3]/str[@name='groupValue'][.='author1']"
+            ,"//arr[@name='groups']/lst[3]/result[@numFound='2']"
+            ,"//arr[@name='groups']/lst[3]/result/doc/*[@name='id'][.='2']"
+
             );
 
-    assertQ(req("q","title:title", "group", "true", "group.field","group_sI")
-            ,"//lst[@name='grouped']/lst[@name='group_sI']"
-            ,"*[count(//arr[@name='groups']/lst) = 2]"
+    assertQ(req("q", "title:title", "group", "true", "group.field", "group_i")
+        , "//lst[@name='grouped']/lst[@name='group_i']"
+        , "*[count(//arr[@name='groups']/lst) = 2]"
 
-            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='2']"
-            ,"//arr[@name='groups']/lst[1]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='4']"
+        , "//arr[@name='groups']/lst[1]/int[@name='groupValue'][.='2']"
+        , "//arr[@name='groups']/lst[1]/result[@numFound='2']"
+        , "//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='4']"
 
-            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='1']"
-            ,"//arr[@name='groups']/lst[2]/result[@numFound='3']"
-            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='5']"
-            );
-  }
-
-  @Test
-  public void testGroupingGroupSortingScore_basicWithGroupSortEqualToSort() {
-    assertU(add(doc("id", "1","name", "author1", "title", "a book title")));
-    assertU(add(doc("id", "2","name", "author1", "title", "the title")));
-    assertU(add(doc("id", "3","name", "author2", "title", "a book title")));
-    assertU(add(doc("id", "4","name", "author2", "title", "title")));
-    assertU(add(doc("id", "5","name", "author3", "title", "the title of a title")));
-    assertU(commit());
-
-    assertQ(req("q","title:title", "group", "true", "group.field","name", "sort", "score desc", "group.sort", "score desc")
-            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author2']"
-    //        ,"//arr[@name='groups']/lst[1]/int[@name='matches'][.='2']"
-            ,"//arr[@name='groups']/lst[1]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='4']"
-
-            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author1']"
-    //        ,"//arr[@name='groups']/lst[2]/int[@name='matches'][.='2']"
-            ,"//arr[@name='groups']/lst[2]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='2']"
-
-            ,"//arr[@name='groups']/lst[3]/str[@name='groupValue'][.='author3']"
-    //        ,"//arr[@name='groups']/lst[3]/int[@name='matches'][.='1']"
-            ,"//arr[@name='groups']/lst[3]/result[@numFound='1']"
-            ,"//arr[@name='groups']/lst[3]/result/doc/*[@name='id'][.='5']"
-            );
+        , "//arr[@name='groups']/lst[2]/int[@name='groupValue'][.='1']"
+        , "//arr[@name='groups']/lst[2]/result[@numFound='3']"
+        , "//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='5']"
+    );
   }
 
   @Test
   public void testGroupingGroupSortingScore_withTotalGroupCount() {
-    assertU(add(doc("id", "1","name", "author1", "title", "a book title", "group_sI", "1")));
-    assertU(add(doc("id", "2","name", "author1", "title", "the title", "group_sI", "2")));
-    assertU(add(doc("id", "3","name", "author2", "title", "a book title", "group_sI", "1")));
-    assertU(add(doc("id", "4","name", "author2", "title", "title", "group_sI", "2")));
-    assertU(add(doc("id", "5","name", "author3", "title", "the title of a title", "group_sI", "1")));
+    assertU(add(doc("id", "1", "id_i", "1", "name", "author1", "title", "a book title", "group_i", "1")));
+    assertU(add(doc("id", "2", "id_i", "2", "name", "author1", "title", "the title", "group_i", "2")));
+    assertU(add(doc("id", "3", "id_i", "3", "name", "author2", "title", "a book title", "group_i", "1")));
+    assertU(add(doc("id", "4", "id_i", "4", "name", "author2", "title", "title", "group_i", "2")));
+    assertU(add(doc("id", "5", "id_i", "5", "name", "author3", "title", "the title of a title", "group_i", "1")));
     assertU(commit());
 
-    assertQ(req("q","title:title", "group", "true", "group.field","name", "group.ngroups", "true")
+    // function based query for predictable scores not affect by similarity
+    assertQ(req("q","{!func}id_i", "group", "true", "group.field","name", "group.ngroups", "true")
             ,"//lst[@name='grouped']/lst[@name='name']"
             ,"//lst[@name='grouped']/lst[@name='name']/int[@name='matches'][.='5']"
             ,"//lst[@name='grouped']/lst[@name='name']/int[@name='ngroups'][.='3']"
             ,"*[count(//arr[@name='groups']/lst) = 3]"
 
-            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author2']"
-            ,"//arr[@name='groups']/lst[1]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='4']"
-
-            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author1']"
+            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author3']"
+            ,"//arr[@name='groups']/lst[1]/result[@numFound='1']"
+            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='5']"
+            
+            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author2']"
             ,"//arr[@name='groups']/lst[2]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='2']"
+            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='4']"
 
-            ,"//arr[@name='groups']/lst[3]/str[@name='groupValue'][.='author3']"
-            ,"//arr[@name='groups']/lst[3]/result[@numFound='1']"
-            ,"//arr[@name='groups']/lst[3]/result/doc/*[@name='id'][.='5']"
+            ,"//arr[@name='groups']/lst[3]/str[@name='groupValue'][.='author1']"
+            ,"//arr[@name='groups']/lst[3]/result[@numFound='2']"
+            ,"//arr[@name='groups']/lst[3]/result/doc/*[@name='id'][.='2']"
+
             );
 
-    assertQ(req("q","title:title", "group", "true", "group.field","group_sI", "group.ngroups", "true")
-            ,"//lst[@name='grouped']/lst[@name='group_sI']/int[@name='matches'][.='5']"
-            ,"//lst[@name='grouped']/lst[@name='group_sI']/int[@name='ngroups'][.='2']"
-            ,"*[count(//arr[@name='groups']/lst) = 2]"
+    // function based query for predictable scores not affect by similarity
+    assertQ(req("q", "{!func}id_i", "group", "true", "group.field", "group_i", "group.ngroups", "true")
+        , "//lst[@name='grouped']/lst[@name='group_i']/int[@name='matches'][.='5']"
+        , "//lst[@name='grouped']/lst[@name='group_i']/int[@name='ngroups'][.='2']"
+        , "*[count(//arr[@name='groups']/lst) = 2]"
 
-            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='2']"
-            ,"//arr[@name='groups']/lst[1]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='4']"
+        , "//arr[@name='groups']/lst[1]/int[@name='groupValue'][.='1']"
+        , "//arr[@name='groups']/lst[1]/result[@numFound='3']"
+        , "//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='5']"
+            
+        , "//arr[@name='groups']/lst[2]/int[@name='groupValue'][.='2']"
+        , "//arr[@name='groups']/lst[2]/result[@numFound='2']"
+        , "//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='4']"
 
-            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='1']"
-            ,"//arr[@name='groups']/lst[2]/result[@numFound='3']"
-            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='5']"
-            );
+    );
   }
 
   @Test
-  public void testGroupingGroupSortingScore_basicWithSortFooIDescAndScoreAscWithCaching() {
-    assertU(add(doc("id", "1","name", "author1", "title", "a book title", "score_f", "20", "foo_i", "5")));
-    assertU(add(doc("id", "2","name", "author1", "title", "the title", "score_f", "10", "foo_i", "5")));
-    assertU(add(doc("id", "3","name", "author2", "title", "a book title", "score_f", "30", "foo_i", "3")));
+  public void testGroupingGroupSortingScore_basicWithGroupSortEqualToSort() {
+    assertU(add(doc("id", "1", "id_i", "1", "name", "author1", "title", "a book title")));
+    assertU(add(doc("id", "2", "id_i", "2", "name", "author1", "title", "the title")));
+    assertU(add(doc("id", "3", "id_i", "3", "name", "author2", "title", "a book title")));
+    assertU(add(doc("id", "4", "id_i", "4", "name", "author2", "title", "title")));
+    assertU(add(doc("id", "5", "id_i", "5", "name", "author3", "title", "the title of a title")));
     assertU(commit());
-    assertU(add(doc("id", "4","name", "author2", "title", "title", "score_f", "40", "foo_i", "2")));
-    assertU(add(doc("id", "5","name", "author3", "title", "the titttle of a title blehh", "score_f", "50", "foo_i", "1")));
-    assertU(commit());
 
-    assertQ(req("q","{!func} score_f", "group", "true", "group.field","name", "sort", "foo_i desc, score asc", GroupParams.GROUP_CACHE_PERCENTAGE, "100")
-            ,"//arr[@name='groups']/lst[3]/str[@name='groupValue'][.='author3']"
-            ,"//arr[@name='groups']/lst[3]/result[@numFound='1']"
-            ,"//arr[@name='groups']/lst[3]/result/doc/*[@name='id'][.='5']"
+    // function based query for predictable scores not affect by similarity
+    assertQ(req("q", "{!func}id_i", "group", "true", "group.field", "name",
+                "sort", "score desc", "group.sort", "score desc")
+            
+        , "//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author3']"
+        , "//arr[@name='groups']/lst[1]/result[@numFound='1']"
+        , "//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='5']"
+            
+        , "//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author2']"
+        , "//arr[@name='groups']/lst[2]/result[@numFound='2']"
+        , "//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='4']"
 
-            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author1']"
-            ,"//arr[@name='groups']/lst[1]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='2']"
+        , "//arr[@name='groups']/lst[3]/str[@name='groupValue'][.='author1']"
+        , "//arr[@name='groups']/lst[3]/result[@numFound='2']"
+        , "//arr[@name='groups']/lst[3]/result/doc/*[@name='id'][.='2']"
 
-            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author2']"
-            ,"//arr[@name='groups']/lst[2]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='3']"
-            );
+    );
   }
 
 
@@ -204,18 +208,18 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     assertU(add(doc("id", "4","name", "author2", "weight", "0.11")));
     assertU(commit());
 
-    assertQ(req("q","*:*", "group", "true", "group.field","name", "sort", "id asc", "group.sort", "weight desc")
-            ,"*[count(//arr[@name='groups']/lst) = 2]"
-            ,"//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author1']"
-    //        ,"//arr[@name='groups']/lst[1]/int[@name='matches'][.='2']"
-            ,"//arr[@name='groups']/lst[1]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='1']"
+    assertQ(req("q", "*:*", "group", "true", "group.field", "name", "sort", "id asc", "group.sort", "weight desc")
+        , "*[count(//arr[@name='groups']/lst) = 2]"
+        , "//arr[@name='groups']/lst[1]/str[@name='groupValue'][.='author1']"
+        //        ,"//arr[@name='groups']/lst[1]/int[@name='matches'][.='2']"
+        , "//arr[@name='groups']/lst[1]/result[@numFound='2']"
+        , "//arr[@name='groups']/lst[1]/result/doc/*[@name='id'][.='1']"
 
-            ,"//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author2']"
-    //        ,"//arr[@name='groups']/lst[2]/int[@name='matches'][.='2']"
-            ,"//arr[@name='groups']/lst[2]/result[@numFound='2']"
-            ,"//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='4']"
-            );
+        , "//arr[@name='groups']/lst[2]/str[@name='groupValue'][.='author2']"
+        //        ,"//arr[@name='groups']/lst[2]/int[@name='matches'][.='2']"
+        , "//arr[@name='groups']/lst[2]/result[@numFound='2']"
+        , "//arr[@name='groups']/lst[2]/result/doc/*[@name='id'][.='4']"
+    );
   }
 
   @Test
@@ -276,8 +280,9 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
       SolrRequestInfo.clearRequestInfo();
     }
 
-    assertEquals(6, ((DocSlice) response.getValues().get("response")).matches());
+    assertEquals(6, ((ResultContext) response.getResponse()).getDocList().matches());
     new BinaryResponseParser().processResponse(new ByteArrayInputStream(out.toByteArray()), "");
+    out.close();
   }
 
   @Test
@@ -315,12 +320,12 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
 
   @Test
   public void testGroupingGroupedBasedFaceting() throws Exception {
-    assertU(add(doc("id", "1", "value1_s1", "1", "value2_i", "1", "value3_s1", "a", "value4_s1", "1")));
-    assertU(add(doc("id", "2", "value1_s1", "1", "value2_i", "2", "value3_s1", "a", "value4_s1", "1")));
+    assertU(add(doc("id", "1", "value1_s1", "1", "value2_i", "1", "value3_s1", "a", "value4_i", "1")));
+    assertU(add(doc("id", "2", "value1_s1", "1", "value2_i", "2", "value3_s1", "a", "value4_i", "1")));
     assertU(commit());
-    assertU(add(doc("id", "3", "value1_s1", "2", "value2_i", "3", "value3_s1", "b", "value4_s1", "2")));
-    assertU(add(doc("id", "4", "value1_s1", "1", "value2_i", "4", "value3_s1", "a", "value4_s1", "1")));
-    assertU(add(doc("id", "5", "value1_s1", "2", "value2_i", "5", "value3_s1", "b", "value4_s1", "2")));
+    assertU(add(doc("id", "3", "value1_s1", "2", "value2_i", "3", "value3_s1", "b", "value4_i", "2")));
+    assertU(add(doc("id", "4", "value1_s1", "1", "value2_i", "4", "value3_s1", "a", "value4_i", "1")));
+    assertU(add(doc("id", "5", "value1_s1", "2", "value2_i", "5", "value3_s1", "b", "value4_i", "2")));
     assertU(commit());
 
     // Facet counts based on documents
@@ -329,7 +334,7 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     assertJQ(
         req,
         "/grouped=={'value1_s1':{'matches':5,'groups':[{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'1'}]}}]}}",
-        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',3,'b',2]},'facet_dates':{},'facet_ranges':{}}"
+        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',3,'b',2]}," + EMPTY_FACETS + "}"
     );
 
     // Facet counts based on groups
@@ -338,38 +343,79 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     assertJQ(
         req,
         "/grouped=={'value1_s1':{'matches':5,'groups':[{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'1'}]}}]}}",
-        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]},'facet_dates':{},'facet_ranges':{}}"
+        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]}," + EMPTY_FACETS + "}"
+    );
+
+    // Facet counts based on groups and with group.func. This should trigger FunctionAllGroupHeadsCollector
+    req = req("q", "*:*", "sort", "value2_i asc", "rows", "1", "group", "true", "group.func",
+        "strdist(1,value1_s1,edit)", "fl", "id", "facet", "true", "facet.field", "value3_s1", "group.truncate", "true");
+    assertJQ(
+        req,
+        "/grouped=={'strdist(1,value1_s1,edit)':{'matches':5,'groups':[{'groupValue':1.0,'doclist':{'numFound':3,'start':0,'docs':[{'id':'1'}]}}]}}",
+        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]}," + EMPTY_FACETS + "}"
     );
 
     // Facet counts based on groups without sort on an int field.
-    req = req("q", "*:*", "rows", "1", "group", "true", "group.field", "value4_s1", "fl", "id", "facet", "true",
+    req = req("q", "*:*", "rows", "1", "group", "true", "group.field", "value4_i", "fl", "id", "facet", "true",
         "facet.field", "value3_s1", "group.truncate", "true");
     assertJQ(
         req,
-        "/grouped=={'value4_s1':{'matches':5,'groups':[{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'1'}]}}]}}",
-        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]},'facet_dates':{},'facet_ranges':{}}"
+        "/grouped=={'value4_i':{'matches':5,'groups':[{'groupValue':1,'doclist':{'numFound':3,'start':0,'docs':[{'id':'1'}]}}]}}",
+        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]}," + EMPTY_FACETS + "}"
     );
 
     // Multi select facets AND group.truncate=true
-    req = req("q", "*:*", "rows", "1", "group", "true", "group.field", "value4_s1", "fl", "id", "facet", "true",
+    req = req("q", "*:*", "rows", "1", "group", "true", "group.field", "value4_i", "fl", "id", "facet", "true",
         "facet.field", "{!ex=v}value3_s1", "group.truncate", "true", "fq", "{!tag=v}value3_s1:b");
     assertJQ(
         req,
-        "/grouped=={'value4_s1':{'matches':2,'groups':[{'groupValue':'2','doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}]}}",
-        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]},'facet_dates':{},'facet_ranges':{}}"
+        "/grouped=={'value4_i':{'matches':2,'groups':[{'groupValue':2,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}]}}",
+        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]}," + EMPTY_FACETS + "}"
     );
 
     // Multi select facets AND group.truncate=false
-    req = req("q", "*:*", "rows", "1", "group", "true", "group.field", "value4_s1", "fl", "id", "facet", "true",
+    req = req("q", "*:*", "rows", "1", "group", "true", "group.field", "value4_i", "fl", "id", "facet", "true",
         "facet.field", "{!ex=v}value3_s1", "group.truncate", "false", "fq", "{!tag=v}value3_s1:b");
     assertJQ(
         req,
-        "/grouped=={'value4_s1':{'matches':2,'groups':[{'groupValue':'2','doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}]}}",
-        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',3,'b',2]},'facet_dates':{},'facet_ranges':{}}"
+        "/grouped=={'value4_i':{'matches':2,'groups':[{'groupValue':2,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}]}}",
+        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',3,'b',2]}," + EMPTY_FACETS + "}"
+    );
+
+    // Multi select facets AND group.truncate=true
+    req = req("q", "*:*", "rows", "1", "group", "true", "group.func", "sub(value4_i,1)", "fl", "id", "facet", "true",
+        "facet.field", "{!ex=v}value3_s1", "group.truncate", "true", "fq", "{!tag=v}value3_s1:b");
+    assertJQ(
+        req,
+        "/grouped=={'sub(value4_i,1)':{'matches':2,'groups':[{'groupValue':1.0,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}]}}",
+        "/facet_counts=={'facet_queries':{},'facet_fields':{'value3_s1':['a',1,'b',1]}," + EMPTY_FACETS + "}"
     );
   }
 
-  static String f = "foo_s1";
+  @Test
+  public void testGroupingGroupedBasedFacetingWithTaggedFilter() throws Exception {
+    assertU(add(doc("id", "1", "cat_sI", "a", "bday", "2012-11-20T00:00:00Z")));
+    assertU(add(doc("id", "2", "cat_sI", "b", "bday", "2012-11-21T00:00:00Z")));
+    assertU(add(doc("id", "3", "cat_sI", "a", "bday", "2012-11-20T00:00:00Z")));
+    assertU(add(doc("id", "4", "cat_sI", "b", "bday", "2013-01-15T00:00:00Z")));
+    assertU(add(doc("id", "5", "cat_sI", "a", "bday", "2013-01-14T00:00:00Z")));
+    assertU(commit());
+
+    // Facet counts based on groups
+    SolrQueryRequest req = req("q", "*:*", "rows", "1", "group", "true", "group.field", "cat_sI",
+        "sort", "cat_sI asc", "fl", "id", "fq", "{!tag=chk}bday:[2012-12-18T00:00:00Z TO 2013-01-17T23:59:59Z]",
+        "facet", "true", "group.truncate", "true", "group.sort", "bday desc",
+        "facet.query", "{!ex=chk key=LW1}bday:[2013-01-11T00:00:00Z TO 2013-01-17T23:59:59Z]",
+        "facet.query", "{!ex=chk key=LM1}bday:[2012-12-18T00:00:00Z TO 2013-01-17T23:59:59Z]",
+        "facet.query", "{!ex=chk key=LM3}bday:[2012-10-18T00:00:00Z TO 2013-01-17T23:59:59Z]");
+    assertJQ(
+        req,
+        "/grouped=={'cat_sI':{'matches':2,'groups':[{'groupValue':'a','doclist':{'numFound':1,'start':0,'docs':[{'id':'5'}]}}]}}",
+        "/facet_counts=={'facet_queries':{'LW1':2,'LM1':2,'LM3':2},'facet_fields':{}," + EMPTY_FACETS + "}"
+    );
+  }
+
+  static String f = "foo_i";
   static String f2 = "foo2_i";
 
   public static void createIndex() {
@@ -384,28 +430,9 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     assertU(commit());
     assertU(adoc("id","8", f,"1",  f2,"10"));
     assertU(adoc("id","9", f,"2",  f2,"1"));
-    assertU(commit());
+    assertU(commit());    
     assertU(adoc("id","10", f,"1", f2,"3"));
     assertU(commit());
-  }
-
-  @Test
-  public void testGroupedCount() throws Exception {
-    createIndex();
-    String filt = f + ":[* TO *]";
-
-    assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "sort", f + " asc", "fl","id", "group.ngroups", "true")
-      ,"/responseHeader/status==0"                         // exact match
-      ,"/responseHeader=={'_SKIP_':'QTime', 'status':0}"   // partial match by skipping some elements
-      ,"/responseHeader=={'_MATCH_':'status', 'status':0}" // partial match by only including some elements
-      ,"/grouped=={'"+f+"':{'matches':10,'ngroups': 5,'groups':[\n" +
-              "{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'5'}]}}," +
-              "{'groupValue':'2','doclist':{'numFound':3,'start':0,'docs':[{'id':'4'}]}}," +
-              "{'groupValue':'3','doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}," +
-              "{'groupValue':'4','doclist':{'numFound':1,'start':0,'docs':[{'id':'2'}]}}," +
-              "{'groupValue':'5','doclist':{'numFound':1,'start':0,'docs':[{'id':'1'}]}}" +
-            "]}}"
-    );
   }
 
   @Test
@@ -417,38 +444,38 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
         ,"/response/lst[@name='grouped']/lst[@name='"+f+"']/arr[@name='groups']"
     );
 
-    assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "sort", f + " asc", "group.sort", "score desc")
+    assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id")
       ,"/responseHeader/status==0"                         // exact match
       ,"/responseHeader=={'_SKIP_':'QTime', 'status':0}"   // partial match by skipping some elements
       ,"/responseHeader=={'_MATCH_':'status', 'status':0}" // partial match by only including some elements
       ,"/grouped=={'"+f+"':{'matches':10,'groups':[\n" +
-              "{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'8'}]}}," +
-              "{'groupValue':'2','doclist':{'numFound':3,'start':0,'docs':[{'id':'4'}]}}," +
-              "{'groupValue':'3','doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}," +
-              "{'groupValue':'4','doclist':{'numFound':1,'start':0,'docs':[{'id':'2'}]}}," +
-              "{'groupValue':'5','doclist':{'numFound':1,'start':0,'docs':[{'id':'1'}]}}" +
+              "{'groupValue':1,'doclist':{'numFound':3,'start':0,'docs':[{'id':'8'}]}}," +
+              "{'groupValue':3,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}," +
+              "{'groupValue':2,'doclist':{'numFound':3,'start':0,'docs':[{'id':'4'}]}}," +
+              "{'groupValue':5,'doclist':{'numFound':1,'start':0,'docs':[{'id':'1'}]}}," +
+              "{'groupValue':4,'doclist':{'numFound':1,'start':0,'docs':[{'id':'2'}]}}" +
             "]}}"
     );
 
     // test that filtering cuts down the result set
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "fq",f+":2")
       ,"/grouped=={'"+f+"':{'matches':3,'groups':[" +
-            "{'groupValue':'2','doclist':{'numFound':3,'start':0,'docs':[{'id':'4'}]}}" +
+            "{'groupValue':2,'doclist':{'numFound':3,'start':0,'docs':[{'id':'4'}]}}" +
             "]}}"
     );
 
     // test limiting the number of groups returned
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "rows","2")
       ,"/grouped=={'"+f+"':{'matches':10,'groups':[" +
-              "{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'8'}]}}," +
-              "{'groupValue':'3','doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}" +
+              "{'groupValue':1,'doclist':{'numFound':3,'start':0,'docs':[{'id':'8'}]}}," +
+              "{'groupValue':3,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}" +
             "]}}"
     );
 
     // test offset into group list
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "rows","1", "start","1")
       ,"/grouped=={'"+f+"':{'matches':10,'groups':[" +
-              "{'groupValue':'3','doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}" +
+              "{'groupValue':3,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}" +
             "]}}"
     );
 
@@ -461,24 +488,24 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     // test increasing the docs per group returned
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "rows","2", "group.limit","3")
       ,"/grouped=={'"+f+"':{'matches':10,'groups':[" +
-            "{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'8'},{'id':'10'},{'id':'5'}]}}," +
-            "{'groupValue':'3','doclist':{'numFound':2,'start':0,'docs':[{'id':'3'},{'id':'6'}]}}" +
+            "{'groupValue':1,'doclist':{'numFound':3,'start':0,'docs':[{'id':'8'},{'id':'10'},{'id':'5'}]}}," +
+            "{'groupValue':3,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'},{'id':'6'}]}}" +
           "]}}"
     );
 
     // test offset into each group
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "rows","2", "group.limit","3", "group.offset","1")
       ,"/grouped=={'"+f+"':{'matches':10,'groups':[" +
-            "{'groupValue':'1','doclist':{'numFound':3,'start':1,'docs':[{'id':'10'},{'id':'5'}]}}," +
-            "{'groupValue':'3','doclist':{'numFound':2,'start':1,'docs':[{'id':'6'}]}}" +
+            "{'groupValue':1,'doclist':{'numFound':3,'start':1,'docs':[{'id':'10'},{'id':'5'}]}}," +
+            "{'groupValue':3,'doclist':{'numFound':2,'start':1,'docs':[{'id':'6'}]}}" +
           "]}}"
     );
 
     // test big offset into each group
      assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "rows","2", "group.limit","3", "group.offset","10")
       ,"/grouped=={'"+f+"':{'matches':10,'groups':[" +
-            "{'groupValue':'1','doclist':{'numFound':3,'start':10,'docs':[]}}," +
-            "{'groupValue':'3','doclist':{'numFound':2,'start':10,'docs':[]}}" +
+            "{'groupValue':1,'doclist':{'numFound':3,'start':10,'docs':[]}}," +
+            "{'groupValue':3,'doclist':{'numFound':2,'start':10,'docs':[]}}" +
           "]}}"
     );
 
@@ -486,13 +513,12 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id,score", "rows","2", "group.limit","2", "indent","off")
       ,"/grouped/"+f+"/groups==" +
             "[" +
-              "{'groupValue':'1','doclist':{'numFound':3,'start':0,'maxScore':10.0,'docs':[{'id':'8','score':10.0},{'id':'10','score':3.0}]}}," +
-              "{'groupValue':'3','doclist':{'numFound':2,'start':0,'maxScore':7.0,'docs':[{'id':'3','score':7.0},{'id':'6','score':2.0}]}}" +
+              "{'groupValue':1,'doclist':{'numFound':3,'start':0,'maxScore':10.0,'docs':[{'id':'8','score':10.0},{'id':'10','score':3.0}]}}," +
+              "{'groupValue':3,'doclist':{'numFound':2,'start':0,'maxScore':7.0,'docs':[{'id':'3','score':7.0},{'id':'6','score':2.0}]}}" +
             "]"
 
     );
 
-    /* Not supperted yet!
     // test function (functions are currently all float - this may change)
     String func = "add("+f+","+f+")";
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.func", func  , "fl","id", "rows","2")
@@ -501,7 +527,6 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
               "{'groupValue':6.0,'doclist':{'numFound':2,'start':0,'docs':[{'id':'3'}]}}" +
             "]}}"
     );
-    */
 
     // test that faceting works with grouping
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id"
@@ -509,7 +534,6 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
       ,"/grouped/"+f+"/matches==10"
       ,"/facet_counts/facet_fields/"+f+"==['1',3, '2',3, '3',2, '4',1, '5',1]"
     );
-    purgeFieldCache(FieldCache.DEFAULT);   // avoid FC insanity
 
     // test that grouping works with highlighting
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id"
@@ -530,6 +554,18 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.query","id:[2 TO 5]", "fl","id", "group.limit","3")
        ,"/grouped=={'id:[2 TO 5]':{'matches':10," +
            "'doclist':{'numFound':4,'start':0,'docs':[{'id':'3'},{'id':'4'},{'id':'2'}]}}}"
+    );
+
+    // group.query that matches nothing
+    assertJQ(req("fq",filt,  
+                 "q","{!func}"+f2, 
+                 "group","true", 
+                 "group.query","id:[2 TO 5]", 
+                 "group.query","id:1000", 
+                 "fl","id", 
+                 "group.limit","3")
+             ,"/grouped/id:[2 TO 5]=={'matches':10,'doclist':{'numFound':4,'start':0,'docs':[{'id':'3'},{'id':'4'},{'id':'2'}]}}"
+             ,"/grouped/id:1000=={'matches':10,'doclist':{'numFound':0,'start':0,'docs':[]}}"
     );
 
     // group.query and offset
@@ -568,9 +604,10 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
         "rows","1",
         "fl","id", "group.limit","2")
        ,"/grouped/id:[2 TO 5]=={'matches':10,'doclist':{'numFound':4,'start':0,'docs':[{'id':'3'},{'id':'4'}]}}"
-       ,"/grouped/id:[5 TO 5]=={'matches':10,'doclist':{'numFound':1,'start':0,'docs':[{'id':'5'}]}}"
-       ,"/grouped/"+f+"=={'matches':10,'groups':[{'groupValue':'1','doclist':{'numFound':3,'start':0,'docs':[{'id':'8'},{'id':'10'}]}}]}"
+       ,"/grouped/id:[5 TO 5]=={'matches':10,'doclist':{'numFound':1,'start':0,'docs':[{'id':'5'}]}}"        
+       ,"/grouped/"+f+"=={'matches':10,'groups':[{'groupValue':1,'doclist':{'numFound':3,'start':0,'docs':[{'id':'8'},{'id':'10'}]}}]}"
     );
+
 
     ///////////////////////// group.field as main result
     assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "group.main","true")
@@ -598,210 +635,249 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
     );
 
     ///////////////////////// group.format == simple
-    assertJQ(req("fq",filt,  "q","{!func}"+f2, "group","true", "group.field",f, "fl","id", "rows","3", "start","1", "group.limit","2", "group.format","simple")
-    , "/grouped/foo_s1=={'matches':10,'doclist':"
-        +"{'numFound':10,'start':1,'docs':[{'id':'10'},{'id':'3'},{'id':'6'}]}}"
+    assertJQ(req("fq", filt, "q", "{!func}" + f2, "group", "true", "group.field", f, "fl", "id", "rows", "3", "start", "1", "group.limit", "2", "group.format", "simple")
+        , "/grouped/foo_i=={'matches':10,'doclist':"
+        + "{'numFound':10,'start':1,'docs':[{'id':'10'},{'id':'3'},{'id':'6'}]}}"
     );
+
+    //////////////////////// grouping where main query matches nothing
+    assertJQ(req("fq", filt, "q", "bogus_s:nothing", "group", "true", "group.field", f, "fl", "id", "group.limit", "2", "group.format", "simple")
+        , "/grouped/foo_i=={'matches':0,'doclist':{'numFound':0,'start':0,'docs':[]}}"
+    );
+    assertJQ(req("fq",filt,  "q","bogus_s:nothing", "group","true",
+        "group.query","id:[2 TO 5]",
+        "group.query","id:[5 TO 5]",
+        "group.field",f,
+        "rows","1",
+        "fl","id", "group.limit","2")
+       ,"/grouped/id:[2 TO 5]=={'matches':0,'doclist':{'numFound':0,'start':0,'docs':[]}}"
+       ,"/grouped/id:[5 TO 5]=={'matches':0,'doclist':{'numFound':0,'start':0,'docs':[]}}"        
+       ,"/grouped/"+f+"=={'matches':0,'groups':[]}"
+    );
+    assertJQ(req("fq",filt,  
+                 "q","bogus_s:nothing", 
+                 "group","true", 
+                 "group.query","id:[2 TO 5]", 
+                 "group.query","id:1000", 
+                 "fl","id", 
+                 "group.limit","3")
+             ,"/grouped/id:[2 TO 5]=={'matches':0,'doclist':{'numFound':0,'start':0,'docs':[]}}"
+             ,"/grouped/id:1000=={'matches':0,'doclist':{'numFound':0,'start':0,'docs':[]}}"
+    );
+
+
+
   }
+
 
 
   @Test
   public void testRandomGrouping() throws Exception {
-    try {
-      int indexIter=50 * RANDOM_MULTIPLIER;  // make >0 to enable test
-      int queryIter=100 * RANDOM_MULTIPLIER;
+    /**
+     updateJ("{\"add\":{\"doc\":{\"id\":\"77\"}}}", params("commit","true"));
+     assertJQ(req("q","id:77"), "/response/numFound==1");
 
-      while (--indexIter >= 0) {
+     Doc doc = createDocObj(types);
+     updateJ(toJSON(doc), params("commit","true"));
 
-        int indexSize = random.nextInt(25 * RANDOM_MULTIPLIER);
-        List<FldType> types = new ArrayList<FldType>();
-        types.add(new FldType("id",ONE_ONE, new SVal('A','Z',4,4)));
-        types.add(new FldType("score_s1",ONE_ONE, new SVal('a','c',1,1)));  // field used to score
-        types.add(new FldType("bar_s1",ONE_ONE, new SVal('a','z',3,5)));
-        types.add(new FldType(FOO_STRING_FIELD,ONE_ONE, new SVal('a','z',1,2)));
-        types.add(new FldType(SMALL_STRING_FIELD,ZERO_ONE, new SVal('a',(char)('c'+indexSize/10),1,1)));
+     assertJQ(req("q","id:"+doc.id), "/response/numFound==1");
+    **/
 
+    int indexIter=atLeast(10);  // make >0 to enable test
+    int queryIter=atLeast(50);
+
+    while (--indexIter >= 0) {
+
+      int indexSize = random().nextInt(25 * RANDOM_MULTIPLIER);
+//indexSize=2;
+      List<FldType> types = new ArrayList<>();
+      types.add(new FldType("id",ONE_ONE, new SVal('A','Z',4,4)));
+      types.add(new FldType("score_f",ONE_ONE, new FVal(1,100)));  // field used to score
+      types.add(new FldType("foo_i",ZERO_ONE, new IRange(0,indexSize)));
+      types.add(new FldType(FOO_STRING_FIELD,ONE_ONE, new SVal('a','z',1,2)));
+      types.add(new FldType(SMALL_STRING_FIELD,ZERO_ONE, new SVal('a',(char)('c'+indexSize/10),1,1)));
+      types.add(new FldType(SMALL_INT_FIELD,ZERO_ONE, new IRange(0,5+indexSize/10)));
+
+      clearIndex();
+      Map<Comparable, Doc> model = indexDocs(types, null, indexSize);
+      //System.out.println("############### model=" + model);
+
+      // test with specific docs
+      if (false) {
         clearIndex();
-        Map<Comparable, Doc> model = indexDocs(types, null, indexSize);
+        model.clear();
+        Doc d1 = createDoc(types);
+        d1.getValues(SMALL_STRING_FIELD).set(0,"c");
+        d1.getValues(SMALL_INT_FIELD).set(0,5);
+        d1.order = 0;
+        updateJ(toJSON(d1), params("commit","true"));
+        model.put(d1.id, d1);
 
-        // test with specific docs
+        d1 = createDoc(types);
+        d1.getValues(SMALL_STRING_FIELD).set(0,"b");
+        d1.getValues(SMALL_INT_FIELD).set(0,5);
+        d1.order = 1;
+        updateJ(toJSON(d1), params("commit","false"));
+        model.put(d1.id, d1);
+
+        d1 = createDoc(types);
+        d1.getValues(SMALL_STRING_FIELD).set(0,"c");
+        d1.getValues(SMALL_INT_FIELD).set(0,5);
+        d1.order = 2;
+        updateJ(toJSON(d1), params("commit","false"));
+        model.put(d1.id, d1);
+
+        d1 = createDoc(types);
+        d1.getValues(SMALL_STRING_FIELD).set(0,"c");
+        d1.getValues(SMALL_INT_FIELD).set(0,5);
+        d1.order = 3;
+        updateJ(toJSON(d1), params("commit","false"));
+        model.put(d1.id, d1);
+
+        d1 = createDoc(types);
+        d1.getValues(SMALL_STRING_FIELD).set(0,"b");
+        d1.getValues(SMALL_INT_FIELD).set(0,2);
+        d1.order = 4;
+        updateJ(toJSON(d1), params("commit","true"));
+        model.put(d1.id, d1);
+      }
+
+
+      for (int qiter=0; qiter<queryIter; qiter++) {
+        String groupField = types.get(random().nextInt(types.size())).fname;
+
+        int rows = random().nextInt(10)==0 ? random().nextInt(model.size()+2) : random().nextInt(11)-1;
+        int start = random().nextInt(5)==0 ? random().nextInt(model.size()+2) : random().nextInt(5); // pick a small start normally for better coverage
+        int group_limit = random().nextInt(10)==0 ? random().nextInt(model.size()+2) : random().nextInt(11)-1;    
+        int group_offset = random().nextInt(10)==0 ? random().nextInt(model.size()+2) : random().nextInt(2); // pick a small start normally for better coverage
+
+        IndexSchema schema = h.getCore().getLatestSchema();
+        
+        String[] stringSortA = new String[1];
+        Comparator<Doc> sortComparator = createSort(schema, types, stringSortA);
+        String sortStr = stringSortA[0];
+        Comparator<Doc> groupComparator = random().nextBoolean() ? sortComparator : createSort(schema, types, stringSortA);
+        String groupSortStr = stringSortA[0];
+
+        // since groupSortStr defaults to sortStr, we need to normalize null to "score desc" if
+        // sortStr != null.
+        if (groupSortStr == null && groupSortStr != sortStr) {
+          groupSortStr = "score desc";
+        }
+        
+         // Test specific case
         if (false) {
-          clearIndex();
-          model.clear();
-          Doc d1 = createDoc(types);
-          d1.getValues(SMALL_STRING_FIELD).set(0,"c");
-          d1.getValues(SMALL_INT_FIELD).set(0,5);
-          d1.order = 0;
-          updateJ(toJSON(d1), params("commit","true"));
-          model.put(d1.id, d1);
-
-          d1 = createDoc(types);
-          d1.getValues(SMALL_STRING_FIELD).set(0,"b");
-          d1.getValues(SMALL_INT_FIELD).set(0,5);
-          d1.order = 1;
-          updateJ(toJSON(d1), params("commit","false"));
-          model.put(d1.id, d1);
-
-          d1 = createDoc(types);
-          d1.getValues(SMALL_STRING_FIELD).set(0,"c");
-          d1.getValues(SMALL_INT_FIELD).set(0,5);
-          d1.order = 2;
-          updateJ(toJSON(d1), params("commit","false"));
-          model.put(d1.id, d1);
-
-          d1 = createDoc(types);
-          d1.getValues(SMALL_STRING_FIELD).set(0,"c");
-          d1.getValues(SMALL_INT_FIELD).set(0,5);
-          d1.order = 3;
-          updateJ(toJSON(d1), params("commit","false"));
-          model.put(d1.id, d1);
-
-          d1 = createDoc(types);
-          d1.getValues(SMALL_STRING_FIELD).set(0,"b");
-          d1.getValues(SMALL_INT_FIELD).set(0,2);
-          d1.order = 4;
-          updateJ(toJSON(d1), params("commit","true"));
-          model.put(d1.id, d1);
+          groupField=SMALL_INT_FIELD;
+          sortComparator=createComparator(Arrays.asList(createComparator(SMALL_STRING_FIELD, true, true, false, true)));
+          sortStr = SMALL_STRING_FIELD + " asc";
+          groupComparator = createComparator(Arrays.asList(createComparator(SMALL_STRING_FIELD, true, true, false, false)));
+          groupSortStr = SMALL_STRING_FIELD + " asc";
+          rows=1; start=0; group_offset=1; group_limit=1;
         }
 
+        Map<Comparable, Grp> groups = groupBy(model.values(), groupField);
 
-        for (int qiter=0; qiter<queryIter; qiter++) {
-          String groupField = types.get(random.nextInt(types.size())).fname;
+        // first sort the docs in each group
+        for (Grp grp : groups.values()) {
+          Collections.sort(grp.docs, groupComparator);
+        }
 
-          int rows = random.nextInt(10)==0 ? random.nextInt(model.size()+2) : random.nextInt(11)-1;
-          int start = random.nextInt(5)==0 ? random.nextInt(model.size()+2) : random.nextInt(5); // pick a small start normally for better coverage
-          int group_limit = random.nextInt(10)==0 ? random.nextInt(model.size()+2) : random.nextInt(11)-1;
-          int group_offset = random.nextInt(10)==0 ? random.nextInt(model.size()+2) : random.nextInt(2); // pick a small start normally for better coverage
+        // now sort the groups
 
-          String[] stringSortA = new String[1];
-          Comparator<Doc> sortComparator = createSort(h.getCore().getSchema(), types, stringSortA);
-          String sortStr = stringSortA[0];
-          Comparator<Doc> groupComparator = random.nextBoolean() ? sortComparator : createSort(h.getCore().getSchema(), types, stringSortA);
-          String groupSortStr = stringSortA[0];
+        // if sort != group.sort, we need to find the max doc by "sort"
+        if (groupComparator != sortComparator) {
+          for (Grp grp : groups.values()) grp.setMaxDoc(sortComparator); 
+        }
 
-          // since groupSortStr defaults to sortStr, we need to normalize null to "score desc" if
-          // sortStr != null.
-          if (groupSortStr == null && groupSortStr != sortStr) {
-            groupSortStr = "score desc";
+        List<Grp> sortedGroups = new ArrayList<>(groups.values());
+        Collections.sort(sortedGroups,  groupComparator==sortComparator ? createFirstDocComparator(sortComparator) : createMaxDocComparator(sortComparator));
+
+        boolean includeNGroups = random().nextBoolean();
+        Object modelResponse = buildGroupedResult(schema, sortedGroups, start, rows, group_offset, group_limit, includeNGroups);
+
+        boolean truncateGroups = random().nextBoolean();
+        Map<String, Integer> facetCounts = new TreeMap<>();
+        if (truncateGroups) {
+          for (Grp grp : sortedGroups) {
+            Doc doc = grp.docs.get(0);
+            if (doc.getValues(FOO_STRING_FIELD) == null) {
+              continue;
+            }
+
+            String key = doc.getFirstValue(FOO_STRING_FIELD).toString();
+            boolean exists = facetCounts.containsKey(key);
+            int count = exists ? facetCounts.get(key) : 0;
+            facetCounts.put(key, ++count);
           }
+        } else {
+          for (Doc doc : model.values()) {
+            if (doc.getValues(FOO_STRING_FIELD) == null) {
+              continue;
+            }
 
-           // Test specific case
-          if (false) {
-            groupField=SMALL_INT_FIELD;
-            sortComparator=createComparator(Arrays.asList(createComparator(SMALL_STRING_FIELD, true, true, false, true)));
-            sortStr = SMALL_STRING_FIELD + " asc";
-            groupComparator = createComparator(Arrays.asList(createComparator(SMALL_STRING_FIELD, true, true, false, false)));
-            groupSortStr = SMALL_STRING_FIELD + " asc";
-            rows=1; start=0; group_offset=1; group_limit=1;
-          }
-
-          Map<Comparable, Grp> groups = groupBy(model.values(), groupField);
-
-          // first sort the docs in each group
-          for (Grp grp : groups.values()) {
-            Collections.sort(grp.docs, groupComparator);
-          }
-
-          // now sort the groups
-
-          // if sort != group.sort, we need to find the max doc by "sort"
-          if (groupComparator != sortComparator) {
-            for (Grp grp : groups.values()) grp.setMaxDoc(sortComparator);
-          }
-
-          List<Grp> sortedGroups = new ArrayList<Grp>(groups.values());
-          Collections.sort(sortedGroups,  groupComparator==sortComparator ? createFirstDocComparator(sortComparator) : createMaxDocComparator(sortComparator));
-
-          boolean includeNGroups = random.nextBoolean();
-          Object modelResponse = buildGroupedResult(h.getCore().getSchema(), sortedGroups, start, rows, group_offset, group_limit, includeNGroups);
-
-          boolean truncateGroups = random.nextBoolean();
-          Map<String, Integer> facetCounts = new TreeMap<String, Integer>();
-          if (truncateGroups) {
-            for (Grp grp : sortedGroups) {
-              Doc doc = grp.docs.get(0);
-              if (doc.getValues(FOO_STRING_FIELD) == null) {
-                continue;
-              }
-
-              String key = doc.getFirstValue(FOO_STRING_FIELD).toString();
+            for (Comparable field : doc.getValues(FOO_STRING_FIELD)) {
+              String key = field.toString();
               boolean exists = facetCounts.containsKey(key);
               int count = exists ? facetCounts.get(key) : 0;
               facetCounts.put(key, ++count);
             }
-          } else {
-            for (Doc doc : model.values()) {
-              if (doc.getValues(FOO_STRING_FIELD) == null) {
-                continue;
-              }
-
-              for (Comparable field : doc.getValues(FOO_STRING_FIELD)) {
-                String key = field.toString();
-                boolean exists = facetCounts.containsKey(key);
-                int count = exists ? facetCounts.get(key) : 0;
-                facetCounts.put(key, ++count);
-              }
-            }
           }
-          List<Comparable> expectedFacetResponse = new ArrayList<Comparable>();
-          for (Map.Entry<String, Integer> stringIntegerEntry : facetCounts.entrySet()) {
-            expectedFacetResponse.add(stringIntegerEntry.getKey());
-            expectedFacetResponse.add(stringIntegerEntry.getValue());
-          }
+        }
+        List<Comparable> expectedFacetResponse = new ArrayList<>();
+        for (Map.Entry<String, Integer> stringIntegerEntry : facetCounts.entrySet()) {
+          expectedFacetResponse.add(stringIntegerEntry.getKey());
+          expectedFacetResponse.add(stringIntegerEntry.getValue());
+        }
 
-          int randomPercentage = random.nextInt(101);
-          // TODO: create a random filter too
-          SolrQueryRequest req = req("group","true","wt","json","indent","true", "echoParams","all", "q","{!func}score_f", "group.field",groupField
-              ,sortStr==null ? "nosort":"sort", sortStr ==null ? "": sortStr
-              ,(groupSortStr==null || groupSortStr==sortStr) ? "noGroupsort":"group.sort", groupSortStr==null ? "": groupSortStr
-              ,"rows",""+rows, "start",""+start, "group.offset",""+group_offset, "group.limit",""+group_limit,
-              GroupParams.GROUP_CACHE_PERCENTAGE, Integer.toString(randomPercentage), GroupParams.GROUP_TOTAL_COUNT, includeNGroups ? "true" : "false",
-              "facet", "true", "facet.sort", "index", "facet.limit", "-1", "facet.field", FOO_STRING_FIELD,
-              GroupParams.GROUP_TRUNCATE, truncateGroups ? "true" : "false", "facet.mincount", "1"
+        int randomPercentage = random().nextInt(101);
+        // TODO: create a random filter too
+        SolrQueryRequest req = req("group","true","wt","json","indent","true", "echoParams","all", "q","{!func}score_f", "group.field",groupField
+            ,sortStr==null ? "nosort":"sort", sortStr ==null ? "": sortStr
+            ,(groupSortStr == null || groupSortStr == sortStr) ? "noGroupsort":"group.sort", groupSortStr==null ? "": groupSortStr
+            ,"rows",""+rows, "start",""+start, "group.offset",""+group_offset, "group.limit",""+group_limit,
+            GroupParams.GROUP_CACHE_PERCENTAGE, Integer.toString(randomPercentage), GroupParams.GROUP_TOTAL_COUNT, includeNGroups ? "true" : "false",
+            "facet", "true", "facet.sort", "index", "facet.limit", "-1", "facet.field", FOO_STRING_FIELD,
+            GroupParams.GROUP_TRUNCATE, truncateGroups ? "true" : "false", "facet.mincount", "1", "facet.method", "fcs" // to avoid FC insanity
+        );
+
+        String strResponse = h.query(req);
+
+        Object realResponse = ObjectBuilder.fromJSON(strResponse);
+        String err = JSONTestUtil.matchObj("/grouped/" + groupField, realResponse, modelResponse);
+        if (err != null) {
+          log.error("GROUPING MISMATCH: " + err
+           + "\n\trequest="+req
+           + "\n\tresult="+strResponse
+           + "\n\texpected="+ JSONUtil.toJSON(modelResponse)
+           + "\n\tsorted_model="+ sortedGroups
           );
 
-          String strResponse = h.query(req);
+          // re-execute the request... good for putting a breakpoint here for debugging
+          String rsp = h.query(req);
 
-          Object realResponse = ObjectBuilder.fromJSON(strResponse);
-          String err = JSONTestUtil.matchObj("/grouped/"+groupField, realResponse, modelResponse);
-          if (err != null) {
-            log.error("GROUPING MISMATCH: " + err
-             + "\n\trequest="+req
-             + "\n\tresult="+strResponse
-             + "\n\texpected="+ JSONUtil.toJSON(modelResponse)
-             + "\n\tsorted_model="+ sortedGroups
-            );
+          fail(err);
+        }
 
-            // re-execute the request... good for putting a breakpoint here for debugging
-            String rsp = h.query(req);
+        // assert post / pre grouping facets
+        err = JSONTestUtil.matchObj("/facet_counts/facet_fields/"+FOO_STRING_FIELD, realResponse, expectedFacetResponse);
+        if (err != null) {
+          log.error("GROUPING MISMATCH: " + err
+           + "\n\trequest="+req
+           + "\n\tresult="+strResponse
+           + "\n\texpected="+ JSONUtil.toJSON(expectedFacetResponse)
+          );
 
-            fail(err);
-          }
-
-           // assert post / pre grouping facets
-          err = JSONTestUtil.matchObj("/facet_counts/facet_fields/"+FOO_STRING_FIELD, realResponse, expectedFacetResponse);
-          if (err != null) {
-            log.error("GROUPING MISMATCH: " + err
-             + "\n\trequest="+req
-             + "\n\tresult="+strResponse
-             + "\n\texpected="+ JSONUtil.toJSON(expectedFacetResponse)
-            );
-  
-            // re-execute the request... good for putting a breakpoint here for debugging
-            h.query(req);
-            fail(err);
-          }
-        } // end query iter
-      } // end index iter
-    } finally {
-      // B/c the facet.field is also used of grouping we have the purge the FC to avoid FC insanity
-      FieldCache.DEFAULT.purgeAllCaches();
-    }
+          // re-execute the request... good for putting a breakpoint here for debugging
+          h.query(req);
+          fail(err);
+        }
+      } // end query iter
+    } // end index iter
 
   }
 
   public static Object buildGroupedResult(IndexSchema schema, List<Grp> sortedGroups, int start, int rows, int group_offset, int group_limit, boolean includeNGroups) {
-    Map<String,Object> result = new LinkedHashMap<String,Object>();
+    Map<String,Object> result = new LinkedHashMap<>();
 
     long matches = 0;
     for (Grp grp : sortedGroups) {
@@ -816,13 +892,13 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
 
     for (int i=start; i<sortedGroups.size(); i++) {
       if (rows != -1 && groupList.size() >= rows) break;  // directly test rather than calculating, so we can catch any calc errors in the real code
-      Map<String,Object> group = new LinkedHashMap<String,Object>();
+      Map<String,Object> group = new LinkedHashMap<>();
       groupList.add(group);
 
       Grp grp = sortedGroups.get(i);
       group.put("groupValue", grp.groupValue);
 
-      Map<String,Object> resultSet = new LinkedHashMap<String,Object>();
+      Map<String,Object> resultSet = new LinkedHashMap<>();
       group.put("doclist", resultSet);
       resultSet.put("numFound", grp.docs.size());
       resultSet.put("start", group_offset);
@@ -839,29 +915,25 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
 
 
   public static Comparator<Grp> createMaxDocComparator(final Comparator<Doc> docComparator) {
-    return new Comparator<Grp>() {
-      public int compare(Grp o1, Grp o2) {
-        // all groups should have at least one doc
-        Doc d1 = o1.maxDoc;
-        Doc d2 = o2.maxDoc;
-        return docComparator.compare(d1, d2);
-      }
+    return (o1, o2) -> {
+      // all groups should have at least one doc
+      Doc d1 = o1.maxDoc;
+      Doc d2 = o2.maxDoc;
+      return docComparator.compare(d1, d2);
     };
   }
 
   public static Comparator<Grp> createFirstDocComparator(final Comparator<Doc> docComparator) {
-    return new Comparator<Grp>() {
-      public int compare(Grp o1, Grp o2) {
-        // all groups should have at least one doc
-        Doc d1 = o1.docs.get(0);
-        Doc d2 = o2.docs.get(0);
-        return docComparator.compare(d1, d2);
-      }
+    return (o1, o2) -> {
+      // all groups should have at least one doc
+      Doc d1 = o1.docs.get(0);
+      Doc d2 = o2.docs.get(0);
+      return docComparator.compare(d1, d2);
     };
   }
 
   public static Map<Comparable, Grp> groupBy(Collection<Doc> docs, String field) {
-    Map<Comparable, Grp> groups = new HashMap<Comparable, Grp>();
+    Map<Comparable, Grp> groups = new HashMap<>();
     for (Doc doc : docs) {
       List<Comparable> vals = doc.getValues(field);
       if (vals == null) {
@@ -869,7 +941,7 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
         if (grp == null) {
           grp = new Grp();
           grp.groupValue = null;
-          grp.docs = new ArrayList<Doc>();
+          grp.docs = new ArrayList<>();
           groups.put(null, grp);
         }
         grp.docs.add(doc);
@@ -880,7 +952,7 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
           if (grp == null) {
             grp = new Grp();
             grp.groupValue = val;
-            grp.docs = new ArrayList<Doc>();
+            grp.docs = new ArrayList<>();
             groups.put(grp.groupValue, grp);
           }
           grp.docs.add(doc);
@@ -908,5 +980,6 @@ public class TestGroupingSearch extends SolrTestCaseJ4 {
       return "{groupValue="+groupValue+",docs="+docs+"}";
     }
   }
-
 }
+
+

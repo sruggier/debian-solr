@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,13 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
 
 import java.io.IOException;
 import java.io.Reader;
 import java.util.Random;
 
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /** Wraps a Reader, and can throw random or fixed
  *  exceptions, and spoon feed read chars. */
@@ -68,7 +67,7 @@ public class MockReaderWrapper extends Reader {
     } else {
       // Spoon-feed: intentionally maybe return less than
       // the consumer asked for
-      realLen = _TestUtil.nextInt(random, 1, len);
+      realLen = TestUtil.nextInt(random, 1, len);
     }
     if (excAtChar != -1) {
       final int left = excAtChar - readSoFar;

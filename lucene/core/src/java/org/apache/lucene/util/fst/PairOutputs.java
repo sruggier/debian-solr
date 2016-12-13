@@ -1,6 +1,4 @@
-package org.apache.lucene.util.fst;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +14,14 @@ package org.apache.lucene.util.fst;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.fst;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.RamUsageEstimator;
 
 /**
  * An FST {@link Outputs} implementation, holding two other outputs.
@@ -61,12 +62,17 @@ public class PairOutputs<A,B> extends Outputs<PairOutputs.Pair<A,B>> {
     public int hashCode() {
       return output1.hashCode() + output2.hashCode();
     }
+
+    @Override
+    public String toString() {
+      return "Pair(" + output1 + "," + output2 + ")";
+    }
   };
 
   public PairOutputs(Outputs<A> outputs1, Outputs<B> outputs2) {
     this.outputs1 = outputs1;
     this.outputs2 = outputs2;
-    NO_OUTPUT = new Pair<A,B>(outputs1.getNoOutput(), outputs2.getNoOutput());
+    NO_OUTPUT = new Pair<>(outputs1.getNoOutput(), outputs2.getNoOutput());
   }
 
   /** Create a new Pair */
@@ -81,7 +87,7 @@ public class PairOutputs<A,B> extends Outputs<PairOutputs.Pair<A,B>> {
     if (a == outputs1.getNoOutput() && b == outputs2.getNoOutput()) {
       return NO_OUTPUT;
     } else {
-      final Pair<A,B> p = new Pair<A,B>(a, b);
+      final Pair<A,B> p = new Pair<>(a, b);
       assert valid(p);
       return p;
     }
@@ -148,6 +154,12 @@ public class PairOutputs<A,B> extends Outputs<PairOutputs.Pair<A,B>> {
     B output2 = outputs2.read(in);
     return newPair(output1, output2);
   }
+  
+  @Override
+  public void skipOutput(DataInput in) throws IOException {
+    outputs1.skipOutput(in);
+    outputs2.skipOutput(in);
+  }
 
   @Override
   public Pair<A,B> getNoOutput() {
@@ -163,5 +175,19 @@ public class PairOutputs<A,B> extends Outputs<PairOutputs.Pair<A,B>> {
   @Override
   public String toString() {
     return "PairOutputs<" + outputs1 + "," + outputs2 + ">";
+  }
+
+  private static final long BASE_NUM_BYTES = RamUsageEstimator.shallowSizeOf(new Pair<Object,Object>(null, null));
+
+  @Override
+  public long ramBytesUsed(Pair<A,B> output) {
+    long ramBytesUsed = BASE_NUM_BYTES;
+    if (output.output1 != null) {
+      ramBytesUsed += outputs1.ramBytesUsed(output.output1);
+    }
+    if (output.output2 != null) {
+      ramBytesUsed += outputs2.ramBytesUsed(output.output2);
+    }
+    return ramBytesUsed;
   }
 }

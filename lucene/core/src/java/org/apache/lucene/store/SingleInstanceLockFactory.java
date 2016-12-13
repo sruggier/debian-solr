@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.IOException;
 import java.util.HashSet;
@@ -24,68 +24,68 @@ import java.util.HashSet;
  * Implements {@link LockFactory} for a single in-process instance,
  * meaning all locking will take place through this one instance.
  * Only use this {@link LockFactory} when you are certain all
- * IndexReaders and IndexWriters for a given index are running
+ * IndexWriters for a given index are running
  * against a single shared in-process Directory instance.  This is
  * currently the default locking for RAMDirectory.
  *
  * @see LockFactory
  */
 
-public class SingleInstanceLockFactory extends LockFactory {
+public final class SingleInstanceLockFactory extends LockFactory {
 
-  private HashSet<String> locks = new HashSet<String>();
-
-  @Override
-  public Lock makeLock(String lockName) {
-    // We do not use the LockPrefix at all, because the private
-    // HashSet instance effectively scopes the locking to this
-    // single Directory instance.
-    return new SingleInstanceLock(locks, lockName);
-  }
+  final HashSet<String> locks = new HashSet<>();
 
   @Override
-  public void clearLock(String lockName) throws IOException {
-    synchronized(locks) {
-      if (locks.contains(lockName)) {
-        locks.remove(lockName);
+  public Lock obtainLock(Directory dir, String lockName) throws IOException {
+    synchronized (locks) {
+      if (locks.add(lockName)) {
+        return new SingleInstanceLock(lockName);
+      } else {
+        throw new LockObtainFailedException("lock instance already obtained: (dir=" + dir + ", lockName=" + lockName + ")");
       }
     }
   }
-}
 
-class SingleInstanceLock extends Lock {
+  private class SingleInstanceLock extends Lock {
+    private final String lockName;
+    private volatile boolean closed;
 
-  String lockName;
-  private HashSet<String> locks;
-
-  public SingleInstanceLock(HashSet<String> locks, String lockName) {
-    this.locks = locks;
-    this.lockName = lockName;
-  }
-
-  @Override
-  public boolean obtain() throws IOException {
-    synchronized(locks) {
-      return locks.add(lockName);
+    public SingleInstanceLock(String lockName) {
+      this.lockName = lockName;
     }
-  }
 
-  @Override
-  public void release() {
-    synchronized(locks) {
-      locks.remove(lockName);
+    @Override
+    public void ensureValid() throws IOException {
+      if (closed) {
+        throw new AlreadyClosedException("Lock instance already released: " + this);
+      }
+      // check we are still in the locks map (some debugger or something crazy didn't remove us)
+      synchronized (locks) {
+        if (!locks.contains(lockName)) {
+          throw new AlreadyClosedException("Lock instance was invalidated from map: " + this);
+        }
+      }
     }
-  }
 
-  @Override
-  public boolean isLocked() {
-    synchronized(locks) {
-      return locks.contains(lockName);
+    @Override
+    public synchronized void close() throws IOException {
+      if (closed) {
+        return;
+      }
+      try {
+        synchronized (locks) {
+          if (!locks.remove(lockName)) {
+            throw new AlreadyClosedException("Lock was already released: " + this);
+          }
+        }
+      } finally {
+        closed = true;
+      }
     }
-  }
 
-  @Override
-  public String toString() {
-    return super.toString() + ": " + lockName;
+    @Override
+    public String toString() {
+      return super.toString() + ": " + lockName;
+    }
   }
 }

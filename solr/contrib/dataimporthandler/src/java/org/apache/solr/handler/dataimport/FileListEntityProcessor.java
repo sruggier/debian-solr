@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -19,16 +19,24 @@ package org.apache.solr.handler.dataimport;
 import java.io.File;
 import java.io.FilenameFilter;
 import java.text.ParseException;
-import java.util.*;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.apache.solr.util.DateMathParser;
 
 /**
  * <p>
  * An {@link EntityProcessor} instance which can stream file names found in a given base
  * directory matching patterns and returning rows containing file information.
  * </p>
- * <p/>
  * <p>
  * It supports querying a give base directory by matching:
  * <ul>
@@ -40,17 +48,14 @@ import java.util.regex.Pattern;
  * </ul>
  * Its output can be used along with {@link FileDataSource} to read from files in file
  * systems.
- * </p>
- * <p/>
  * <p>
  * Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
  * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 1.3
  * @see Pattern
  */
@@ -152,19 +157,23 @@ public class FileListEntityProcessor extends EntityProcessorBase {
     } else  {
       dateStr = context.replaceTokens(dateStr);
     }
-    m = EvaluatorBag.IN_SINGLE_QUOTES.matcher(dateStr);
+    m = Evaluator.IN_SINGLE_QUOTES.matcher(dateStr);
     if (m.find()) {
-      String expr = null;
-      expr = m.group(1).replaceAll("NOW", "");
+      String expr = m.group(1);
+      //TODO refactor DateMathParser.parseMath a bit to have a static method for this logic.
+      if (expr.startsWith("NOW")) {
+        expr = expr.substring("NOW".length());
+      }
       try {
-        return EvaluatorBag.dateMathParser.parseMath(expr);
+        // DWS TODO: is this TimeZone the right default for us?  Deserves explanation if so.
+        return new DateMathParser(TimeZone.getDefault()).parseMath(expr);
       } catch (ParseException exp) {
         throw new DataImportHandlerException(DataImportHandlerException.SEVERE,
                 "Invalid expression for date", exp);
       }
     }
     try {
-      return DataImporter.DATE_TIME_FORMAT.get().parse(dateStr);
+      return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).parse(dateStr);
     } catch (ParseException exp) {
       throw new DataImportHandlerException(DataImportHandlerException.SEVERE,
               "Invalid expression for date", exp);
@@ -200,7 +209,7 @@ public class FileListEntityProcessor extends EntityProcessorBase {
   public Map<String, Object> nextRow() {
     if (rowIterator != null)
       return getNext();
-    List<Map<String, Object>> fileDetails = new ArrayList<Map<String, Object>>();
+    List<Map<String, Object>> fileDetails = new ArrayList<>();
     File dir = new File(baseDir);
 
     String dateStr = context.getEntityAttribute(NEWER_THAN);
@@ -225,6 +234,7 @@ public class FileListEntityProcessor extends EntityProcessorBase {
     // Rather we make use of the fileDetails array which is populated as
     // a side affect of the accept method.
     dir.list(new FilenameFilter() {
+      @Override
       public boolean accept(File dir, String name) {
         File fileObj = new File(dir, name);
         if (fileObj.isDirectory()) {
@@ -242,7 +252,7 @@ public class FileListEntityProcessor extends EntityProcessorBase {
   }
 
   private void addDetails(List<Map<String, Object>> files, File dir, String name) {
-    Map<String, Object> details = new HashMap<String, Object>();
+    Map<String, Object> details = new HashMap<>();
     File aFile = new File(dir, name);
     if (aFile.isDirectory()) return;
     long sz = aFile.length();

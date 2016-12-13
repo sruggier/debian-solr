@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,19 +14,22 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteArrayDataOutput;
 import org.apache.lucene.store.DataInput;
+import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
-import org.apache.lucene.store.RAMDirectory;
-
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
 import java.io.IOException;
+import java.util.Random;
 
 public class TestIndexInput extends LuceneTestCase {
 
@@ -85,6 +86,7 @@ public class TestIndexInput extends LuceneTestCase {
   
   @BeforeClass
   public static void beforeClass() throws IOException {
+    Random random = random();
     INTS = new int[COUNT];
     LONGS = new long[COUNT];
     RANDOM_TEST_BYTES = new byte[COUNT * (5 + 4 + 9 + 8)];
@@ -97,9 +99,9 @@ public class TestIndexInput extends LuceneTestCase {
       final long l1;
       if (rarely()) {
         // a long with lots of zeroes at the end
-        l1 = LONGS[i] = ((long) Math.abs(random.nextInt())) << 32;
+        l1 = LONGS[i] = TestUtil.nextLong(random, 0, Integer.MAX_VALUE) << 32;
       } else {
-        l1 = LONGS[i] = Math.abs(random.nextLong());
+        l1 = LONGS[i] = TestUtil.nextLong(random, 0, Long.MAX_VALUE);
       }
       bdo.writeVLong(l1);
       bdo.writeLong(l1);
@@ -137,22 +139,16 @@ public class TestIndexInput extends LuceneTestCase {
     assertEquals("\u0000",is.readString());
     assertEquals("Lu\u0000ce\u0000ne",is.readString());
     
-    try {
+    Exception expected = expectThrows(expectedEx, () -> {
       is.readVInt();
-      fail("Should throw " + expectedEx.getName());
-    } catch (Exception e) {
-      assertTrue(e.getMessage().startsWith("Invalid vInt"));
-      assertTrue(expectedEx.isInstance(e));
-    }
+    });
+    assertTrue(expected.getMessage().startsWith("Invalid vInt"));
     assertEquals(1, is.readVInt()); // guard value
     
-    try {
+    expected = expectThrows(expectedEx, () -> {
       is.readVLong();
-      fail("Should throw " + expectedEx.getName());
-    } catch (Exception e) {
-      assertTrue(e.getMessage().startsWith("Invalid vLong"));
-      assertTrue(expectedEx.isInstance(e));
-    }
+    });
+    assertTrue(expected.getMessage().startsWith("Invalid vLong"));
     assertEquals(1L, is.readVLong()); // guard value
   }
   
@@ -165,33 +161,26 @@ public class TestIndexInput extends LuceneTestCase {
     }
   }
 
-  // this test only checks BufferedIndexInput because MockIndexInput extends BufferedIndexInput
-  public void testBufferedIndexInputRead() throws IOException {
-    IndexInput is = new MockIndexInput(READ_TEST_BYTES);
-    checkReads(is, IOException.class);
-    is.close();
-    is = new MockIndexInput(RANDOM_TEST_BYTES);
-    checkRandomReads(is);
-    is.close();
-  }
-
-  // this test checks the raw IndexInput methods as it uses RAMIndexInput which extends IndexInput directly
+  // this test checks the IndexInput methods of any impl
   public void testRawIndexInputRead() throws IOException {
-    final RAMDirectory dir = new RAMDirectory();
-    IndexOutput os = dir.createOutput("foo");
-    os.writeBytes(READ_TEST_BYTES, READ_TEST_BYTES.length);
-    os.close();
-    IndexInput is = dir.openInput("foo");
-    checkReads(is, IOException.class);
-    is.close();
+    for (int i = 0; i < 10; i++) {
+      Random random = random();
+      final Directory dir = newDirectory();
+      IndexOutput os = dir.createOutput("foo", newIOContext(random));
+      os.writeBytes(READ_TEST_BYTES, READ_TEST_BYTES.length);
+      os.close();
+      IndexInput is = dir.openInput("foo", newIOContext(random));
+      checkReads(is, IOException.class);
+      is.close();
     
-    os = dir.createOutput("bar");
-    os.writeBytes(RANDOM_TEST_BYTES, RANDOM_TEST_BYTES.length);
-    os.close();
-    is = dir.openInput("bar");
-    checkRandomReads(is);
-    is.close();
-    dir.close();
+      os = dir.createOutput("bar", newIOContext(random));
+      os.writeBytes(RANDOM_TEST_BYTES, RANDOM_TEST_BYTES.length);
+      os.close();
+      is = dir.openInput("bar", newIOContext(random));
+      checkRandomReads(is);
+      is.close();
+      dir.close();
+    }
   }
 
   public void testByteArrayDataInput() throws IOException {
@@ -201,43 +190,4 @@ public class TestIndexInput extends LuceneTestCase {
     checkRandomReads(is);
   }
 
-  /**
-   * Expert
-   *
-   * @throws IOException
-   */
-  public void testSkipChars() throws IOException {
-    byte[] bytes = new byte[]{(byte) 0x80, 0x01,
-            (byte) 0xFF, 0x7F,
-            (byte) 0x80, (byte) 0x80, 0x01,
-            (byte) 0x81, (byte) 0x80, 0x01,
-            0x06, 'L', 'u', 'c', 'e', 'n', 'e',
-    };
-    String utf8Str = "\u0634\u1ea1";
-    byte [] utf8Bytes = utf8Str.getBytes("UTF-8");
-    byte [] theBytes = new byte[bytes.length + 1 + utf8Bytes.length];
-    System.arraycopy(bytes, 0, theBytes, 0, bytes.length);
-    theBytes[bytes.length] = (byte)utf8Str.length();//Add in the number of chars we are storing, which should fit in a byte for this test 
-    System.arraycopy(utf8Bytes, 0, theBytes, bytes.length + 1, utf8Bytes.length);
-    IndexInput is = new MockIndexInput(theBytes);
-    assertEquals(128, is.readVInt());
-    assertEquals(16383, is.readVInt());
-    assertEquals(16384, is.readVInt());
-    assertEquals(16385, is.readVInt());
-    int charsToRead = is.readVInt();//number of chars in the Lucene string
-    assertTrue(0x06 + " does not equal: " + charsToRead, 0x06 == charsToRead);
-    is.skipChars(3);
-    char [] chars = new char[3];//there should be 6 chars remaining
-    is.readChars(chars, 0, 3);
-    String tmpStr = new String(chars);
-    assertTrue(tmpStr + " is not equal to " + "ene", tmpStr.equals("ene" ) == true);
-    //Now read the UTF8 stuff
-    charsToRead = is.readVInt() - 1;//since we are skipping one
-    is.skipChars(1);
-    assertTrue(utf8Str.length() - 1 + " does not equal: " + charsToRead, utf8Str.length() - 1 == charsToRead);
-    chars = new char[charsToRead];
-    is.readChars(chars, 0, charsToRead);
-    tmpStr = new String(chars);
-    assertTrue(tmpStr + " is not equal to " + utf8Str.substring(1), tmpStr.equals(utf8Str.substring(1)) == true);
-  }
 }

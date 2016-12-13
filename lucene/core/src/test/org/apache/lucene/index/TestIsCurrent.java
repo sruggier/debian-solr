@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +14,11 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field.Index;
-import org.apache.lucene.document.Field.Store;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.util.*;
 import org.apache.lucene.store.*;
 
@@ -39,11 +38,11 @@ public class TestIsCurrent extends LuceneTestCase {
 
     // initialize directory
     directory = newDirectory();
-    writer = new RandomIndexWriter(random, directory);
+    writer = new RandomIndexWriter(random(), directory);
 
     // write document
     Document doc = new Document();
-    doc.add(newField("UUID", "1", Store.YES, Index.ANALYZED));
+    doc.add(newTextField("UUID", "1", Field.Store.YES));
     writer.addDocument(doc);
     writer.commit();
   }
@@ -57,14 +56,12 @@ public class TestIsCurrent extends LuceneTestCase {
 
   /**
    * Failing testcase showing the trouble
-   * 
-   * @throws IOException
    */
   @Test
   public void testDeleteByTermIsCurrent() throws IOException {
 
     // get reader
-    IndexReader reader = writer.getReader();
+    DirectoryReader reader = writer.getReader();
 
     // assert index has a document and reader is up2date 
     assertEquals("One document should be in the index", 1, writer.numDocs());
@@ -84,14 +81,12 @@ public class TestIsCurrent extends LuceneTestCase {
 
   /**
    * Testcase for example to show that writer.deleteAll() is working as expected
-   * 
-   * @throws IOException
    */
   @Test
   public void testDeleteAllIsCurrent() throws IOException {
 
     // get reader
-    IndexReader reader = writer.getReader();
+    DirectoryReader reader = writer.getReader();
 
     // assert index has a document and reader is up2date 
     assertEquals("One document should be in the index", 1, writer.numDocs());

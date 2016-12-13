@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.endresulttransformer;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.search.grouping.endresulttransformer;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.endresulttransformer;
 
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.grouping.GroupDocs;
@@ -36,14 +35,15 @@ public class SimpleEndResultTransformer implements EndResultTransformer {
   /**
    * {@inheritDoc}
    */
+  @Override
   public void transform(Map<String, ?> result, ResponseBuilder rb, SolrDocumentSource solrDocumentSource) {
-    NamedList<Object> commands = new SimpleOrderedMap<Object>();
+    NamedList<Object> commands = new SimpleOrderedMap<>();
     for (Map.Entry<String, ?> entry : result.entrySet()) {
       Object value = entry.getValue();
       if (TopGroups.class.isInstance(value)) {
         @SuppressWarnings("unchecked")
         TopGroups<BytesRef> topGroups = (TopGroups<BytesRef>) value;
-        NamedList<Object> command = new SimpleOrderedMap<Object>();
+        NamedList<Object> command = new SimpleOrderedMap<>();
         command.add("matches", rb.totalHitCount);
         if (topGroups.totalGroupCount != null) {
           command.add("ngroups", topGroups.totalGroupCount);

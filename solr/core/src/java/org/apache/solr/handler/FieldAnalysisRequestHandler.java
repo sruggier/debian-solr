@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
 
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.util.AttributeSource;
+import org.apache.lucene.util.BytesRef;
 import org.apache.solr.client.solrj.request.FieldAnalysisRequest;
+import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.AnalysisParams;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.SolrParams;
@@ -31,14 +30,14 @@ import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.IndexSchema;
 import org.apache.commons.io.IOUtils;
 
-import java.util.*;
 import java.io.Reader;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Set;
 
 /**
- * RequestHandler that provides much the same functionality as analysis.jsp.  Provides the ability to specify multiple
- * field types and field names in the same request. Expected parameters:
- * <table border="1">
+ * Provides the ability to specify multiple field types and field names in the same request. Expected parameters:
+ * <table border="1" summary="table of parameters">
  * <tr>
  * <th align="left">Name</th>
  * <th align="left">Type</th>
@@ -63,7 +62,7 @@ import java.io.IOException;
  * <tr>
  * <td>analysis.fieldvalue</td>
  * <td>string</td>
- * <td>yes</td>
+ * <td>no</td>
  * <td>The text that will be analyzed. The analysis will mimic the index-time analysis.</td>
  * <td>No</td>
  * </tr>
@@ -86,8 +85,8 @@ import java.io.IOException;
  * </table>
  * <p>Note that if neither analysis.fieldname and analysis.fieldtype is specified, then the default search field's
  * analyzer is used.</p>
+ * <p>Note that if one of analysis.value or analysis.query or q must be specified</p>
  *
- * @version $Id$
  * @since solr 1.4 
  */
 public class FieldAnalysisRequestHandler extends AnalysisRequestHandlerBase {
@@ -98,28 +97,13 @@ public class FieldAnalysisRequestHandler extends AnalysisRequestHandlerBase {
   @Override
   protected NamedList doAnalysis(SolrQueryRequest req) throws Exception {
     FieldAnalysisRequest analysisRequest = resolveAnalysisRequest(req);
-    IndexSchema indexSchema = req.getCore().getSchema();
+    IndexSchema indexSchema = req.getSchema();
     return handleAnalysisRequest(analysisRequest, indexSchema);
   }
 
   @Override
   public String getDescription() {
     return "Provide a breakdown of the analysis process of field/query text";
-  }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 
   // ================================================= Helper methods ================================================
@@ -151,6 +135,10 @@ public class FieldAnalysisRequestHandler extends AnalysisRequestHandlerBase {
     analysisRequest.setQuery(solrParams.get(AnalysisParams.QUERY, solrParams.get(CommonParams.Q)));
 
     String value = solrParams.get(AnalysisParams.FIELD_VALUE);
+    if (analysisRequest.getQuery() == null && value == null)  {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
+          "One of analysis.fieldvalue, q, or analysis.query parameters must be specified");
+    }
 
     Iterable<ContentStream> streams = req.getContentStreams();
     if (streams != null) {
@@ -184,9 +172,9 @@ public class FieldAnalysisRequestHandler extends AnalysisRequestHandlerBase {
    * @return The analysis breakdown as a named list.
    */
   protected NamedList<NamedList> handleAnalysisRequest(FieldAnalysisRequest request, IndexSchema schema) {
-    NamedList<NamedList> analysisResults = new SimpleOrderedMap<NamedList>();
+    NamedList<NamedList> analysisResults = new SimpleOrderedMap<>();
 
-    NamedList<NamedList> fieldTypeAnalysisResults = new SimpleOrderedMap<NamedList>();
+    NamedList<NamedList> fieldTypeAnalysisResults = new SimpleOrderedMap<>();
     if (request.getFieldTypes() != null)  {
       for (String fieldTypeName : request.getFieldTypes()) {
         FieldType fieldType = schema.getFieldTypes().get(fieldTypeName);
@@ -194,7 +182,7 @@ public class FieldAnalysisRequestHandler extends AnalysisRequestHandlerBase {
       }
     }
 
-    NamedList<NamedList> fieldNameAnalysisResults = new SimpleOrderedMap<NamedList>();
+    NamedList<NamedList> fieldNameAnalysisResults = new SimpleOrderedMap<>();
     if (request.getFieldNames() != null)  {
       for (String fieldName : request.getFieldNames()) {
         FieldType fieldType = schema.getFieldType(fieldName);
@@ -218,17 +206,17 @@ public class FieldAnalysisRequestHandler extends AnalysisRequestHandlerBase {
    *
    * @return NamedList containing the tokens produced by the analyzers of the given field, separated into an index and
    *         a query group
-   */
-  private NamedList<NamedList> analyzeValues(FieldAnalysisRequest analysisRequest, FieldType fieldType, String fieldName) {
+   */ // package access for testing
+  NamedList<NamedList> analyzeValues(FieldAnalysisRequest analysisRequest, FieldType fieldType, String fieldName) {
 
     final String queryValue = analysisRequest.getQuery();
-    final Set<String> termsToMatch = (queryValue != null && analysisRequest.isShowMatch())
+    final Set<BytesRef> termsToMatch = (queryValue != null && analysisRequest.isShowMatch())
       ? getQueryTokenSet(queryValue, fieldType.getQueryAnalyzer())
-      : Collections.<String>emptySet();
+      : EMPTY_BYTES_SET;
 
-    NamedList<NamedList> analyzeResults = new SimpleOrderedMap<NamedList>();
+    NamedList<NamedList> analyzeResults = new SimpleOrderedMap<>();
     if (analysisRequest.getFieldValue() != null) {
-      AnalysisContext context = new AnalysisContext(fieldName, fieldType, fieldType.getAnalyzer(), termsToMatch);
+      AnalysisContext context = new AnalysisContext(fieldName, fieldType, fieldType.getIndexAnalyzer(), termsToMatch);
       NamedList analyzedTokens = analyzeValue(analysisRequest.getFieldValue(), context);
       analyzeResults.add("index", analyzedTokens);
     }

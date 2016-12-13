@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -20,29 +20,36 @@ import org.apache.solr.common.util.NamedList;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Holds stats info
  *
- * @version $Id: SpellCheckResponse.java 693622 2008-09-09 21:21:06Z gsingers $
+ *
  * @since solr 1.4
  */
 public class FieldStatsInfo implements Serializable {
   final String name;
   
-  Double min;
-  Double max;
-  Double sum;
+  Object min;
+  Object max;
+  Object sum;
   Long count;
+  Long countDistinct;
+  Collection<Object> distinctValues;
   Long missing;
-  Double mean = null;
+  Object mean = null;
   Double sumOfSquares = null;
   Double stddev = null;
+  Long cardinality = null;
   
   Map<String,List<FieldStatsInfo>> facets;
+  
+  Map<Double, Double> percentiles;
   
   public FieldStatsInfo( NamedList<Object> nl, String fname )
   {
@@ -50,22 +57,28 @@ public class FieldStatsInfo implements Serializable {
     
     for( Map.Entry<String, Object> entry : nl ) {
       if( "min".equals( entry.getKey() ) ) {
-        min = (Double)entry.getValue();
+        min = entry.getValue();
       }
       else if( "max".equals( entry.getKey() ) ) {
-        max = (Double)entry.getValue();
+        max = entry.getValue();
       }
       else if( "sum".equals( entry.getKey() ) ) {
-        sum = (Double)entry.getValue();
+        sum = entry.getValue();
       }
       else if( "count".equals( entry.getKey() ) ) {
         count = (Long)entry.getValue();
+      }
+      else if ("countDistinct".equals(entry.getKey())) {
+        countDistinct = (Long) entry.getValue();
+      }
+      else if ("distinctValues".equals(entry.getKey())) {
+        distinctValues = (Collection<Object>) entry.getValue();
       }
       else if( "missing".equals( entry.getKey() ) ) {
         missing = (Long)entry.getValue();
       }
       else if( "mean".equals( entry.getKey() ) ) {
-        mean = (Double)entry.getValue();
+        mean = entry.getValue();
       }
       else if( "sumOfSquares".equals( entry.getKey() ) ) {
         sumOfSquares = (Double)entry.getValue();
@@ -74,17 +87,28 @@ public class FieldStatsInfo implements Serializable {
         stddev = (Double)entry.getValue();
       }
       else if( "facets".equals( entry.getKey() ) ) {
+        @SuppressWarnings("unchecked")
         NamedList<Object> fields = (NamedList<Object>)entry.getValue();
-        facets = new HashMap<String, List<FieldStatsInfo>>();
+        facets = new HashMap<>();
         for( Map.Entry<String, Object> ev : fields ) {
-          List<FieldStatsInfo> vals = new ArrayList<FieldStatsInfo>();
+          List<FieldStatsInfo> vals = new ArrayList<>();
           facets.put( ev.getKey(), vals );
+          @SuppressWarnings("unchecked")
           NamedList<NamedList<Object>> vnl = (NamedList<NamedList<Object>>) ev.getValue();
           for( int i=0; i<vnl.size(); i++ ) {
             String n = vnl.getName(i);
             vals.add( new FieldStatsInfo( vnl.getVal(i), n ) );
           }
         }
+      } else if ( "percentiles".equals( entry.getKey() ) ){
+        @SuppressWarnings("unchecked")
+        NamedList<Object> fields = (NamedList<Object>) entry.getValue();
+        percentiles = new LinkedHashMap<>();
+        for( Map.Entry<String, Object> ev : fields ) {
+          percentiles.put(Double.parseDouble(ev.getKey()), (Double)ev.getValue());
+        }
+      } else if ( "cardinality".equals(entry.getKey()) ) {
+        cardinality = (Long)entry.getValue();
       }
       else {
         throw new RuntimeException( "unknown key: "+entry.getKey() + " ["+entry.getValue()+"]" );
@@ -110,6 +134,12 @@ public class FieldStatsInfo implements Serializable {
     if( count != null ) {
       sb.append( " count:").append( count );
     }
+    if (countDistinct != null) {
+      sb.append(" countDistinct:").append(countDistinct);
+    }
+    if (distinctValues != null) {
+      sb.append(" distinctValues:").append(distinctValues);
+    }
     if( missing != null ) {
       sb.append( " missing:").append( missing );
     }
@@ -119,6 +149,13 @@ public class FieldStatsInfo implements Serializable {
     if( stddev != null ) {
       sb.append( " stddev:").append(stddev);
     }
+    if( percentiles != null ) {
+      sb.append( " percentiles:").append(percentiles);
+    }
+    if( cardinality != null ) {
+      sb.append( " cardinality:").append(cardinality);
+    }
+    
     sb.append( " }" );
     return sb.toString();
   }
@@ -127,27 +164,36 @@ public class FieldStatsInfo implements Serializable {
     return name;
   }
 
-  public Double getMin() {
+  public Object getMin() {
     return min;
   }
 
-  public Double getMax() {
+  public Object getMax() {
     return max;
   }
 
-  public Double getSum() {
+  public Object getSum() {
     return sum;
   }
-
+     
   public Long getCount() {
     return count;
+  }
+
+  public Long getCountDistinct() {
+    // :TODO: as client convinience, should we return cardinality if this is null?
+    return countDistinct; 
+  }
+
+  public Collection<Object> getDistinctValues() {
+    return distinctValues;
   }
 
   public Long getMissing() {
     return missing;
   }
 
-  public Double getMean() {
+  public Object getMean() {
     return mean;
   }
 
@@ -155,8 +201,27 @@ public class FieldStatsInfo implements Serializable {
     return stddev;
   }
 
+  public Double getSumOfSquares() {
+    return sumOfSquares;
+  }
+
   public Map<String, List<FieldStatsInfo>> getFacets() {
     return facets;
   }
   
+  /**
+   * The percentiles requested if any, otherwise null.  If non-null then the
+   * iteration order will match the order the percentiles were originally specified in.
+   */
+  public Map<Double, Double> getPercentiles() {
+    return percentiles;
+  }
+
+  /**
+   * The cardinality of of the set of values if requested, otherwise null.
+   */
+  public Long getCardinality() {
+    // :TODO: as client convinience, should we return countDistinct if this is null?
+    return cardinality; 
+  }
 }

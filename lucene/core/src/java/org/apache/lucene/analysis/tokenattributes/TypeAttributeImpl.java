@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,32 +14,32 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
 
-import java.io.Serializable;
 
 import org.apache.lucene.util.AttributeImpl;
+import org.apache.lucene.util.AttributeReflector;
 
-/**
- * A Token's lexical type. The Default value is "word". 
- */
-public class TypeAttributeImpl extends AttributeImpl implements TypeAttribute, Cloneable, Serializable {
+/** Default implementation of {@link TypeAttribute}. */
+public class TypeAttributeImpl extends AttributeImpl implements TypeAttribute, Cloneable {
   private String type;
   
+  /** Initialize this attribute with {@link TypeAttribute#DEFAULT_TYPE} */
   public TypeAttributeImpl() {
     this(DEFAULT_TYPE); 
   }
   
+  /** Initialize this attribute with <code>type</code> */
   public TypeAttributeImpl(String type) {
     this.type = type;
   }
   
-  /** Returns this Token's lexical type.  Defaults to "word". */
+  @Override
   public String type() {
     return type;
   }
 
-  /** Set the lexical type.
-      @see #type() */
+  @Override
   public void setType(String type) {
     this.type = type;
   }
@@ -74,5 +72,10 @@ public class TypeAttributeImpl extends AttributeImpl implements TypeAttribute, C
   public void copyTo(AttributeImpl target) {
     TypeAttribute t = (TypeAttribute) target;
     t.setType(type);
+  }
+
+  @Override
+  public void reflectWith(AttributeReflector reflector) {
+    reflector.reflect(TypeAttribute.class, "type", type);
   }
 }

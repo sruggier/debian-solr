@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +14,13 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.store.Directory;
 
@@ -46,8 +47,8 @@ import org.apache.lucene.store.Directory;
  * <p>
  * In addition you should periodically call {@link #maybeRefresh}. While it's
  * possible to call this just before running each query, this is discouraged
- * since it penalizes the unlucky queries that do the reopen. It's better to use
- * a separate background thread, that periodically calls maybeReopen. Finally,
+ * since it penalizes the unlucky queries that need to refresh. It's better to use
+ * a separate background thread, that periodically calls {@link #maybeRefresh}. Finally,
  * be sure to call {@link #close} once you are done.
  * 
  * @see SearcherFactory
@@ -57,29 +58,54 @@ import org.apache.lucene.store.Directory;
 public final class SearcherManager extends ReferenceManager<IndexSearcher> {
 
   private final SearcherFactory searcherFactory;
-  
+
   /**
-   * Creates and returns a new SearcherManager from the given {@link IndexWriter}. 
-   * @param writer the IndexWriter to open the IndexReader from.
-   * @param applyAllDeletes If <code>true</code>, all buffered deletes will
-   *        be applied (made visible) in the {@link IndexSearcher} / {@link IndexReader}.
-   *        If <code>false</code>, the deletes may or may not be applied, but remain buffered 
-   *        (in IndexWriter) so that they will be applied in the future.
-   *        Applying deletes can be costly, so if your app can tolerate deleted documents
-   *        being returned you might gain some performance by passing <code>false</code>.
-   *        See {@link IndexReader#openIfChanged(IndexReader, IndexWriter, boolean)}.
-   * @param searcherFactory An optional {@link SearcherFactory}. Pass
-   *        <code>null</code> if you don't require the searcher to be warmed
-   *        before going live or other custom behavior.
-   *        
-   * @throws IOException
+   * Creates and returns a new SearcherManager from the given
+   * {@link IndexWriter}.
+   * 
+   * @param writer
+   *          the IndexWriter to open the IndexReader from.
+   * @param searcherFactory
+   *          An optional {@link SearcherFactory}. Pass <code>null</code> if you
+   *          don't require the searcher to be warmed before going live or other
+   *          custom behavior.
+   * 
+   * @throws IOException if there is a low-level I/O error
    */
-  public SearcherManager(IndexWriter writer, boolean applyAllDeletes, SearcherFactory searcherFactory) throws IOException {
+  public SearcherManager(IndexWriter writer, SearcherFactory searcherFactory) throws IOException {
+    this(writer, true, false, searcherFactory);
+  }
+
+  /**
+   * Expert: creates and returns a new SearcherManager from the given
+   * {@link IndexWriter}, controlling whether past deletions should be applied.
+   * 
+   * @param writer
+   *          the IndexWriter to open the IndexReader from.
+   * @param applyAllDeletes
+   *          If <code>true</code>, all buffered deletes will be applied (made
+   *          visible) in the {@link IndexSearcher} / {@link DirectoryReader}.
+   *          If <code>false</code>, the deletes may or may not be applied, but
+   *          remain buffered (in IndexWriter) so that they will be applied in
+   *          the future. Applying deletes can be costly, so if your app can
+   *          tolerate deleted documents being returned you might gain some
+   *          performance by passing <code>false</code>. See
+   *          {@link DirectoryReader#openIfChanged(DirectoryReader, IndexWriter, boolean)}.
+   * @param writeAllDeletes
+   *          If <code>true</code>, new deletes will be forcefully written to index files.
+   * @param searcherFactory
+   *          An optional {@link SearcherFactory}. Pass <code>null</code> if you
+   *          don't require the searcher to be warmed before going live or other
+   *          custom behavior.
+   * 
+   * @throws IOException if there is a low-level I/O error
+   */
+  public SearcherManager(IndexWriter writer, boolean applyAllDeletes, boolean writeAllDeletes, SearcherFactory searcherFactory) throws IOException {
     if (searcherFactory == null) {
       searcherFactory = new SearcherFactory();
     }
     this.searcherFactory = searcherFactory;
-    current = getSearcher(searcherFactory, IndexReader.open(writer, applyAllDeletes));
+    current = getSearcher(searcherFactory, DirectoryReader.open(writer, applyAllDeletes, writeAllDeletes), null);
   }
   
   /**
@@ -89,14 +115,33 @@ public final class SearcherManager extends ReferenceManager<IndexSearcher> {
    *        <code>null</code> if you don't require the searcher to be warmed
    *        before going live or other custom behavior.
    *        
-   * @throws IOException
+   * @throws IOException if there is a low-level I/O error
    */
   public SearcherManager(Directory dir, SearcherFactory searcherFactory) throws IOException {
     if (searcherFactory == null) {
       searcherFactory = new SearcherFactory();
     }
     this.searcherFactory = searcherFactory;
-    current = getSearcher(searcherFactory, IndexReader.open(dir));
+    current = getSearcher(searcherFactory, DirectoryReader.open(dir), null);
+  }
+
+  /**
+   * Creates and returns a new SearcherManager from an existing {@link DirectoryReader}.  Note that
+   * this steals the incoming reference.
+   *
+   * @param reader the DirectoryReader.
+   * @param searcherFactory An optional {@link SearcherFactory}. Pass
+   *        <code>null</code> if you don't require the searcher to be warmed
+   *        before going live or other custom behavior.
+   *        
+   * @throws IOException if there is a low-level I/O error
+   */
+  public SearcherManager(DirectoryReader reader, SearcherFactory searcherFactory) throws IOException {
+    if (searcherFactory == null) {
+      searcherFactory = new SearcherFactory();
+    }
+    this.searcherFactory = searcherFactory;
+    this.current = getSearcher(searcherFactory, reader, null);
   }
 
   @Override
@@ -106,11 +151,13 @@ public final class SearcherManager extends ReferenceManager<IndexSearcher> {
   
   @Override
   protected IndexSearcher refreshIfNeeded(IndexSearcher referenceToRefresh) throws IOException {
-    final IndexReader newReader = IndexReader.openIfChanged(referenceToRefresh.getIndexReader());
+    final IndexReader r = referenceToRefresh.getIndexReader();
+    assert r instanceof DirectoryReader: "searcher's IndexReader should be a DirectoryReader, but got " + r;
+    final IndexReader newReader = DirectoryReader.openIfChanged((DirectoryReader) r);
     if (newReader == null) {
       return null;
     } else {
-      return getSearcher(searcherFactory, newReader);
+      return getSearcher(searcherFactory, newReader, r);
     }
   }
   
@@ -119,32 +166,36 @@ public final class SearcherManager extends ReferenceManager<IndexSearcher> {
     return reference.getIndexReader().tryIncRef();
   }
 
-  /** @deprecated see {@link #maybeRefresh()}. */
-  @Deprecated
-  public boolean maybeReopen() throws IOException {
-    return maybeRefresh();
+  @Override
+  protected int getRefCount(IndexSearcher reference) {
+    return reference.getIndexReader().getRefCount();
   }
-  
+
   /**
    * Returns <code>true</code> if no changes have occured since this searcher
    * ie. reader was opened, otherwise <code>false</code>.
-   * @see IndexReader#isCurrent() 
+   * @see DirectoryReader#isCurrent() 
    */
   public boolean isSearcherCurrent() throws IOException {
     final IndexSearcher searcher = acquire();
     try {
-      return searcher.getIndexReader().isCurrent();
+      final IndexReader r = searcher.getIndexReader();
+      assert r instanceof DirectoryReader: "searcher's IndexReader should be a DirectoryReader, but got " + r;
+      return ((DirectoryReader) r).isCurrent();
     } finally {
       release(searcher);
     }
   }
 
-  // NOTE: decRefs incoming reader on throwing an exception
-  static IndexSearcher getSearcher(SearcherFactory searcherFactory, IndexReader reader) throws IOException {
+  /** Expert: creates a searcher from the provided {@link
+   *  IndexReader} using the provided {@link
+   *  SearcherFactory}.  NOTE: this decRefs incoming reader
+   * on throwing an exception. */
+  public static IndexSearcher getSearcher(SearcherFactory searcherFactory, IndexReader reader, IndexReader previousReader) throws IOException {
     boolean success = false;
     final IndexSearcher searcher;
     try {
-      searcher = searcherFactory.newSearcher(reader);
+      searcher = searcherFactory.newSearcher(reader, previousReader);
       if (searcher.getIndexReader() != reader) {
         throw new IllegalStateException("SearcherFactory must wrap exactly the provided reader (got " + searcher.getIndexReader() + " but expected " + reader + ")");
       }

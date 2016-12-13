@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import java.util.Iterator;
@@ -27,16 +26,15 @@ import java.util.Iterator;
  * DocIterator instance was retrieved.
  * </p>
  *
- * @version $Id$
+ *
  */
 public interface DocIterator extends Iterator<Integer> {
   // already declared in superclass, redeclaring prevents javadoc inheritance
   //public boolean hasNext();
 
   /**
-   * Returns the next document id if hasNext()==true
+   * Returns the next document id if <code>hasNext()==true</code>
    *
-   * <code>
    * This method is equivalent to <code>next()</code>, but avoids the creation
    * of an Integer Object.
    * @see #next()

@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 
 import org.apache.lucene.util.PriorityQueue;
@@ -31,10 +31,10 @@ import org.apache.lucene.util.PriorityQueue;
  * however, you might want to consider overriding all methods, in order to avoid
  * a NullPointerException.
  */
-public abstract class TopDocsCollector<T extends ScoreDoc> extends Collector {
+public abstract class TopDocsCollector<T extends ScoreDoc> implements Collector {
 
-  // This is used in case topDocs() is called with illegal parameters, or there
-  // simply aren't (enough) results.
+  /** This is used in case topDocs() is called with illegal parameters, or there
+   *  simply aren't (enough) results. */
   protected static final TopDocs EMPTY_TOPDOCS = new TopDocs(0, new ScoreDoc[0], Float.NaN);
   
   /**
@@ -94,8 +94,8 @@ public abstract class TopDocsCollector<T extends ScoreDoc> extends Collector {
   }
 
   /**
-   * Returns the documents in the rage [start .. pq.size()) that were collected
-   * by this collector. Note that if start >= pq.size(), an empty TopDocs is
+   * Returns the documents in the range [start .. pq.size()) that were collected
+   * by this collector. Note that if {@code start >= pq.size()}, an empty TopDocs is
    * returned.<br>
    * This method is convenient to call if the application always asks for the
    * last results, starting from the last 'page'.<br>
@@ -113,8 +113,8 @@ public abstract class TopDocsCollector<T extends ScoreDoc> extends Collector {
   }
 
   /**
-   * Returns the documents in the rage [start .. start+howMany) that were
-   * collected by this collector. Note that if start >= pq.size(), an empty
+   * Returns the documents in the range [start .. start+howMany) that were
+   * collected by this collector. Note that if {@code start >= pq.size()}, an empty
    * TopDocs is returned, and if pq.size() - start &lt; howMany, then only the
    * available documents in [start .. pq.size()) are returned.<br>
    * This method is useful to call in case pagination of search results is

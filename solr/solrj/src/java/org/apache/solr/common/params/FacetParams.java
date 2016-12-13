@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
-import org.apache.solr.common.SolrException;
-
 import java.util.EnumSet;
+import java.util.Locale;
+
+import org.apache.solr.common.SolrException;
 
 /**
  * Facet parameters
@@ -30,6 +30,12 @@ public interface FacetParams {
    * Should facet counts be calculated?
    */
   public static final String FACET = "facet";
+
+  /**
+   * Numeric option indicating the maximum number of threads to be used
+   * in counting facet field vales 
+   */
+  public static final String FACET_THREADS = FACET + ".threads";
 
   /** What method should be used to do the faceting */
   public static final String FACET_METHOD = FACET + ".method";
@@ -44,7 +50,16 @@ public interface FacetParams {
    * (such as the FieldCache used for sorting).
    */
   public static final String FACET_METHOD_fc = "fc";
-  
+
+  /** Value for FACET_METHOD param, like FACET_METHOD_fc but counts per-segment.
+   */
+  public static final String FACET_METHOD_fcs = "fcs";
+
+  /**
+   * Value for FACET_METHOD param to indicate that Solr should use an UnInvertedField
+   */
+  public static final String FACET_METHOD_uif = "uif";
+
   /**
    * Any lucene formated queries the user would like to use for
    * Facet Constraint Counts (multi-value)
@@ -88,6 +103,57 @@ public interface FacetParams {
    */
   public static final String FACET_MISSING = FACET + ".missing";
 
+  
+  static final String FACET_OVERREQUEST = FACET + ".overrequest";
+  
+  /**
+   * The percentage to over-request by when performing initial distributed requests.
+   * 
+   * default value is 1.5
+   */
+  public static final String FACET_OVERREQUEST_RATIO = FACET_OVERREQUEST + ".ratio";
+
+  /**
+   * An additional amount to over-request by when performing initial distributed requests.  This
+   * value will be added after accounting for the over-request ratio.
+   * 
+   * default value is 10
+   */
+  public static final String FACET_OVERREQUEST_COUNT = FACET_OVERREQUEST + ".count";
+
+
+  public static final String FACET_DISTRIB = FACET + ".distrib";
+  
+  /**
+   * If we are returning facet field counts, are sorting those facets by their count, and the minimum count to return is &gt; 0,
+   * then allow the use of facet.mincount = 1 in cloud mode. To enable this use facet.distrib.mco=true.
+   *
+   * i.e. If the following three conditions are met in cloud mode: facet.sort=count, facet.limit &gt; 0, facet.mincount &gt; 0.
+   * Then use facet.mincount=1.
+   *
+   * Previously and by default facet.mincount will be explicitly set to 0 when in cloud mode for this condition.
+   * In SOLR-8599 and SOLR-8988, significant performance increase has been seen when enabling this optimization.
+   *
+   * Note: enabling this flag has no effect when the conditions above are not met. For those other cases the default behavior is sufficient.
+   */
+
+  public static final String FACET_DISTRIB_MCO = FACET_DISTRIB + ".mco";
+  
+  /**
+   * Comma separated list of fields to pivot
+   * 
+   * example: author,type  (for types by author / types within author)
+   */
+  public static final String FACET_PIVOT = FACET + ".pivot";
+
+  /**
+   * Minimum number of docs that need to match to be included in the sublist
+   * 
+   * default value is 1
+   */
+  public static final String FACET_PIVOT_MINCOUNT = FACET_PIVOT + ".mincount";
+
+  
   /**
    * String option: "count" causes facets to be sorted
    * by the count, "index" results in index order.
@@ -104,11 +170,29 @@ public interface FacetParams {
    */
   public static final String FACET_PREFIX = FACET + ".prefix";
 
+  /**
+   * Only return constraints of a facet field containing the given string.
+   */
+  public static final String FACET_CONTAINS = FACET + ".contains";
+
+  /**
+   * If using facet contains, ignore case when comparing values.
+   */
+  public static final String FACET_CONTAINS_IGNORE_CASE = FACET_CONTAINS + ".ignoreCase";
+
  /**
    * When faceting by enumerating the terms in a field,
-   * only use the filterCache for terms with a df >= to this parameter.
+   * only use the filterCache for terms with a df &gt;= to this parameter.
    */
   public static final String FACET_ENUM_CACHE_MINDF = FACET + ".enum.cache.minDf";
+  
+  /**
+   *  A boolean parameter that caps the facet counts at 1. 
+   *  With this set, a returned count will only be 0 or 1. 
+   *  For apps that don't need the count, this should be an optimization
+   */
+  public static final String FACET_EXISTS = FACET+".exists";
+  
   /**
    * Any field whose terms the user wants to enumerate over for
    * Facet Contraint Counts (multi-value)
@@ -120,7 +204,7 @@ public interface FacetParams {
    */
   public static final String FACET_DATE_START = FACET_DATE + ".start";
   /**
-   * Date string indicating the endinging point for a date facet range.
+   * Date string indicating the ending point for a date facet range.
    * Can be overriden on a per field basis.
    */
   public static final String FACET_DATE_END = FACET_DATE + ".end";
@@ -226,7 +310,59 @@ public interface FacetParams {
    * @see FacetRangeInclude
    */
   public static final String FACET_RANGE_INCLUDE = FACET_RANGE + ".include";
+  
+  /**
+   * String indicating the method to use to resolve range facets.
+   * <p>
+   * Can be overriden on a per field basis.
+   * @see FacetRangeMethod
+   */
+  public static final String FACET_RANGE_METHOD = FACET_RANGE + ".method";
+  
+  /**
+   * Any field whose values the user wants to enumerate as explicit intervals of terms.
+   */
+  public static final String FACET_INTERVAL = FACET + ".interval";
 
+  /**
+   * Set of terms for a single interval to facet on.
+   */
+  public static final String FACET_INTERVAL_SET = FACET_INTERVAL + ".set";
+
+  /** A spatial RPT field to generate a 2D "heatmap" (grid of facet counts) on. Just like the other faceting types,
+   * this may include a 'key' or local-params to facet multiple times.  All parameters with this suffix can be
+   * overridden on a per-field basis. */
+  public static final String FACET_HEATMAP = "facet.heatmap";
+
+  /** The format of the heatmap: either png or ints2D (default). */
+  public static final String FACET_HEATMAP_FORMAT = FACET_HEATMAP + ".format";
+
+  /** The region the heatmap should minimally enclose.  It defaults to the world if not set.  The format can either be
+   * a minimum to maximum point range format: <pre>["-150 10" TO "-100 30"]</pre> (the first is bottom-left and second
+   * is bottom-right, both of which are parsed as points are parsed).  OR, any WKT can be provided and it's bounding
+   * box will be taken. */
+  public static final String FACET_HEATMAP_GEOM = FACET_HEATMAP + ".geom";
+
+  /** Specify the heatmap grid level explicitly, instead of deriving it via distErr or distErrPct. */
+  public static final String FACET_HEATMAP_LEVEL = FACET_HEATMAP + ".gridLevel";
+
+  /** Used to determine the heatmap grid level to compute, defaulting to 0.15.  It has the same interpretation of
+   * distErrPct when searching on RPT, but relative to the shape in 'bbox'.  It's a fraction (not a %) of the radius of
+   * the shape that grid squares must fit into without exceeding. &gt; 0 and &lt;= 0.5.
+   * Mutually exclusive with distErr &amp; gridLevel. */
+  public static final String FACET_HEATMAP_DIST_ERR_PCT = FACET_HEATMAP + ".distErrPct";
+
+  /** Used to determine the heatmap grid level to compute (optional). It has the same interpretation of maxDistErr or
+   * distErr with RPT.  It's an absolute distance (in units of what's specified on the field type) that a grid square
+   * must maximally fit into (width &amp; height).  It can be used to to more explicitly specify the maximum grid square
+   * size without knowledge of what particular grid levels translate to.  This can in turn be used with
+   * knowledge of the size of 'bbox' to get a target minimum number of grid cells.
+   * Mutually exclusive with distErrPct &amp; gridLevel. */
+  public static final String FACET_HEATMAP_DIST_ERR = FACET_HEATMAP + ".distErr";
+
+  /** The maximum number of cells (grid squares) the client is willing to handle. If this limit would be exceeded, we
+   * throw an error instead.  Defaults to 100k. */
+  public static final String FACET_HEATMAP_MAX_CELLS = FACET_HEATMAP + ".maxCells";
 
   /**
    * An enumeration of the legal values for {@link #FACET_RANGE_OTHER} and {@link #FACET_DATE_OTHER} ...
@@ -243,29 +379,10 @@ public interface FacetParams {
   public enum FacetRangeOther {
     BEFORE, AFTER, BETWEEN, ALL, NONE;
     @Override
-    public String toString() { return super.toString().toLowerCase(); }
+    public String toString() { return super.toString().toLowerCase(Locale.ROOT); }
     public static FacetRangeOther get(String label) {
       try {
-        return valueOf(label.toUpperCase());
-      } catch (IllegalArgumentException e) {
-        throw new SolrException
-          (SolrException.ErrorCode.BAD_REQUEST,
-           label+" is not a valid type of 'other' range facet information",e);
-      }
-    }
-  }
-  
-  /**
-   * @deprecated Use {@link FacetRangeOther}
-   */
-  @Deprecated
-  public enum FacetDateOther {
-    BEFORE, AFTER, BETWEEN, ALL, NONE;
-    @Override
-    public String toString() { return super.toString().toLowerCase(); }
-    public static FacetDateOther get(String label) {
-      try {
-        return valueOf(label.toUpperCase());
+        return valueOf(label.toUpperCase(Locale.ROOT));
       } catch (IllegalArgumentException e) {
         throw new SolrException
           (SolrException.ErrorCode.BAD_REQUEST,
@@ -276,17 +393,17 @@ public interface FacetParams {
   
   /**
    * An enumeration of the legal values for {@link #FACET_DATE_INCLUDE} and {@link #FACET_RANGE_INCLUDE}
-   *
+   * <br>
    * <ul>
    * <li>lower = all gap based ranges include their lower bound</li>
    * <li>upper = all gap based ranges include their upper bound</li>
    * <li>edge = the first and last gap ranges include their edge bounds (ie: lower 
-   *     for the first one, upper for the last one) even if the corrisponding 
+   *     for the first one, upper for the last one) even if the corresponding 
    *     upper/lower option is not specified
    * </li>
    * <li>outer = the BEFORE and AFTER ranges 
    *     should be inclusive of their bounds, even if the first or last ranges 
-   *     already include thouse boundaries.
+   *     already include those boundaries.
    * </li>
    * <li>all = shorthand for lower, upper, edge, and outer</li>
    * </ul>
@@ -296,10 +413,10 @@ public interface FacetParams {
   public enum FacetRangeInclude {
     ALL, LOWER, UPPER, EDGE, OUTER;
     @Override
-    public String toString() { return super.toString().toLowerCase(); }
+    public String toString() { return super.toString().toLowerCase(Locale.ROOT); }
     public static FacetRangeInclude get(String label) {
       try {
-        return valueOf(label.toUpperCase());
+        return valueOf(label.toUpperCase(Locale.ROOT));
       } catch (IllegalArgumentException e) {
         throw new SolrException
           (SolrException.ErrorCode.BAD_REQUEST,
@@ -328,6 +445,32 @@ public interface FacetParams {
 
       // use whatever we've got.
       return include;
+    }
+  }
+  
+  /**
+   * An enumeration of the legal values for {@link #FACET_RANGE_METHOD}
+   * <ul>
+   * <li>filter = </li>
+   * <li>dv = </li>
+   * </ul>
+   * @see #FACET_RANGE_METHOD
+   */
+  public enum FacetRangeMethod {
+    FILTER, DV;
+    @Override
+    public String toString() { return super.toString().toLowerCase(Locale.ROOT); }
+    public static FacetRangeMethod get(String label) {
+      try {
+        return valueOf(label.toUpperCase(Locale.ROOT));
+      } catch (IllegalArgumentException e) {
+        throw new SolrException
+          (SolrException.ErrorCode.BAD_REQUEST,
+           label+" is not a valid method for range faceting",e);
+      }
+    }
+    public static FacetRangeMethod getDefault() {
+      return FILTER;
     }
   }
 

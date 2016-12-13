@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
 
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.util.ContentStreamBase;
+import org.apache.solr.handler.loader.CSVLoader;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.update.AddUpdateCommand;
@@ -36,16 +36,14 @@ public class CSVRequestHandlerTest extends SolrTestCaseJ4 {
 
   @Test
   public void testCommitWithin() throws Exception {
-    CSVRequestHandler handler = new CSVRequestHandler();
-
     String csvString = "id;name\n123;hello";
     SolrQueryRequest req = req("separator", ";",
                                "commitWithin", "200");
     SolrQueryResponse rsp = new SolrQueryResponse();
     BufferingRequestProcessor p = new BufferingRequestProcessor(null);
 
-    CSVLoader loader = (CSVLoader) handler.newLoader(req, p);
-    loader.load(req, rsp, new ContentStreamBase.StringStream.StringStream(csvString));
+    CSVLoader loader = new CSVLoader();
+    loader.load(req, rsp, new ContentStreamBase.StringStream.StringStream(csvString), p);
 
     AddUpdateCommand add = p.addCommands.get(0);
     assertEquals(200, add.commitWithin);

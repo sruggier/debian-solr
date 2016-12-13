@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.endresulttransformer;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,10 +14,12 @@ package org.apache.solr.search.grouping.endresulttransformer;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.endresulttransformer;
 
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.grouping.GroupDocs;
 import org.apache.lucene.search.grouping.TopGroups;
+import org.apache.lucene.util.BytesRef;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -47,28 +47,29 @@ public class GroupedEndResultTransformer implements EndResultTransformer {
   /**
    * {@inheritDoc}
    */
+  @Override
   public void transform(Map<String, ?> result, ResponseBuilder rb, SolrDocumentSource solrDocumentSource) {
-    NamedList<Object> commands = new NamedList<Object>();
+    NamedList<Object> commands = new SimpleOrderedMap<>();
     for (Map.Entry<String, ?> entry : result.entrySet()) {
       Object value = entry.getValue();
       if (TopGroups.class.isInstance(value)) {
         @SuppressWarnings("unchecked")
-        TopGroups<String> topGroups = (TopGroups<String>) value;
-        NamedList<Object> command = new SimpleOrderedMap<Object>();
+        TopGroups<BytesRef> topGroups = (TopGroups<BytesRef>) value;
+        NamedList<Object> command = new SimpleOrderedMap<>();
         command.add("matches", rb.totalHitCount);
         Integer totalGroupCount = rb.mergedGroupCounts.get(entry.getKey());
         if (totalGroupCount != null) {
           command.add("ngroups", totalGroupCount);
         }
 
-        List<NamedList> groups = new ArrayList<NamedList>();
+        List<NamedList> groups = new ArrayList<>();
         SchemaField groupField = searcher.getSchema().getField(entry.getKey());
         FieldType groupFieldType = groupField.getType();
-        for (GroupDocs<String> group : topGroups.groups) {
-          SimpleOrderedMap<Object> groupResult = new SimpleOrderedMap<Object>();
+        for (GroupDocs<BytesRef> group : topGroups.groups) {
+          SimpleOrderedMap<Object> groupResult = new SimpleOrderedMap<>();
           if (group.groupValue != null) {
             groupResult.add(
-                "groupValue", groupFieldType.toObject(groupField.createField(group.groupValue, 0.0f))
+                "groupValue", groupFieldType.toObject(groupField.createField(group.groupValue.utf8ToString(), 1.0f))
             );
           } else {
             groupResult.add("groupValue", null);
@@ -89,7 +90,7 @@ public class GroupedEndResultTransformer implements EndResultTransformer {
         commands.add(entry.getKey(), command);
       } else if (QueryCommandResult.class.isInstance(value)) {
         QueryCommandResult queryCommandResult = (QueryCommandResult) value;
-        NamedList<Object> command = new SimpleOrderedMap<Object>();
+        NamedList<Object> command = new SimpleOrderedMap<>();
         command.add("matches", queryCommandResult.getMatches());
         SolrDocumentList docList = new SolrDocumentList();
         docList.setNumFound(queryCommandResult.getTopDocs().totalHits);

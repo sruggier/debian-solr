@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +14,15 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
 
 public class TestScoreCachingWrappingScorer extends LuceneTestCase {
@@ -28,32 +31,47 @@ public class TestScoreCachingWrappingScorer extends LuceneTestCase {
     private int idx = 0;
     private int doc = -1;
     
-    public SimpleScorer() {
-      super((Similarity)null);
+    public SimpleScorer(Weight weight) {
+      super(weight);
     }
     
-    @Override public float score() throws IOException {
+    @Override public float score() {
       // advance idx on purpose, so that consecutive calls to score will get
       // different results. This is to emulate computation of a score. If
       // ScoreCachingWrappingScorer is used, this should not be called more than
       // once per document.
       return idx == scores.length ? Float.NaN : scores[idx++];
     }
+    
+    @Override public int freq() throws IOException {
+      return 1;
+    }
 
     @Override public int docID() { return doc; }
 
-    @Override public int nextDoc() throws IOException {
-      return ++doc < scores.length ? doc : NO_MORE_DOCS;
+    @Override
+    public DocIdSetIterator iterator() {
+      return new DocIdSetIterator() {
+        @Override public int docID() { return doc; }
+
+        @Override public int nextDoc() {
+          return ++doc < scores.length ? doc : NO_MORE_DOCS;
+        }
+        
+        @Override public int advance(int target) {
+          doc = target;
+          return doc < scores.length ? doc : NO_MORE_DOCS;
+        }
+
+        @Override
+        public long cost() {
+          return scores.length;
+        }
+      };
     }
-    
-    @Override public int advance(int target) throws IOException {
-      doc = target;
-      return doc < scores.length ? doc : NO_MORE_DOCS;
-    }
-    
   }
   
-  private static final class ScoreCachingCollector extends Collector {
+  private static final class ScoreCachingCollector extends SimpleCollector {
 
     private int idx = 0;
     private Scorer scorer;
@@ -76,15 +94,12 @@ public class TestScoreCachingWrappingScorer extends LuceneTestCase {
       ++idx;
     }
 
-    @Override public void setNextReader(IndexReader reader, int docBase)
-        throws IOException {
-    }
-
-    @Override public void setScorer(Scorer scorer) throws IOException {
+    @Override public void setScorer(Scorer scorer) {
       this.scorer = new ScoreCachingWrappingScorer(scorer);
     }
     
-    @Override public boolean acceptsDocsOutOfOrder() {
+    @Override
+    public boolean needsScores() {
       return true;
     }
 
@@ -95,21 +110,28 @@ public class TestScoreCachingWrappingScorer extends LuceneTestCase {
       8.108544f, 4.961808f, 2.2423935f, 7.285586f, 4.6699767f };
   
   public void testGetScores() throws Exception {
-    
-    Scorer s = new SimpleScorer();
+    Directory directory = newDirectory();
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
+    writer.commit();
+    IndexReader ir = writer.getReader();
+    writer.close();
+    IndexSearcher searcher = newSearcher(ir);
+    Weight fake = new TermQuery(new Term("fake", "weight")).createWeight(searcher, true);
+    Scorer s = new SimpleScorer(fake);
     ScoreCachingCollector scc = new ScoreCachingCollector(scores.length);
     scc.setScorer(s);
     
     // We need to iterate on the scorer so that its doc() advances.
     int doc;
-    while ((doc = s.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+    while ((doc = s.iterator().nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
       scc.collect(doc);
     }
     
     for (int i = 0; i < scores.length; i++) {
       assertEquals(scores[i], scc.mscores[i], 0f);
     }
-    
+    ir.close();
+    directory.close();
   }
   
 }

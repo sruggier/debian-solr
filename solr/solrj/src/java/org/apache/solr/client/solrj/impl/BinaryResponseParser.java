@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -26,10 +26,19 @@ import java.io.InputStream;
 import java.io.Reader;
 
 /**
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class BinaryResponseParser extends ResponseParser {
+  public static final String BINARY_CONTENT_TYPE = "application/octet-stream";
+
+  private JavaBinCodec.StringCache stringCache;
+
+  public BinaryResponseParser setStringCache(JavaBinCodec.StringCache cache) {
+    this.stringCache = cache;
+    return this;
+  }
+
   @Override
   public String getWriterType() {
     return "javabin";
@@ -38,13 +47,17 @@ public class BinaryResponseParser extends ResponseParser {
   @Override
   public NamedList<Object> processResponse(InputStream body, String encoding) {
     try {
-      return (NamedList<Object>) new JavaBinCodec().unmarshal(body);
+      return (NamedList<Object>) new JavaBinCodec(null,stringCache).unmarshal(body);
     } catch (IOException e) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "parsing error", e);
 
     }
   }
 
+  @Override
+  public String getContentType() {
+    return BINARY_CONTENT_TYPE;
+  }
 
   @Override
   public String getVersion() {

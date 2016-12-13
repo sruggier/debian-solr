@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +14,16 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
 
 import org.apache.lucene.analysis.Token;
+import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.*;
 
+import java.util.ArrayList;
 import java.util.Iterator;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.List;
 
 public class TestAttributeSource extends LuceneTestCase {
 
@@ -70,12 +71,10 @@ public class TestAttributeSource extends LuceneTestCase {
     // init a third instance missing one Attribute
     AttributeSource src3 = new AttributeSource();
     termAtt = src3.addAttribute(CharTermAttribute.class);
-    try {
+    // The third instance is missing the TypeAttribute, so restoreState() should throw IllegalArgumentException
+    expectThrows(IllegalArgumentException.class, () -> {
       src3.restoreState(state);
-      fail("The third instance is missing the TypeAttribute, so restoreState() should throw IllegalArgumentException");
-    } catch (IllegalArgumentException iae) {
-      // pass
-    }
+    });
   }
   
   public void testCloneAttributes() {
@@ -92,7 +91,9 @@ public class TestAttributeSource extends LuceneTestCase {
     assertFalse("No more attributes", it.hasNext());
     
     final FlagsAttribute flagsAtt2 = clone.getAttribute(FlagsAttribute.class);
+    assertNotNull(flagsAtt2);
     final TypeAttribute typeAtt2 = clone.getAttribute(TypeAttribute.class);
+    assertNotNull(typeAtt2);
     assertNotSame("FlagsAttribute of original and clone must be different instances", flagsAtt2, flagsAtt);
     assertNotSame("TypeAttribute of original and clone must be different instances", typeAtt2, typeAtt);
     assertEquals("FlagsAttribute of original and clone must be equal", flagsAtt2, flagsAtt);
@@ -109,34 +110,6 @@ public class TestAttributeSource extends LuceneTestCase {
     assertNotSame("TypeAttribute of original and clone must be different instances", typeAtt2, typeAtt);
     assertEquals("FlagsAttribute of original and clone must be equal", flagsAtt2, flagsAtt);
     assertEquals("TypeAttribute of original and clone must be equal", typeAtt2, typeAtt);
-  }
-  
-  public void testToStringAndMultiAttributeImplementations() {
-    AttributeSource src = new AttributeSource();
-    CharTermAttribute termAtt = src.addAttribute(CharTermAttribute.class);
-    TypeAttribute typeAtt = src.addAttribute(TypeAttribute.class);
-    termAtt.append("TestTerm");
-    typeAtt.setType("TestType");    
-    assertEquals("Attributes should appear in original order", "("+termAtt.toString()+","+typeAtt.toString()+")", src.toString());
-    Iterator<AttributeImpl> it = src.getAttributeImplsIterator();
-    assertTrue("Iterator should have 2 attributes left", it.hasNext());
-    assertSame("First AttributeImpl from iterator should be termAtt", termAtt, it.next());
-    assertTrue("Iterator should have 1 attributes left", it.hasNext());
-    assertSame("Second AttributeImpl from iterator should be typeAtt", typeAtt, it.next());
-    assertFalse("Iterator should have 0 attributes left", it.hasNext());
-
-    src = new AttributeSource();
-    src.addAttributeImpl(new Token());
-    // this should not add a new attribute as Token implements CharTermAttribute, too
-    termAtt = src.addAttribute(CharTermAttribute.class);
-    assertTrue("CharTermAttribute should be implemented by Token", termAtt instanceof Token);
-    // get the Token attribute and check, that it is the only one
-    it = src.getAttributeImplsIterator();
-    Token tok = (Token) it.next();
-    assertFalse("There should be only one attribute implementation instance", it.hasNext());
-    
-    termAtt.setEmpty().append("TestTerm");
-    assertEquals("Token should only printed once", "("+tok.toString()+")", src.toString());
   }
   
   public void testDefaultAttributeFactory() throws Exception {
@@ -158,24 +131,22 @@ public class TestAttributeSource extends LuceneTestCase {
   
   @SuppressWarnings({"rawtypes","unchecked"})
   public void testInvalidArguments() throws Exception {
-    try {
+    expectThrows(IllegalArgumentException.class, () -> {
       AttributeSource src = new AttributeSource();
       src.addAttribute(Token.class);
       fail("Should throw IllegalArgumentException");
-    } catch (IllegalArgumentException iae) {}
+    });
     
-    try {
+    expectThrows(IllegalArgumentException.class, () -> {
       AttributeSource src = new AttributeSource(Token.TOKEN_ATTRIBUTE_FACTORY);
       src.addAttribute(Token.class);
-      fail("Should throw IllegalArgumentException");
-    } catch (IllegalArgumentException iae) {}
+    });
     
-    try {
+    expectThrows(IllegalArgumentException.class, () -> {
       AttributeSource src = new AttributeSource();
       // break this by unsafe cast
       src.addAttribute((Class) Iterator.class);
-      fail("Should throw IllegalArgumentException");
-    } catch (IllegalArgumentException iae) {}
+    });
   }
   
   public void testLUCENE_3042() throws Exception {
@@ -188,69 +159,67 @@ public class TestAttributeSource extends LuceneTestCase {
     assertEquals(src2.hashCode(), src1.hashCode());
   }
   
-  // this class is included in external class check, so no assertion errors occur
-  @Deprecated
-  static class TestAttributeImpl extends AttributeImpl implements FlagsAttribute {
-  
-    private int flags = 0;
+  public void testClonePayloadAttribute() throws Exception {
+    // LUCENE-6055: verify that PayloadAttribute.clone() does deep cloning.
+    PayloadAttributeImpl src = new PayloadAttributeImpl(new BytesRef(new byte[] { 1, 2, 3 }));
     
-    public int getFlags() { return flags; }
-    public void setFlags(int flags) { this.flags = flags; }
+    // test clone()
+    PayloadAttributeImpl clone = src.clone();
+    clone.getPayload().bytes[0] = 10; // modify one byte, srcBytes shouldn't change
+    assertEquals("clone() wasn't deep", 1, src.getPayload().bytes[0]);
     
-    @Override
-    public void clear() { flags = 0; }
-    
-    @Override
-    public void copyTo(AttributeImpl target) {
-      FlagsAttribute t = (FlagsAttribute) target;
-      t.setFlags(flags);
-    }
-    
-    @Override
-    public String toString() {
-      return "foo=bar,moo=mae";
-    }
-  
+    // test copyTo()
+    clone = new PayloadAttributeImpl();
+    src.copyTo(clone);
+    clone.getPayload().bytes[0] = 10; // modify one byte, srcBytes shouldn't change
+    assertEquals("clone() wasn't deep", 1, src.getPayload().bytes[0]);
   }
-  
-  // this class is excluded in external class check, so assertion on calling reflectWith should occur
-  @Deprecated
-  static class TestAttributeImpl2 extends TestAttributeImpl {}
-  
-  @Deprecated
-  public void testReflectionOfToString() throws Exception {
-    final AttributeSource src = new AttributeSource();
-    final AttributeImpl att = new TestAttributeImpl();
-    src.addAttributeImpl(att);
-    
-    assertSame("FlagsAttribute is not implemented by same instance of TestAttributeImpl",
-      att, src.addAttribute(FlagsAttribute.class));
-    
-    final Map<String,Object> map = new HashMap<String,Object>();
-    final AttributeReflector reflector = new AttributeReflector() {
-      public void reflect(Class<? extends Attribute> attClass, String key, Object value) {
-        assertSame(FlagsAttribute.class, attClass);
-        map.put(key, value);
-      }
-    };
-    att.reflectWith(reflector);
-    assertEquals(2, map.size());
-    assertEquals("bar", map.get("foo"));
-    assertEquals("mae", map.get("moo"));
-    
-    map.clear();
-    src.reflectWith(reflector);
-    assertEquals(2, map.size());
-    assertEquals("bar", map.get("foo"));
-    assertEquals("mae", map.get("moo"));
-    
-    map.clear();
-    try {
-      new TestAttributeImpl2().reflectWith(reflector);
-      fail("TestAttributeImpl2 should fail assertion on toString() parsing");
-    } catch (AssertionError e) {
-      // pass
+
+  public void testRemoveAllAttributes() {
+    List<Class<? extends Attribute>> attrClasses = new ArrayList<>();
+    attrClasses.add(CharTermAttribute.class);
+    attrClasses.add(OffsetAttribute.class);
+    attrClasses.add(FlagsAttribute.class);
+    attrClasses.add(PayloadAttribute.class);
+    attrClasses.add(PositionIncrementAttribute.class);
+    attrClasses.add(TypeAttribute.class);
+
+    // Add attributes with the default factory, then try to remove all of them
+    AttributeSource defaultFactoryAttributeSource = new AttributeSource();
+
+    assertFalse(defaultFactoryAttributeSource.hasAttributes());
+
+    for (Class<? extends Attribute> attrClass : attrClasses) {
+      defaultFactoryAttributeSource.addAttribute(attrClass);
+      assertTrue("Missing added attribute " + attrClass.getSimpleName(),
+          defaultFactoryAttributeSource.hasAttribute(attrClass));
     }
+
+    defaultFactoryAttributeSource.removeAllAttributes();
+
+    for (Class<? extends Attribute> attrClass : attrClasses) {
+      assertFalse("Didn't remove attribute " + attrClass.getSimpleName(),
+          defaultFactoryAttributeSource.hasAttribute(attrClass));
+    }
+    assertFalse(defaultFactoryAttributeSource.hasAttributes());
+
+    // Add attributes with the packed implementations factory, then try to remove all of them
+    AttributeSource packedImplsAttributeSource
+        = new AttributeSource(TokenStream.DEFAULT_TOKEN_ATTRIBUTE_FACTORY);
+    assertFalse(packedImplsAttributeSource.hasAttributes());
+
+    for (Class<? extends Attribute> attrClass : attrClasses) {
+      packedImplsAttributeSource.addAttribute(attrClass);
+      assertTrue("Missing added attribute " + attrClass.getSimpleName(),
+          packedImplsAttributeSource.hasAttribute(attrClass));
+    }
+
+    packedImplsAttributeSource.removeAllAttributes();
+
+    for (Class<? extends Attribute> attrClass : attrClasses) {
+      assertFalse("Didn't remove attribute " + attrClass.getSimpleName(),
+          packedImplsAttributeSource.hasAttribute(attrClass));
+    }
+    assertFalse(packedImplsAttributeSource.hasAttributes());
   }
-  
 }

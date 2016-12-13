@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +14,14 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
 
-import org.apache.lucene.util.AttributeSource;
 
-import java.io.Reader;
 import java.io.IOException;
+import java.io.Reader;
+
+import org.apache.lucene.util.AttributeFactory;
+import org.apache.lucene.util.AttributeSource;
 
 /** A Tokenizer is a TokenStream whose input is a Reader.
   <p>
@@ -30,75 +31,88 @@ import java.io.IOException;
   call {@link AttributeSource#clearAttributes()} before
   setting attributes.
  */
-public abstract class Tokenizer extends TokenStream {
+public abstract class Tokenizer extends TokenStream {  
   /** The text source for this Tokenizer. */
-  protected Reader input;
+  protected Reader input = ILLEGAL_STATE_READER;
+  
+  /** Pending reader: not actually assigned to input until reset() */
+  private Reader inputPending = ILLEGAL_STATE_READER;
 
-  /** Construct a tokenizer with null input.
-   * @deprecated use {@link #Tokenizer(Reader)} instead. 
+  /**
+   * Construct a tokenizer with no input, awaiting a call to {@link #setReader(java.io.Reader)}
+   * to provide input.
    */
-  @Deprecated
-  protected Tokenizer() {}
-  
-  /** Construct a token stream processing the given input. */
-  protected Tokenizer(Reader input) {
-    this.input = input;
+  protected Tokenizer() {
+    //
   }
-  
-  /** Construct a tokenizer with null input using the given AttributeFactory.
-   * @deprecated use {@link #Tokenizer(AttributeSource.AttributeFactory, Reader)} instead. 
+
+  /**
+   * Construct a tokenizer with no input, awaiting a call to {@link #setReader(java.io.Reader)} to
+   * provide input.
+   * @param factory attribute factory.
    */
-  @Deprecated
   protected Tokenizer(AttributeFactory factory) {
     super(factory);
   }
 
-  /** Construct a token stream processing the given input using the given AttributeFactory. */
-  protected Tokenizer(AttributeFactory factory, Reader input) {
-    super(factory);
-    this.input = input;
-  }
-
-  /** Construct a token stream processing the given input using the given AttributeSource.
-   * @deprecated use {@link #Tokenizer(AttributeSource, Reader)} instead. 
+  /**
+   * {@inheritDoc}
+   * <p>
+   * <b>NOTE:</b> 
+   * The default implementation closes the input Reader, so
+   * be sure to call <code>super.close()</code> when overriding this method.
    */
-  @Deprecated
-  protected Tokenizer(AttributeSource source) {
-    super(source);
-  }
-
-  /** Construct a token stream processing the given input using the given AttributeSource. */
-  protected Tokenizer(AttributeSource source, Reader input) {
-    super(source);
-    this.input = input;
-  }
-  
-  /** By default, closes the input Reader. */
   @Override
   public void close() throws IOException {
-    if (input != null) {
-      input.close();
-      // LUCENE-2387: don't hold onto Reader after close, so
-      // GC can reclaim
-      input = null;
-    }
+    input.close();
+    // LUCENE-2387: don't hold onto Reader after close, so
+    // GC can reclaim
+    inputPending = input = ILLEGAL_STATE_READER;
   }
   
-  /** Return the corrected offset. If {@link #input} is a {@link CharStream} subclass
-   * this method calls {@link CharStream#correctOffset}, else returns <code>currentOff</code>.
+  /** Return the corrected offset. If {@link #input} is a {@link CharFilter} subclass
+   * this method calls {@link CharFilter#correctOffset}, else returns <code>currentOff</code>.
    * @param currentOff offset as seen in the output
    * @return corrected offset based on the input
-   * @see CharStream#correctOffset
+   * @see CharFilter#correctOffset
    */
   protected final int correctOffset(int currentOff) {
-    return (input instanceof CharStream) ? ((CharStream) input).correctOffset(currentOff) : currentOff;
+    return (input instanceof CharFilter) ? ((CharFilter) input).correctOffset(currentOff) : currentOff;
   }
 
-  /** Expert: Reset the tokenizer to a new reader.  Typically, an
-   *  analyzer (in its reusableTokenStream method) will use
+  /** Expert: Set a new reader on the Tokenizer.  Typically, an
+   *  analyzer (in its tokenStream method) will use
    *  this to re-use a previously created tokenizer. */
-  public void reset(Reader input) throws IOException {
-    this.input = input;
+  public final void setReader(Reader input) {
+    if (input == null) {
+      throw new NullPointerException("input must not be null");
+    } else if (this.input != ILLEGAL_STATE_READER) {
+      throw new IllegalStateException("TokenStream contract violation: close() call missing");
+    }
+    this.inputPending = input;
+    setReaderTestPoint();
   }
+  
+  @Override
+  public void reset() throws IOException {
+    super.reset();
+    input = inputPending;
+    inputPending = ILLEGAL_STATE_READER;
+  }
+
+  // only used for testing
+  void setReaderTestPoint() {}
+  
+  private static final Reader ILLEGAL_STATE_READER = new Reader() {
+    @Override
+    public int read(char[] cbuf, int off, int len) {
+      throw new IllegalStateException("TokenStream contract violation: reset()/close() call missing, " +
+          "reset() called multiple times, or subclass does not call super.reset(). " +
+          "Please see Javadocs of TokenStream class for more information about the correct consuming workflow.");
+    }
+
+    @Override
+    public void close() {} 
+  };
 }
 

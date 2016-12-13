@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,9 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr;
 
+import org.apache.solr.common.params.CommonParams;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -31,7 +31,7 @@ public class DisMaxRequestHandlerTest extends SolrTestCaseJ4 {
     initCore("solrconfig.xml","schema.xml");
     lrf = h.getRequestFactory
       ("dismax", 0, 20,
-       "version","2.0",
+       CommonParams.VERSION,"2.2",
        "facet", "true",
        "facet.field","t_s"
        );
@@ -93,17 +93,22 @@ public class DisMaxRequestHandlerTest extends SolrTestCaseJ4 {
     assertQ("multi qf",
             req("q", "cool"
                 ,"qt", qt
-                ,"version", "2.0"
+                ,CommonParams.VERSION, "2.2"
                 ,"qf", "subject"
                 ,"qf", "features_t"
                 )
+            ,"//*[@numFound='3']"
+            );
+    
+    assertQ("multi qf as local params",
+            req("q", "{!dismax qf=subject qf=features_t}cool")
             ,"//*[@numFound='3']"
             );
 
     assertQ("boost query",
             req("q", "cool stuff"
                 ,"qt", qt
-                ,"version", "2.0"
+                ,CommonParams.VERSION, "2.2"
                 ,"bq", "subject:hell^400"
                 )
             ,"//*[@numFound='3']"
@@ -115,10 +120,10 @@ public class DisMaxRequestHandlerTest extends SolrTestCaseJ4 {
     assertQ("multi boost query",
             req("q", "cool stuff"
                 ,"qt", qt
-                ,"version", "2.0"
+                ,CommonParams.VERSION, "2.2"
                 ,"bq", "subject:hell^400"
                 ,"bq", "subject:cool^4"
-                ,"debugQuery", "true"
+                , CommonParams.DEBUG_QUERY, "true"
                 )
             ,"//*[@numFound='3']"
             ,"//result/doc[1]/int[@name='id'][.='666']"
@@ -175,46 +180,23 @@ public class DisMaxRequestHandlerTest extends SolrTestCaseJ4 {
     Pattern p_bool = Pattern.compile("\\(subject:hell\\s*subject:cool\\)");
     String resp = h.query(req("q", "cool stuff"
                 ,"qt", "dismax"
-                ,"version", "2.0"
+                ,CommonParams.VERSION, "2.2"
                 ,"bq", "subject:hell OR subject:cool"
-                ,"debugQuery", "true"
+                ,CommonParams.DEBUG_QUERY, "true"
                               ));
     assertTrue(p.matcher(resp).find());
     assertFalse(p_bool.matcher(resp).find());
 
     resp = h.query(req("q", "cool stuff"
                 ,"qt", "dismax"
-                ,"version", "2.0"
+                ,CommonParams.VERSION, "2.2"
                 ,"bq", "subject:hell OR subject:cool"
                 ,"bq",""
-                ,"debugQuery", "true"
+                ,CommonParams.DEBUG_QUERY, "true"
                               ));    
     assertTrue(p.matcher(resp).find());
     assertTrue(p_bool.matcher(resp).find());
 
-  }
-
-  @Test
-  public void testOldStyleDefaults() throws Exception {
-
-    lrf = h.getRequestFactory
-      ("dismaxOldStyleDefaults", 0, 20,
-       "version","2.0",
-       "facet", "true",
-       "facet.field","t_s"
-       );
-    doTestSomeStuff("dismaxOldStyleDefaults");
-  }
-
-  @Test
-  public void testSimplestParams() throws Exception {
-
-    assertQ("match w/o only q param",
-            req("qt", "dismaxNoDefaults",
-                "q","guide")
-            ,"//*[@numFound='2']"
-            );
-    
   }
   
 }

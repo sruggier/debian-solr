@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.spelling.suggest;
 
 import java.io.File;
@@ -22,6 +21,7 @@ import java.io.File;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.params.SpellingParams;
 import org.apache.solr.common.util.NamedList;
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -31,12 +31,26 @@ public class SuggesterTest extends SolrTestCaseJ4 {
    */
   protected String requestUri = "/suggest";
 
+  // TODO: fix this test to not require FSDirectory
+  static String savedFactory;
+
   @BeforeClass
   public static void beforeClass() throws Exception {
+    savedFactory = System.getProperty("solr.DirectoryFactory");
+    System.setProperty("solr.directoryFactory", "org.apache.solr.core.MockFSDirectoryFactory");
     initCore("solrconfig-spellchecker.xml","schema-spellchecker.xml");
   }
+  
+  @AfterClass
+  public static void afterClass() {
+    if (savedFactory == null) {
+      System.clearProperty("solr.directoryFactory");
+    } else {
+      System.setProperty("solr.directoryFactory", savedFactory);
+    }
+  }
 
-  public static void addDocs() throws Exception {
+  public static void addDocs() {
     assertU(adoc("id", "1",
                  "text", "acceptable accidentally accommodate acquire"
                ));
@@ -67,10 +81,10 @@ public class SuggesterTest extends SolrTestCaseJ4 {
     System.setProperty("solr.test.leavedatadir", "true");
     addDocs();
     assertU(commit());
-    File data = dataDir;
+    File data = initCoreDataDir;
     String config = configString;
     deleteCore();
-    dataDir = data;
+    initCoreDataDir = data;
     configString = config;
     initCore();
     assertQ(req("qt", requestUri, "q", "ac", SpellingParams.SPELLCHECK_COUNT, "2", SpellingParams.SPELLCHECK_ONLY_MORE_POPULAR, "true"),
@@ -101,6 +115,7 @@ public class SuggesterTest extends SolrTestCaseJ4 {
   public void testAnalyzer() throws Exception {
     Suggester suggester = new Suggester();
     NamedList params = new NamedList();
+    params.add("field", "test_field");
     params.add("lookupImpl", "org.apache.solr.spelling.suggest.tst.TSTLookupFactory");
     suggester.init(params, h.getCore());
     assertTrue(suggester.getQueryAnalyzer() != null);

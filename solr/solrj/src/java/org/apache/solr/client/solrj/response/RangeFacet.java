@@ -1,5 +1,3 @@
-package org.apache.solr.client.solrj.response;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.client.solrj.response;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.client.solrj.response;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -26,7 +25,7 @@ import java.util.List;
 public abstract class RangeFacet<B, G> {
 
   private final String name;
-  private final List<Count> counts = new ArrayList<Count>();
+  private final List<Count> counts = new ArrayList<>();
 
   private final B start;
   private final B end;
@@ -34,14 +33,16 @@ public abstract class RangeFacet<B, G> {
 
   private final Number before;
   private final Number after;
+  private final Number between;
 
-  protected RangeFacet(String name, B start, B end, G gap, Number before, Number after) {
+  protected RangeFacet(String name, B start, B end, G gap, Number before, Number after, Number between) {
     this.name = name;
     this.start = start;
     this.end = end;
     this.gap = gap;
     this.before = before;
     this.after = after;
+    this.between = between;
   }
 
   public void addCount(String value, int count) {
@@ -76,18 +77,22 @@ public abstract class RangeFacet<B, G> {
     return after;
   }
 
+  public Number getBetween() {
+    return between;
+  }
+
   public static class Numeric extends RangeFacet<Number, Number> {
 
-    public Numeric(String name, Number start, Number end, Number gap, Number before, Number after) {
-      super(name, start, end, gap, before, after);
+    public Numeric(String name, Number start, Number end, Number gap, Number before, Number after, Number between) {
+      super(name, start, end, gap, before, after, between);
     }
 
   }
 
   public static class Date extends RangeFacet<java.util.Date, String> {
 
-    public Date(String name, java.util.Date start, java.util.Date end, String gap, Number before, Number after) {
-      super(name, start, end, gap, before, after);
+    public Date(String name, java.util.Date start, java.util.Date end, String gap, Number before, Number after, Number between) {
+      super(name, start, end, gap, before, after, between);
     }
 
   }

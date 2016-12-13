@@ -17,11 +17,16 @@
    under the License.    
 -->
 <ivy-module version="2.0">
-    <info organisation="org.apache.lucene" module="core-test-framework"/>
-    <dependencies>
-      <dependency org="org.apache.ant" name="ant" rev="1.7.1" transitive="false"/>
-      <dependency org="org.apache.ant" name="ant-junit" rev="1.7.1" transitive="false"/>
-      <dependency org="junit" name="junit" rev="4.10" transitive="false"/>
-      <exclude org="*" ext="*" matcher="regexp" type="${ivy.exclude.types}"/> 
-    </dependencies>
+  <info organisation="org.apache.lucene" module="core-test-framework"/>
+
+  <configurations defaultconfmapping="compile->master">
+    <conf name="compile" transitive="false"/>
+  </configurations>
+
+  <dependencies>
+    <dependency org="junit" name="junit" rev="${/junit/junit}" conf="compile"/>
+    <dependency org="com.carrotsearch.randomizedtesting" name="randomizedtesting-runner" rev="${/com.carrotsearch.randomizedtesting/randomizedtesting-runner}" conf="compile"/>
+
+    <exclude org="*" ext="*" matcher="regexp" type="${ivy.exclude.types}"/> 
+  </dependencies>
 </ivy-module>

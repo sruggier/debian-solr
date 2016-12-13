@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,39 +14,46 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.io.IOException;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.TextField;
+import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TimeUnits;
+import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
 
 /**
- * Test indexes ~82M docs with 26 terms each, so you get > Integer.MAX_VALUE terms/docs pairs
+ * Test indexes ~82M docs with 26 terms each, so you get &gt; Integer.MAX_VALUE terms/docs pairs
  * @lucene.experimental
  */
+@SuppressCodecs({ "SimpleText", "Memory", "Direct", "Compressing" })
+@TimeoutSuite(millis = 4 * TimeUnits.HOUR)
 public class Test2BPostings extends LuceneTestCase {
 
   @Nightly
   public void test() throws Exception {
+    BaseDirectoryWrapper dir = newFSDirectory(createTempDir("2BPostings"));
+    if (dir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
+    }
 
-    MockDirectoryWrapper dir = newFSDirectory(_TestUtil.getTempDir("2BPostings"));
-    dir.setThrottling(MockDirectoryWrapper.Throttling.NEVER);
-    dir.setCheckIndexOnClose(false); // don't double-checkindex
-    
-    IndexWriter w = new IndexWriter(dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random))
+    IndexWriterConfig iwc = new IndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH)
         .setRAMBufferSizeMB(256.0)
         .setMergeScheduler(new ConcurrentMergeScheduler())
         .setMergePolicy(newLogMergePolicy(false, 10))
-        .setOpenMode(IndexWriterConfig.OpenMode.CREATE));
+        .setOpenMode(IndexWriterConfig.OpenMode.CREATE);
+    
+    IndexWriter w = new IndexWriter(dir, iwc);
 
     MergePolicy mp = w.getConfig().getMergePolicy();
     if (mp instanceof LogByteSizeMergePolicy) {
@@ -57,9 +62,10 @@ public class Test2BPostings extends LuceneTestCase {
     }
 
     Document doc = new Document();
-    Field field = new Field("field", new MyTokenStream());
-    field.setIndexOptions(IndexOptions.DOCS_ONLY);
-    field.setOmitNorms(true);
+    FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
+    ft.setOmitNorms(true);
+    ft.setIndexOptions(IndexOptions.DOCS);
+    Field field = new Field("field", new MyTokenStream(), ft);
     doc.add(field);
     
     final int numDocs = (Integer.MAX_VALUE / 26) + 1;
@@ -71,35 +77,26 @@ public class Test2BPostings extends LuceneTestCase {
     }
     w.forceMerge(1);
     w.close();
-    CheckIndex ci = new CheckIndex(dir);
-    if (VERBOSE) {
-      ci.setInfoStream(System.out);
-    }
-    ci.checkIndex();
     dir.close();
   }
   
   public static final class MyTokenStream extends TokenStream {
     private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
-    private final char buffer[];
     int index;
 
-    public MyTokenStream() {
-      termAtt.setLength(1);
-      buffer = termAtt.buffer();
-    }
-    
     @Override
-    public boolean incrementToken() throws IOException {
+    public boolean incrementToken() {
       if (index <= 'z') {
-        buffer[0] = (char) index++;
+        clearAttributes();
+        termAtt.setLength(1);
+        termAtt.buffer()[0] = (char) index++;
         return true;
       }
       return false;
     }
     
     @Override
-    public void reset() throws IOException {
+    public void reset() {
       index = 'a';
     }
   }

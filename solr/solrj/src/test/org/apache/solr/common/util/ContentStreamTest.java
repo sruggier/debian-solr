@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,29 +14,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.util;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.StringReader;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.net.URL;
-import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.lucene.util.LuceneTestCase;
+import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.core.SolrResourceLoader;
 
 /**
  */
-public class ContentStreamTest extends LuceneTestCase
-{
-  public void testStringStream() throws IOException
+public class ContentStreamTest extends SolrTestCaseJ4 
+{  
+  public void testStringStream() throws IOException 
   {
     String input = "aads ghaskdgasgldj asl sadg ajdsg &jag # @ hjsakg hsakdg hjkas s";
     ContentStreamBase stream = new ContentStreamBase.StringStream( input );
@@ -45,63 +43,63 @@ public class ContentStreamTest extends LuceneTestCase
     assertEquals( input, IOUtils.toString( stream.getReader() ) );
   }
 
-  public void testFileStream() throws IOException
+  public void testFileStream() throws IOException 
   {
-    InputStream is = new SolrResourceLoader(null, null).openResource( "solrj/README" );
+    InputStream is = new SolrResourceLoader().openResource( "solrj/README" );
     assertNotNull( is );
-    File file = new File(TEMP_DIR, "README");
+    File file = new File(createTempDir().toFile(), "README");
     FileOutputStream os = new FileOutputStream(file);
     IOUtils.copy(is, os);
     os.close();
-
-    ContentStreamBase stream = new ContentStreamBase.FileStream( file );
-    assertEquals( file.length(), stream.getSize().intValue() );
-    assertTrue( IOUtils.contentEquals( new FileInputStream( file ), stream.getStream() ) );
-    assertTrue( IOUtils.contentEquals( new FileReader(      file ), stream.getReader() ) );
+    is.close();
+    
+    ContentStreamBase stream = new ContentStreamBase.FileStream(file);
+    InputStream s = stream.getStream();
+    FileInputStream fis = new FileInputStream(file);
+    InputStreamReader isr = new InputStreamReader(
+        new FileInputStream(file), StandardCharsets.UTF_8);
+    Reader r = stream.getReader();
+    try {
+      assertEquals(file.length(), stream.getSize().intValue());
+      assertTrue(IOUtils.contentEquals(fis, s));
+      assertTrue(IOUtils.contentEquals(isr, r));
+    } finally {
+      s.close();
+      r.close();
+      isr.close();
+      fis.close();
+    }
   }
+  
 
-
-  public void testURLStream() throws IOException
+  public void testURLStream() throws IOException 
   {
-    byte[] content = null;
-    String contentType = null;
-    URL url = new URL( "http://svn.apache.org/repos/asf/lucene/dev/trunk/" );
-    InputStream in = null;
+    InputStream is = new SolrResourceLoader().openResource( "solrj/README" );
+    assertNotNull( is );
+    File file = new File(createTempDir().toFile(), "README");
+    FileOutputStream os = new FileOutputStream(file);
+    IOUtils.copy(is, os);
+    os.close();
+    is.close();
+    
+    ContentStreamBase stream = new ContentStreamBase.URLStream(new URL(file
+        .toURI().toASCIIString()));
+    InputStream s = stream.getStream();
+    FileInputStream fis = new FileInputStream(file);
+    FileInputStream fis2 = new FileInputStream(file);
+    InputStreamReader isr = new InputStreamReader(fis, StandardCharsets.UTF_8);
+    Reader r = stream.getReader();
     try {
-      URLConnection conn = url.openConnection();
-      in = conn.getInputStream();
-      contentType = conn.getContentType();
-      content = IOUtils.toByteArray(in);
-
-      assumeTrue("not enough content for test to be useful",
-                 content.length > 10 );
-
-    } catch (IOException ex) {
-      assumeNoException("Unable to connect to " + url + " to run the test.", ex);
-    }finally {
-      if (in != null) {
-        IOUtils.closeQuietly(in);
-      }
+      assertTrue(IOUtils.contentEquals(fis2, s));
+      assertEquals(file.length(), stream.getSize().intValue());
+      assertTrue(IOUtils.contentEquals(isr, r));
+      assertEquals(file.length(), stream.getSize().intValue());
+    } finally {
+      r.close();
+      s.close();
+      isr.close();
+      fis.close();
+      fis2.close();
     }
-
-
-    ContentStreamBase stream = new ContentStreamBase.URLStream( url );
-    in = stream.getStream();  // getStream is needed before getSize is valid
-    assertEquals( content.length, stream.getSize().intValue() );
-
-    try {
-      assertTrue( IOUtils.contentEquals(
-          new ByteArrayInputStream(content), in ) );
-    }
-    finally {
-      IOUtils.closeQuietly(in);
-    }
-
-    String charset = ContentStreamBase.getCharsetFromContentType(contentType);
-    if (charset == null)
-      charset = ContentStreamBase.DEFAULT_CHARSET;
-    // Re-open the stream and this time use a reader
-    stream = new ContentStreamBase.URLStream( url );
-    assertTrue( IOUtils.contentEquals( new StringReader(new String(content, charset)), stream.getReader() ) );
   }
 }

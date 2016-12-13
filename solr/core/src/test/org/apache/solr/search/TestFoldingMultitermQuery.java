@@ -1,5 +1,3 @@
-package org.apache.solr.search;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search;
 
 import org.apache.solr.SolrTestCaseJ4;
 import org.junit.BeforeClass;
@@ -29,7 +28,7 @@ public class TestFoldingMultitermQuery extends SolrTestCaseJ4 {
 
   @BeforeClass
   public static void beforeTests() throws Exception {
-    initCore("solrconfig.xml", "schema-folding.xml");
+    initCore("solrconfig-basic.xml", "schema-folding.xml");
 
     String docs[] = {
         "abcdefg1 finger",
@@ -46,8 +45,6 @@ public class TestFoldingMultitermQuery extends SolrTestCaseJ4 {
           "float_f", num,
           "long_f", num,
           "double_f", num,
-          "byte_f", num,
-          "short_f", num,
           "bool_f", boolVal,
           "date_f", "200" + Integer.toString(i % 10) + "-01-01T00:00:00Z",
           "content", docs[i],
@@ -83,11 +80,6 @@ public class TestFoldingMultitermQuery extends SolrTestCaseJ4 {
     assertU(adoc("id", Integer.toString(idx++), "content_russian", "электромагнитной"));
     assertU(adoc("id", Integer.toString(idx++), "content_russian", "Вместе"));
     assertU(adoc("id", Integer.toString(idx++), "content_russian", "силе"));
-
-    // ISOLatin
-    assertU(adoc("id", Integer.toString(idx++), "content_isolatin", "iKnowHowÁtotest"));
-    assertU(adoc("id", Integer.toString(idx++), "content_isolatin", "YppÉÉÉ all is well"));
-    assertU(adoc("id", Integer.toString(idx++), "content_isolatin", "that's äll"));
 
     // persian normalization
     assertU(adoc("id", Integer.toString(idx++), "content_persian", "هاي"));
@@ -190,6 +182,36 @@ public class TestFoldingMultitermQuery extends SolrTestCaseJ4 {
     assertQ(req("q", "content_lower_token:hȉ*l?*"), "//result[@numFound='1']");
   }
 
+  @Test
+  public void testFuzzy() throws Exception {
+    assertQ(req("q", "content:ZiLLx~1"),
+            "//result[@numFound='1']");
+    assertQ(req("q", "content_straight:ZiLLx~1"),      // case preserving field shouldn't match
+           "//result[@numFound='0']");
+    assertQ(req("q", "content_folding:ZiLLx~1"),       // case preserving field shouldn't match
+           "//result[@numFound='0']");
+  }
+
+  @Test
+  public void testRegex() throws Exception {
+    assertQ(req("q", "content:/Zill[a-z]/"),
+        "//result[@numFound='1']");
+    assertQ(req("q", "content:/Zill[A-Z]/"),   // everything in the regex gets lowercased?
+        "//result[@numFound='1']");
+    assertQ(req("q", "content_keyword:/.*Zill[A-Z]/"),
+        "//result[@numFound='1']");
+
+    assertQ(req("q", "content_straight:/Zill[a-z]/"),      // case preserving field shouldn't match
+        "//result[@numFound='0']");
+    assertQ(req("q", "content_folding:/Zill[a-z]/"),       // case preserving field shouldn't match
+        "//result[@numFound='0']");
+
+    assertQ(req("q", "content_keyword:/Abcdefg1 Finger/"), // test spaces
+        "//result[@numFound='1']");
+
+  }
+
+
 
   @Test
   public void testGeneral() throws Exception {
@@ -244,7 +266,7 @@ public class TestFoldingMultitermQuery extends SolrTestCaseJ4 {
 
   @Test
   public void testNonTextTypes() {
-    String[] intTypes = {"int_f", "float_f", "long_f", "double_f", "byte_f", "short_f"};
+    String[] intTypes = {"int_f", "float_f", "long_f", "double_f"};
 
     for (String str : intTypes) {
       assertQ(req("q", str + ":" + "0"),
@@ -285,7 +307,7 @@ public class TestFoldingMultitermQuery extends SolrTestCaseJ4 {
       assertQ(req("q", "content_multi_bad:" + "abCD*"));
       fail("Should throw exception when token evaluates to more than one term");
     } catch (Exception expected) {
-      assertTrue(expected.getCause() instanceof java.lang.IllegalArgumentException);
+      assertTrue(expected.getCause() instanceof org.apache.solr.common.SolrException);
     } finally {
       resetExceptionIgnores();
     }
@@ -302,15 +324,6 @@ public class TestFoldingMultitermQuery extends SolrTestCaseJ4 {
     assertQ(req("q", "content_russian:Вме*те"), "//result[@numFound='1']");
     assertQ(req("q", "content_russian:Си*е"), "//result[@numFound='1']");
     assertQ(req("q", "content_russian:эЛектромагнИт*"), "//result[@numFound='1']");
-  }
-
-  @Test
-  public void testISOLatin() {
-    assertQ(req("q", "content_isolatin:iKnowHowÁto*st"), "//result[@numFound='1']");
-    assertQ(req("q", "content_isolatin:iKn*HowÁto*"), "//result[@numFound='1']");
-    assertQ(req("q", "content_isolatin:YppE*"), "//result[@numFound='1']");
-    assertQ(req("q", "content_isolatin:äl*"), "//result[@numFound='2']");
-    assertQ(req("q", "content_isolatin:ál*"), "//result[@numFound='2']");
   }
   
   public void testPersian() {

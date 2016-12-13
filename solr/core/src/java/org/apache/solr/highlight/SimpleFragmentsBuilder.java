@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.highlight;
 
 import org.apache.lucene.search.vectorhighlight.BoundaryScanner;
@@ -39,20 +38,5 @@ public class SimpleFragmentsBuilder extends SolrFragmentsBuilder {
   @Override
   public String getDescription() {
     return "SimpleFragmentsBuilder";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
   }
 }

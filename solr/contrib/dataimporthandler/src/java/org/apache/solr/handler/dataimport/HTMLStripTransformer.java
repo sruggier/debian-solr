@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,7 +16,6 @@
  */
 package org.apache.solr.handler.dataimport;
 
-import org.apache.lucene.analysis.CharReader;
 import org.apache.lucene.analysis.charfilter.HTMLStripCharFilter;
 
 import java.io.IOException;
@@ -30,7 +29,6 @@ import java.util.Map;
  * A {@link Transformer} implementation which strip off HTML tags using {@link HTMLStripCharFilter} This is useful
  * in case you don't need this HTML anyway.
  *
- * @version $Id$
  * @see HTMLStripCharFilter
  * @since solr 1.4
  */
@@ -74,7 +72,7 @@ public class HTMLStripTransformer extends Transformer {
     StringBuilder out = new StringBuilder();
     StringReader strReader = new StringReader(value);
     try {
-      HTMLStripCharFilter html = new HTMLStripCharFilter(CharReader.get(strReader.markSupported() ? strReader : new BufferedReader(strReader)));
+      HTMLStripCharFilter html = new HTMLStripCharFilter(strReader.markSupported() ? strReader : new BufferedReader(strReader));
       char[] cbuf = new char[1024 * 10];
       while (true) {
         int count = html.read(cbuf);

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -20,11 +20,11 @@ import org.apache.solr.core.SolrInfoMBean;
 import org.apache.solr.handler.StandardRequestHandler;
 import org.apache.solr.handler.admin.LukeRequestHandler;
 import org.apache.solr.handler.component.SearchComponent;
-import org.apache.solr.handler.component.SearchHandler;
 import org.apache.solr.highlight.DefaultSolrHighlighter;
 import org.apache.solr.search.LRUCache;
 import org.junit.BeforeClass;
 import java.io.File;
+import java.net.URI;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Enumeration;
@@ -45,9 +45,8 @@ public class SolrInfoMBeanTest extends SolrTestCaseJ4
    * a name, description, etc...
    */
   public void testCallMBeanInfo() throws Exception {
-    List<Class> classes = new ArrayList<Class>();
+    List<Class> classes = new ArrayList<>();
     classes.addAll(getClassesForPackage(StandardRequestHandler.class.getPackage().getName()));
-    classes.addAll(getClassesForPackage(SearchHandler.class.getPackage().getName()));
     classes.addAll(getClassesForPackage(SearchComponent.class.getPackage().getName()));
     classes.addAll(getClassesForPackage(LukeRequestHandler.class.getPackage().getName()));
     classes.addAll(getClassesForPackage(DefaultSolrHighlighter.class.getPackage().getName()));
@@ -63,11 +62,8 @@ public class SolrInfoMBeanTest extends SolrTestCaseJ4
           //System.out.println( info.getClass() );
           assertNotNull( info.getName() );
           assertNotNull( info.getDescription() );
-          assertNotNull( info.getSource() );
-          assertNotNull( info.getSourceId() );
-          assertNotNull( info.getVersion() );
           assertNotNull( info.getCategory() );
-
+          
           if( info instanceof LRUCache ) {
             continue;
           }
@@ -80,7 +76,7 @@ public class SolrInfoMBeanTest extends SolrTestCaseJ4
         }
         catch( InstantiationException ex ) {
           // expected...
-          //System.out.println( "unable to initalize: "+clazz );
+          //System.out.println( "unable to initialize: "+clazz );
         }
       }
     }
@@ -88,16 +84,19 @@ public class SolrInfoMBeanTest extends SolrTestCaseJ4
   }
   
   private static List<Class> getClassesForPackage(String pckgname) throws Exception {
-    ArrayList<File> directories = new ArrayList<File>();
+    ArrayList<File> directories = new ArrayList<>();
     ClassLoader cld = h.getCore().getResourceLoader().getClassLoader();
     String path = pckgname.replace('.', '/');
     Enumeration<URL> resources = cld.getResources(path);
     while (resources.hasMoreElements()) {
-      final File f = new File(resources.nextElement().toURI());
+      final URI uri = resources.nextElement().toURI();
+      if (!"file".equalsIgnoreCase(uri.getScheme()))
+        continue;
+      final File f = new File(uri);
       directories.add(f);
     }
       
-    ArrayList<Class> classes = new ArrayList<Class>();
+    ArrayList<Class> classes = new ArrayList<>();
     for (File directory : directories) {
       if (directory.exists()) {
         String[] files = directory.list();
@@ -113,6 +112,7 @@ public class SolrInfoMBeanTest extends SolrTestCaseJ4
         }
       }
     }
+    assertFalse("No classes found in package '"+pckgname+"'; maybe your test classes are packaged as JAR file?", classes.isEmpty());
     return classes;
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -22,24 +22,26 @@ import org.slf4j.LoggerFactory;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.lang.invoke.MethodHandles;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * <p> A data source implementation which can be used to read character files using HTTP. </p> <p/> <p> Refer to <a
+ * <p> A data source implementation which can be used to read character files using HTTP. </p> <p> Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a> for more
  * details. </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class URLDataSource extends DataSource<Reader> {
-  Logger LOG = LoggerFactory.getLogger(URLDataSource.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private String baseUrl;
 
@@ -140,7 +142,7 @@ public class URLDataSource extends DataSource<Reader> {
 
   public static final String BASE_URL = "baseUrl";
 
-  public static final String UTF_8 = "UTF-8";
+  public static final String UTF_8 = StandardCharsets.UTF_8.name();
 
   public static final String CONNECTION_TIMEOUT_FIELD_NAME = "connectionTimeout";
 

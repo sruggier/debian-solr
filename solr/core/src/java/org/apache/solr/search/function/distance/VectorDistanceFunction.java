@@ -1,5 +1,4 @@
-package org.apache.solr.search.function.distance;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,14 +14,14 @@ package org.apache.solr.search.function.distance;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.Searcher;
-import org.apache.lucene.spatial.DistanceUtils;
+package org.apache.solr.search.function.distance;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.docvalues.DoubleDocValues;
+import org.apache.lucene.queries.function.valuesource.MultiValueSource;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.solr.common.SolrException;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.MultiValueSource;
-import org.apache.solr.search.function.ValueSource;
 
 import java.io.IOException;
 import java.util.Map;
@@ -30,7 +29,7 @@ import java.util.Map;
 
 /**
  * Calculate the p-norm for a Vector.  See http://en.wikipedia.org/wiki/Lp_space
- * <p/>
+ * <p>
  * Common cases:
  * <ul>
  * <li>0 = Sparseness calculation</li>
@@ -68,57 +67,100 @@ public class VectorDistanceFunction extends ValueSource {
    * @param dv2 The values from the second MultiValueSource
    * @return The distance
    */
-  protected double distance(int doc, DocValues dv1, DocValues dv2) {
+  protected double distance(int doc, FunctionValues dv1, FunctionValues dv2) {
     //Handle some special cases:
     double[] vals1 = new double[source1.dimension()];
     double[] vals2 = new double[source1.dimension()];
     dv1.doubleVal(doc, vals1);
     dv2.doubleVal(doc, vals2);
-    return DistanceUtils.vectorDistance(vals1, vals2, power, oneOverPower);
+    return vectorDistance(vals1, vals2, power, oneOverPower);
+  }
+
+  /**
+   * Calculate the p-norm (i.e. length) between two vectors.
+   * <p>
+   * See <a href="http://en.wikipedia.org/wiki/Lp_space">Lp space</a>
+   *
+   * @param vec1  The first vector
+   * @param vec2  The second vector
+   * @param power The power (2 for cartesian distance, 1 for manhattan, etc.)
+   * @return The length.
+   *
+   * @see #vectorDistance(double[], double[], double, double)
+   *
+   */
+  public static double vectorDistance(double[] vec1, double[] vec2, double power) {
+    //only calc oneOverPower if it's needed
+    double oneOverPower = (power == 0 || power == 1.0 || power == 2.0) ? Double.NaN : 1.0 / power;
+    return vectorDistance(vec1, vec2, power, oneOverPower);
+  }
+
+  /**
+   * Calculate the p-norm (i.e. length) between two vectors.
+   *
+   * @param vec1         The first vector
+   * @param vec2         The second vector
+   * @param power        The power (2 for cartesian distance, 1 for manhattan, etc.)
+   * @param oneOverPower If you've pre-calculated oneOverPower and cached it, use this method to save
+   *                     one division operation over {@link #vectorDistance(double[], double[], double)}.
+   * @return The length.
+   */
+  public static double vectorDistance(double[] vec1, double[] vec2, double power, double oneOverPower) {
+    double result = 0;
+
+    if (power == 0) {
+      for (int i = 0; i < vec1.length; i++) {
+        result += vec1[i] - vec2[i] == 0 ? 0 : 1;
+      }
+    } else if (power == 1.0) { // Manhattan
+      for (int i = 0; i < vec1.length; i++) {
+        result += Math.abs(vec1[i] - vec2[i]);
+      }
+    } else if (power == 2.0) { // Cartesian
+      result = Math.sqrt(distSquaredCartesian(vec1, vec2));
+    } else if (power == Integer.MAX_VALUE || Double.isInfinite(power)) {//infinite norm?
+      for (int i = 0; i < vec1.length; i++) {
+        result = Math.max(result, Math.max(vec1[i], vec2[i]));
+      }
+    } else {
+      for (int i = 0; i < vec1.length; i++) {
+        result += Math.pow(vec1[i] - vec2[i], power);
+      }
+      result = Math.pow(result, oneOverPower);
+    }
+    return result;
+  }
+
+  /**
+   * The square of the cartesian Distance.  Not really a distance, but useful if all that matters is
+   * comparing the result to another one.
+   *
+   * @param vec1 The first point
+   * @param vec2 The second point
+   * @return The squared cartesian distance
+   */
+  public static double distSquaredCartesian(double[] vec1, double[] vec2) {
+    double result = 0;
+    for (int i = 0; i < vec1.length; i++) {
+      double v = vec1[i] - vec2[i];
+      result += v * v;
+    }
+    return result;
   }
 
   @Override
-  public DocValues getValues(Map context, IndexReader reader) throws IOException {
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
 
-    final DocValues vals1 = source1.getValues(context, reader);
+    final FunctionValues vals1 = source1.getValues(context, readerContext);
 
-    final DocValues vals2 = source2.getValues(context, reader);
+    final FunctionValues vals2 = source2.getValues(context, readerContext);
 
 
-    return new DocValues() {
-      @Override
-      public byte byteVal(int doc) {
-        return (byte) doubleVal(doc);
-      }
-
-      @Override
-      public short shortVal(int doc) {
-        return (short) doubleVal(doc);
-      }
-
-      @Override
-      public float floatVal(int doc) {
-        return (float) doubleVal(doc);
-      }
-
-      @Override
-      public int intVal(int doc) {
-        return (int) doubleVal(doc);
-      }
-
-      @Override
-      public long longVal(int doc) {
-        return (long) doubleVal(doc);
-      }
+    return new DoubleDocValues(this) {
 
       @Override
       public double doubleVal(int doc) {
         return distance(doc, vals1, vals2);
-      }
-
-      @Override
-      public String strVal(int doc) {
-        return Double.toString(doubleVal(doc));
       }
 
       @Override
@@ -135,7 +177,7 @@ public class VectorDistanceFunction extends ValueSource {
   }
 
   @Override
-  public void createWeight(Map context, Searcher searcher) throws IOException {
+  public void createWeight(Map context, IndexSearcher searcher) throws IOException {
     source1.createWeight(context, searcher);
     source2.createWeight(context, searcher);
   }

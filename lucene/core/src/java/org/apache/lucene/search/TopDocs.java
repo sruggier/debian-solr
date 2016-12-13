@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,15 +14,16 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import java.io.IOException;
 
 import org.apache.lucene.util.PriorityQueue;
 
+import java.io.IOException;
+
 /** Represents hits returned by {@link
- * Searcher#search(Query,Filter,int)} and {@link
- * Searcher#search(Query,int)}. */
-public class TopDocs implements java.io.Serializable {
+ * IndexSearcher#search(Query,int)}. */
+public class TopDocs {
 
   /** The total number of hits for the query. */
   public int totalHits;
@@ -45,7 +44,7 @@ public class TopDocs implements java.io.Serializable {
   
   /** Sets the maximum score value encountered. */
   public void setMaxScore(float maxScore) {
-    this.maxScore=maxScore;
+    this.maxScore = maxScore;
   }
 
   /** Constructs a TopDocs with a default maxScore=Float.NaN. */
@@ -83,7 +82,7 @@ public class TopDocs implements java.io.Serializable {
     final ScoreDoc[][] shardHits;
 
     public ScoreMergeSortQueue(TopDocs[] shardHits) {
-      initialize(shardHits.length);
+      super(shardHits.length);
       this.shardHits = new ScoreDoc[shardHits.length][];
       for(int shardIDX=0;shardIDX<shardHits.length;shardIDX++) {
         this.shardHits[shardIDX] = shardHits[shardIDX].scoreDocs;
@@ -91,6 +90,7 @@ public class TopDocs implements java.io.Serializable {
     }
 
     // Returns true if first is < second
+    @Override
     public boolean lessThan(ShardRef first, ShardRef second) {
       assert first != second;
       final float firstScore = shardHits[first.shardIndex][first.hitIndex].score;
@@ -124,7 +124,7 @@ public class TopDocs implements java.io.Serializable {
     final int[] reverseMul;
 
     public MergeSortQueue(Sort sort, TopDocs[] shardHits) throws IOException {
-      initialize(shardHits.length);
+      super(shardHits.length);
       this.shardHits = new ScoreDoc[shardHits.length][];
       for(int shardIDX=0;shardIDX<shardHits.length;shardIDX++) {
         final ScoreDoc[] shard = shardHits[shardIDX].scoreDocs;
@@ -146,7 +146,7 @@ public class TopDocs implements java.io.Serializable {
       }
 
       final SortField[] sortFields = sort.getSort();
-      comparators = new FieldComparator<?>[sortFields.length];
+      comparators = new FieldComparator[sortFields.length];
       reverseMul = new int[sortFields.length];
       for(int compIDX=0;compIDX<sortFields.length;compIDX++) {
         final SortField sortField = sortFields[compIDX];
@@ -156,7 +156,7 @@ public class TopDocs implements java.io.Serializable {
     }
 
     // Returns true if first is < second
-    @SuppressWarnings({"unchecked","rawtypes"})
+    @Override
     public boolean lessThan(ShardRef first, ShardRef second) {
       assert first != second;
       final FieldDoc firstFD = (FieldDoc) shardHits[first.shardIndex][first.hitIndex];
@@ -193,18 +193,48 @@ public class TopDocs implements java.io.Serializable {
   }
 
   /** Returns a new TopDocs, containing topN results across
-   *  the provided TopDocs, sorting by the specified {@link
+   *  the provided TopDocs, sorting by score. Each {@link TopDocs}
+   *  instance must be sorted.
+   *  @lucene.experimental */
+  public static TopDocs merge(int topN, TopDocs[] shardHits) throws IOException {
+    return merge(0, topN, shardHits);
+  }
+
+  /**
+   * Same as {@link #merge(int, TopDocs[])} but also ignores the top
+   * {@code start} top docs. This is typically useful for pagination.
+   * @lucene.experimental
+   */
+  public static TopDocs merge(int start, int topN, TopDocs[] shardHits) throws IOException {
+    return mergeAux(null, start, topN, shardHits);
+  }
+
+  /** Returns a new TopFieldDocs, containing topN results across
+   *  the provided TopFieldDocs, sorting by the specified {@link
    *  Sort}.  Each of the TopDocs must have been sorted by
    *  the same Sort, and sort field values must have been
    *  filled (ie, <code>fillFields=true</code> must be
-   *  passed to {@link
-   *  TopFieldCollector#create}.
-   *
-   * <p>Pass sort=null to merge sort by score descending.
-   *
+   *  passed to {@link TopFieldCollector#create}).
    * @lucene.experimental */
-  public static TopDocs merge(Sort sort, int topN, TopDocs[] shardHits) throws IOException {
+  public static TopFieldDocs merge(Sort sort, int topN, TopFieldDocs[] shardHits) throws IOException {
+    return merge(sort, 0, topN, shardHits);
+  }
 
+  /**
+   * Same as {@link #merge(Sort, int, TopFieldDocs[])} but also ignores the top
+   * {@code start} top docs. This is typically useful for pagination.
+   * @lucene.experimental
+   */
+  public static TopFieldDocs merge(Sort sort, int start, int topN, TopFieldDocs[] shardHits) throws IOException {
+    if (sort == null) {
+      throw new IllegalArgumentException("sort must be non-null when merging field-docs");
+    }
+    return (TopFieldDocs) mergeAux(sort, start, topN, shardHits);
+  }
+
+  /** Auxiliary method used by the {@link #merge} impls. A sort value of null
+   *  is used to indicate that docs should be sorted by score. */
+  private static TopDocs mergeAux(Sort sort, int start, int size, TopDocs[] shardHits) throws IOException {
     final PriorityQueue<ShardRef> queue;
     if (sort == null) {
       queue = new ScoreMergeSortQueue(shardHits);
@@ -232,24 +262,34 @@ public class TopDocs implements java.io.Serializable {
       maxScore = Float.NaN;
     }
 
-    final ScoreDoc[] hits = new ScoreDoc[Math.min(topN, availHitCount)];
+    final ScoreDoc[] hits;
+    if (availHitCount <= start) {
+      hits = new ScoreDoc[0];
+    } else {
+      hits = new ScoreDoc[Math.min(size, availHitCount - start)];
+      int requestedResultWindow = start + size;
+      int numIterOnHits = Math.min(availHitCount, requestedResultWindow);
+      int hitUpto = 0;
+      while (hitUpto < numIterOnHits) {
+        assert queue.size() > 0;
+        ShardRef ref = queue.top();
+        final ScoreDoc hit = shardHits[ref.shardIndex].scoreDocs[ref.hitIndex++];
+        hit.shardIndex = ref.shardIndex;
+        if (hitUpto >= start) {
+          hits[hitUpto - start] = hit;
+        }
 
-    int hitUpto = 0;
-    while(hitUpto < hits.length) {
-      assert queue.size() > 0;
-      ShardRef ref = queue.pop();
-      final ScoreDoc hit = shardHits[ref.shardIndex].scoreDocs[ref.hitIndex++];
-      hit.shardIndex = ref.shardIndex;
-      hits[hitUpto] = hit;
+        //System.out.println("  hitUpto=" + hitUpto);
+        //System.out.println("    doc=" + hits[hitUpto].doc + " score=" + hits[hitUpto].score);
 
-      //System.out.println("  hitUpto=" + hitUpto);
-      //System.out.println("    doc=" + hits[hitUpto].doc + " score=" + hits[hitUpto].score);
+        hitUpto++;
 
-      hitUpto++;
-
-      if (ref.hitIndex < shardHits[ref.shardIndex].scoreDocs.length) {
-        // Not done with this these TopDocs yet:
-        queue.add(ref);
+        if (ref.hitIndex < shardHits[ref.shardIndex].scoreDocs.length) {
+          // Not done with this these TopDocs yet:
+          queue.updateTop();
+        } else {
+          queue.pop();
+        }
       }
     }
 

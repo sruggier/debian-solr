@@ -1,11 +1,10 @@
-package org.apache.lucene.index;
-
-/**
- * Copyright 2006 The Apache Software Foundation
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -15,14 +14,12 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.lucene.index;
 
 import java.io.IOException;
-import java.io.Reader;
 import java.util.Random;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Document;
@@ -30,9 +27,11 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 
-class RepeatingTokenStream extends Tokenizer {
+class RepeatingTokenizer extends Tokenizer {
   
   private final Random random;
   private final float percentDocs;
@@ -41,8 +40,8 @@ class RepeatingTokenStream extends Tokenizer {
   CharTermAttribute termAtt;
   String value;
 
-   public RepeatingTokenStream(Reader reader, String val, Random random, float percentDocs, int maxTF) {
-     super(reader);
+   public RepeatingTokenizer(String val, Random random, float percentDocs, int maxTF) {
+     super();
      this.value = val;
      this.random = random;
      this.percentDocs = percentDocs;
@@ -79,17 +78,21 @@ public class TestTermdocPerf extends LuceneTestCase {
 
     Analyzer analyzer = new Analyzer() {
       @Override
-      public TokenStream tokenStream(String fieldName, Reader reader) {
-        return new RepeatingTokenStream(reader, val, random, percentDocs, maxTF);
+      public TokenStreamComponents createComponents(String fieldName) {
+        return new TokenStreamComponents(new RepeatingTokenizer(val, random, percentDocs, maxTF));
       }
     };
 
     Document doc = new Document();
-    doc.add(newField(field,val, Field.Store.NO, Field.Index.NOT_ANALYZED_NO_NORMS));
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, analyzer)
-        .setOpenMode(OpenMode.CREATE).setMaxBufferedDocs(100));
-    ((LogMergePolicy) writer.getConfig().getMergePolicy()).setMergeFactor(100);
+    
+    doc.add(newStringField(field, val, Field.Store.NO));
+    IndexWriter writer = new IndexWriter(
+        dir,
+        newIndexWriterConfig(analyzer)
+          .setOpenMode(OpenMode.CREATE)
+          .setMaxBufferedDocs(100)
+          .setMergePolicy(newLogMergePolicy(100))
+    );
 
     for (int i=0; i<ndocs; i++) {
       writer.addDocument(doc);
@@ -104,21 +107,24 @@ public class TestTermdocPerf extends LuceneTestCase {
     Directory dir = newDirectory();
 
     long start = System.currentTimeMillis();
-    addDocs(random, dir, ndocs, "foo", "val", maxTF, percentDocs);
+    addDocs(random(), dir, ndocs, "foo", "val", maxTF, percentDocs);
     long end = System.currentTimeMillis();
     if (VERBOSE) System.out.println("milliseconds for creation of " + ndocs + " docs = " + (end-start));
 
-    IndexReader reader = IndexReader.open(dir, true);
-    TermEnum tenum = reader.terms(new Term("foo","val"));
-    TermDocs tdocs = reader.termDocs();
+    IndexReader reader = DirectoryReader.open(dir);
+
+    TermsEnum tenum = MultiFields.getTerms(reader, "foo").iterator();
 
     start = System.currentTimeMillis();
 
     int ret=0;
+    PostingsEnum tdocs = null;
+    final Random random = new Random(random().nextLong());
     for (int i=0; i<iter; i++) {
-      tdocs.seek(tenum);
-      while (tdocs.next()) {
-        ret += tdocs.doc();
+      tenum.seekCeil(new BytesRef("val"));
+      tdocs = TestUtil.docs(random, tenum, tdocs, PostingsEnum.NONE);
+      while (tdocs.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+        ret += tdocs.docID();
       }
     }
 

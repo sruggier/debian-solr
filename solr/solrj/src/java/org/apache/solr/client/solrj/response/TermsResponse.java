@@ -1,5 +1,4 @@
-package org.apache.solr.client.solrj.response;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.client.solrj.response;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.client.solrj.response;
 import org.apache.solr.common.util.NamedList;
 
 import java.util.ArrayList;
@@ -27,16 +26,16 @@ import java.util.Map;
  * Encapsulates responses from TermsComponent
  */
 public class TermsResponse {
-  private Map<String, List<Term>> termMap = new HashMap<String, List<Term>>();
+  private Map<String, List<Term>> termMap = new HashMap<>();
   
-  public TermsResponse(NamedList<Object> termsInfo) {
+  public TermsResponse(NamedList<NamedList<Number>> termsInfo) {
     for (int i = 0; i < termsInfo.size(); i++) {
       String fieldName = termsInfo.getName(i);
-      List<Term> itemList = new ArrayList<Term>();
-      NamedList<Object> items = (NamedList<Object>) termsInfo.getVal(i);
+      List<Term> itemList = new ArrayList<>();
+      NamedList<Number> items = termsInfo.getVal(i);
       
       for (int j = 0; j < items.size(); j++) {
-        Term t = new Term(items.getName(j), ((Number) items.getVal(j)).longValue());
+        Term t = new Term(items.getName(j), items.getVal(j).longValue());
         itemList.add(t);
       }
       

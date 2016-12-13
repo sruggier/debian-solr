@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,53 +14,62 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
 
-import java.util.Arrays;
+
 import java.util.Random;
 
-import org.apache.lucene.util.PagedBytes.PagedBytesDataInput;
-import org.apache.lucene.util.PagedBytes.PagedBytesDataOutput;
-import org.junit.Ignore;
+import org.apache.lucene.store.BaseDirectoryWrapper;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
+import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.util.LuceneTestCase.Monster;
 
-@Ignore("You must increase heap to > 2 G to run this")
+@Monster("You must increase heap to > 2 G to run this")
 public class Test2BPagedBytes extends LuceneTestCase {
 
   public void test() throws Exception {
+    BaseDirectoryWrapper dir = newFSDirectory(createTempDir("test2BPagedBytes"));
+    if (dir instanceof MockDirectoryWrapper) {
+      ((MockDirectoryWrapper)dir).setThrottling(MockDirectoryWrapper.Throttling.NEVER);
+    }
     PagedBytes pb = new PagedBytes(15);
-    PagedBytesDataOutput dataOutput = pb.getDataOutput();
+    IndexOutput dataOutput = dir.createOutput("foo", IOContext.DEFAULT);
     long netBytes = 0;
-    long seed = random.nextLong();
+    long seed = random().nextLong();
     long lastFP = 0;
     Random r2 = new Random(seed);
     while(netBytes < 1.1*Integer.MAX_VALUE) {
-      int numBytes = _TestUtil.nextInt(r2, 1, 100000);
+      int numBytes = TestUtil.nextInt(r2, 1, 32768);
       byte[] bytes = new byte[numBytes];
       r2.nextBytes(bytes);
       dataOutput.writeBytes(bytes, bytes.length);
-      long fp = dataOutput.getPosition();
+      long fp = dataOutput.getFilePointer();
       assert fp == lastFP + numBytes;
       lastFP = fp;
       netBytes += numBytes;
     }
-    pb.freeze(true);
+    dataOutput.close();
+    IndexInput input = dir.openInput("foo", IOContext.DEFAULT);
+    pb.copy(input, input.length());
+    input.close();
+    PagedBytes.Reader reader = pb.freeze(true);
 
-    PagedBytesDataInput dataInput = pb.getDataInput();
-    lastFP = 0;
     r2 = new Random(seed);
     netBytes = 0;
     while(netBytes < 1.1*Integer.MAX_VALUE) {
-      int numBytes = _TestUtil.nextInt(r2, 1, 100000);
+      int numBytes = TestUtil.nextInt(r2, 1, 32768);
       byte[] bytes = new byte[numBytes];
       r2.nextBytes(bytes);
+      BytesRef expected = new BytesRef(bytes);
 
-      byte[] bytesIn = new byte[numBytes];
-      dataInput.readBytes(bytesIn, 0, numBytes);
-      assertTrue(Arrays.equals(bytes, bytesIn));
+      BytesRef actual = new BytesRef();
+      reader.fillSlice(actual, netBytes, numBytes);
+      assertEquals(expected, actual);
 
-      long fp = dataInput.getPosition();
-      assert fp == lastFP + numBytes;
-      lastFP = fp;
       netBytes += numBytes;
     }
+    dir.close();
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,26 +14,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.request;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.lang.invoke.MethodHandles;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+
+import org.apache.solr.client.solrj.ResponseParser;
+import org.apache.solr.client.solrj.impl.BinaryResponseParser;
+import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.response.BinaryQueryResponseWriter;
 import org.apache.solr.response.QueryResponseWriter;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.util.AbstractSolrTestCase;
-import org.apache.solr.client.solrj.ResponseParser;
-import org.apache.solr.client.solrj.impl.BinaryResponseParser;
-import org.apache.solr.client.solrj.impl.XMLResponseParser;
-
-import java.util.ArrayList;
-import java.io.*;
+import org.apache.solr.util.RTimer;
+import org.junit.BeforeClass;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public class TestWriterPerf extends AbstractSolrTestCase {
-  @Override
-  public String getSchemaFile() { return "schema11.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solrconfig-functionquery.xml"; }
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solrconfig-functionquery.xml", "schema11.xml");
+  }
+  
   public String getCoreName() { return "basic"; }
 
   @Override
@@ -56,7 +68,7 @@ public class TestWriterPerf extends AbstractSolrTestCase {
 
 
   void index(Object... olst) {
-    ArrayList<String> lst = new ArrayList<String>();
+    ArrayList<String> lst = new ArrayList<>();
     for (Object o : olst) lst.add(o.toString());
     assertU(adoc(lst.toArray(new String[lst.size()])));
   }
@@ -79,7 +91,7 @@ public class TestWriterPerf extends AbstractSolrTestCase {
 
 
   /** make sure to close req after you are done using the response */
-  public SolrQueryResponse getResponse(SolrQueryRequest req) throws IOException, Exception {
+  public SolrQueryResponse getResponse(SolrQueryRequest req) throws Exception {
     SolrQueryResponse rsp = new SolrQueryResponse();
     h.getCore().execute(h.getCore().getRequestHandler(null),req,rsp);
     if (rsp.getException() != null) {
@@ -97,7 +109,7 @@ public class TestWriterPerf extends AbstractSolrTestCase {
     ByteArrayOutputStream out=null;
 
     System.gc();
-    long start = System.currentTimeMillis();
+    RTimer timer = new RTimer();
     for (int i=0; i<encIter; i++) {
     if (w instanceof BinaryQueryResponseWriter) {
       BinaryQueryResponseWriter binWriter = (BinaryQueryResponseWriter) w;
@@ -108,17 +120,17 @@ public class TestWriterPerf extends AbstractSolrTestCase {
       out = new ByteArrayOutputStream();
       // to be fair, from my previous tests, much of the performance will be sucked up
       // by java's UTF-8 encoding/decoding, not the actual writing
-      Writer writer = new OutputStreamWriter(out, "UTF-8");
+      Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
       w.write(writer, req, rsp);
       writer.close();
     }
     }
 
-    long encodeTime = Math.max(System.currentTimeMillis() - start, 1);
+    double encodeTime = timer.getTime();
 
     byte[] arr = out.toByteArray();
 
-    start = System.currentTimeMillis();
+    timer = new RTimer();
     writerName = writerName.intern();
     for (int i=0; i<decIter; i++) {
       ResponseParser rp = null;
@@ -133,9 +145,9 @@ public class TestWriterPerf extends AbstractSolrTestCase {
       rp.processResponse(in, "UTF-8");      
     }
 
-    long decodeTime = Math.max(System.currentTimeMillis() - start, 1);
+    double decodeTime = timer.getTime();
 
-    System.out.println("writer "+writerName+", size="+out.size()+", encodeRate="+(encodeTime==1 ? "N/A":  ""+(encIter*1000L/encodeTime)) + ", decodeRate="+(decodeTime==1 ? "N/A":  ""+(decIter*1000L/decodeTime)) );
+    log.info("writer "+writerName+", size="+out.size()+", encodeRate="+(encIter*1000L/encodeTime) + ", decodeRate="+(decIter*1000L/decodeTime));
 
     req.close();
   }

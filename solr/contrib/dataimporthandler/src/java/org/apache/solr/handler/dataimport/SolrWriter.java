@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,6 +17,8 @@
 package org.apache.solr.handler.dataimport;
 
 import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.common.params.UpdateParams;
+import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.update.AddUpdateCommand;
 import org.apache.solr.update.CommitUpdateCommand;
 import org.apache.solr.update.DeleteUpdateCommand;
@@ -26,43 +28,49 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.util.Map;
-import java.util.Set;
+import java.lang.invoke.MethodHandles;
+import java.nio.charset.StandardCharsets;
 
 /**
  * <p> Writes documents to SOLR. </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public class SolrWriter extends DIHWriterBase implements DIHWriter {
-  private static final Logger log = LoggerFactory.getLogger(SolrWriter.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  static final String LAST_INDEX_KEY = "last_index_time";
+  public static final String LAST_INDEX_KEY = "last_index_time";
 
   private final UpdateRequestProcessor processor;
+  private final int commitWithin;
+  
+  SolrQueryRequest req;
 
-  public SolrWriter(UpdateRequestProcessor processor) {
+  public SolrWriter(UpdateRequestProcessor processor, SolrQueryRequest req) {
     this.processor = processor;
+    this.req = req;
+    commitWithin = (req != null) ? req.getParams().getInt(UpdateParams.COMMIT_WITHIN, -1): -1;
   }
-
+  
+  @Override
   public void close() {
-  	try {
-  		processor.finish();
-  	} catch (IOException e) {
-  		throw new DataImportHandlerException(DataImportHandlerException.SEVERE,
-  				"Unable to call finish() on UpdateRequestProcessor", e);
-  	}
+    try {
+      processor.finish();
+    } catch (IOException e) {
+      throw new DataImportHandlerException(DataImportHandlerException.SEVERE,
+          "Unable to call finish() on UpdateRequestProcessor", e);
+    } finally {
+      deltaKeys = null;
+    }
   }
+  @Override
   public boolean upload(SolrInputDocument d) {
     try {
-      AddUpdateCommand command = new AddUpdateCommand();
+      AddUpdateCommand command = new AddUpdateCommand(req);
       command.solrDoc = d;
-      command.allowDups = false;
-      command.overwritePending = true;
-      command.overwriteCommitted = true;
+      command.commitWithin = commitWithin;
       processor.processAdd(command);
     } catch (Exception e) {
       log.warn("Error creating document : " + d, e);
@@ -72,56 +80,55 @@ public class SolrWriter extends DIHWriterBase implements DIHWriter {
     return true;
   }
   
+  @Override
   public void deleteDoc(Object id) {
     try {
       log.info("Deleting document: " + id);
-      DeleteUpdateCommand delCmd = new DeleteUpdateCommand();
-      delCmd.id = id.toString();
-      delCmd.fromPending = true;
-      delCmd.fromCommitted = true;
+      DeleteUpdateCommand delCmd = new DeleteUpdateCommand(req);
+      delCmd.setId(id.toString());
       processor.processDelete(delCmd);
     } catch (IOException e) {
       log.error("Exception while deleteing: " + id, e);
     }
   }
-  	
-	public void deleteByQuery(String query) {
+
+  @Override
+  public void deleteByQuery(String query) {
     try {
       log.info("Deleting documents from Solr with query: " + query);
-      DeleteUpdateCommand delCmd = new DeleteUpdateCommand();
+      DeleteUpdateCommand delCmd = new DeleteUpdateCommand(req);
       delCmd.query = query;
-      delCmd.fromCommitted = true;
-      delCmd.fromPending = true;
       processor.processDelete(delCmd);
     } catch (IOException e) {
       log.error("Exception while deleting by query: " + query, e);
     }
   }
 
-	public void commit(boolean optimize) {
+  @Override
+  public void commit(boolean optimize) {
     try {
-      CommitUpdateCommand commit = new CommitUpdateCommand(optimize);
+      CommitUpdateCommand commit = new CommitUpdateCommand(req,optimize);
       processor.processCommit(commit);
-    } catch (Throwable t) {
-      log.error("Exception while solr commit.", t);
+    } catch (Exception e) {
+      log.error("Exception while solr commit.", e);
     }
   }
 
-	public void rollback() {
+  @Override
+  public void rollback() {
     try {
-      RollbackUpdateCommand rollback = new RollbackUpdateCommand();
+      RollbackUpdateCommand rollback = new RollbackUpdateCommand(req);
       processor.processRollback(rollback);
-    } catch (Throwable t) {
-      log.error("Exception while solr rollback.", t);
+    } catch (Exception e) {
+      log.error("Exception during rollback command.", e);
     }
   }
 
-	public void doDeleteAll() {
+  @Override
+  public void doDeleteAll() {
     try {
-      DeleteUpdateCommand deleteCommand = new DeleteUpdateCommand();
+      DeleteUpdateCommand deleteCommand = new DeleteUpdateCommand(req);
       deleteCommand.query = "*:*";
-      deleteCommand.fromCommitted = true;
-      deleteCommand.fromPending = true;
       processor.processDelete(deleteCommand);
     } catch (IOException e) {
       throw new DataImportHandlerException(DataImportHandlerException.SEVERE,
@@ -144,7 +151,7 @@ public class SolrWriter extends DIHWriterBase implements DIHWriter {
 
       }
     }
-    return new String(baos.toByteArray(), "UTF-8");
+    return new String(baos.toByteArray(), StandardCharsets.UTF_8);
   }
 
   static String getDocCount() {
@@ -155,7 +162,8 @@ public class SolrWriter extends DIHWriterBase implements DIHWriter {
       return null;
     }
   }
-	public void init(Context context) {
-		/* NO-OP */		
-	}	
+  @Override
+  public void init(Context context) {
+    /* NO-OP */
+  }
 }

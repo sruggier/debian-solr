@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
 
 import org.apache.lucene.analysis.MockTokenizer;
@@ -37,11 +36,12 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.Reader;
+import java.nio.charset.StandardCharsets;
 
 /**
  * A test for {@link DocumentAnalysisRequestHandler}.
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTestBase {
@@ -122,6 +122,7 @@ public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTe
       sourceInfo = "rawBytes";
     }
 
+    @Override
     public InputStream getStream() throws IOException {
       return new ByteArrayInputStream(bytes);
     }
@@ -144,7 +145,7 @@ public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTe
       "  <field name=\"id\">Müller</field>\r\n" +
       " </doc>" +
       "</docs>"
-    ).getBytes("ISO-8859-1");
+    ).getBytes(StandardCharsets.ISO_8859_1);
     
     // we declare a content stream without charset:
     final ContentStream cs = new ByteStream(xmlBytes, "application/xml");
@@ -176,7 +177,7 @@ public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTe
       "  <field name=\"id\">Müller</field>\r\n" +
       " </doc>" +
       "</docs>"
-    ).getBytes("ISO-8859-1");
+    ).getBytes(StandardCharsets.ISO_8859_1);
     
     // we declare a content stream with charset:
     final ContentStream cs = new ByteStream(xmlBytes, "application/xml; charset=ISO-8859-1");
@@ -215,7 +216,7 @@ public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTe
             .setShowMatch(true)
             .addDocument(document);
 
-    NamedList<Object> result = handler.handleAnalysisRequest(request, h.getCore().getSchema());
+    NamedList<Object> result = handler.handleAnalysisRequest(request, h.getCore().getLatestSchema());
     assertNotNull("result is null and it shouldn't be", result);
     NamedList<NamedList<NamedList<Object>>> documentResult = (NamedList<NamedList<NamedList<Object>>>) result.get("1");
     assertNotNull("An analysis for document with key '1' should be returned", documentResult);
@@ -277,15 +278,15 @@ public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTe
     assertNotNull("Expecting the 'StandardFilter' to be applied on the query for the 'text' field", tokenList);
     assertEquals("Query has only one token", 1, tokenList.size());
     assertToken(tokenList.get(0), new TokenInfo("JUMPING", null, "<ALPHANUM>", 0, 7, 1, new int[]{1,1}, null, false));
-    tokenList = (List<NamedList>) queryResult.get("org.apache.lucene.analysis.LowerCaseFilter");
+    tokenList = (List<NamedList>) queryResult.get("org.apache.lucene.analysis.core.LowerCaseFilter");
     assertNotNull("Expecting the 'LowerCaseFilter' to be applied on the query for the 'text' field", tokenList);
     assertEquals("Query has only one token", 1, tokenList.size());
     assertToken(tokenList.get(0), new TokenInfo("jumping", null, "<ALPHANUM>", 0, 7, 1, new int[]{1,1,1}, null, false));
-    tokenList = (List<NamedList>) queryResult.get("org.apache.lucene.analysis.StopFilter");
+    tokenList = (List<NamedList>) queryResult.get("org.apache.lucene.analysis.core.StopFilter");
     assertNotNull("Expecting the 'StopFilter' to be applied on the query for the 'text' field", tokenList);
     assertEquals("Query has only one token", 1, tokenList.size());
     assertToken(tokenList.get(0), new TokenInfo("jumping", null, "<ALPHANUM>", 0, 7, 1, new int[]{1,1,1,1}, null, false));
-    tokenList = (List<NamedList>) queryResult.get("org.apache.lucene.analysis.PorterStemFilter");
+    tokenList = (List<NamedList>) queryResult.get("org.apache.lucene.analysis.en.PorterStemFilter");
     assertNotNull("Expecting the 'PorterStemFilter' to be applied on the query for the 'text' field", tokenList);
     assertEquals("Query has only one token", 1, tokenList.size());
     assertToken(tokenList.get(0), new TokenInfo("jump", null, "<ALPHANUM>", 0, 7, 1, new int[]{1,1,1,1,1}, null, false));
@@ -310,7 +311,7 @@ public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTe
     assertToken(tokenList.get(3), new TokenInfo("Over", null, "<ALPHANUM>", 15, 19, 4, new int[]{4,4}, null, false));
     assertToken(tokenList.get(4), new TokenInfo("The", null, "<ALPHANUM>", 20, 23, 5, new int[]{5,5}, null, false));
     assertToken(tokenList.get(5), new TokenInfo("Dogs", null, "<ALPHANUM>", 24, 28, 6, new int[]{6,6}, null, false));
-    tokenList = valueResult.get("org.apache.lucene.analysis.LowerCaseFilter");
+    tokenList = valueResult.get("org.apache.lucene.analysis.core.LowerCaseFilter");
     assertNotNull("Expecting the 'LowerCaseFilter' to be applied on the index for the 'text' field", tokenList);
     assertEquals("Expecting 6 tokens", 6, tokenList.size());
     assertToken(tokenList.get(0), new TokenInfo("the", null, "<ALPHANUM>", 0, 3, 1, new int[]{1,1,1}, null, false));
@@ -319,19 +320,19 @@ public class DocumentAnalysisRequestHandlerTest extends AnalysisRequestHandlerTe
     assertToken(tokenList.get(3), new TokenInfo("over", null, "<ALPHANUM>", 15, 19, 4, new int[]{4,4,4}, null, false));
     assertToken(tokenList.get(4), new TokenInfo("the", null, "<ALPHANUM>", 20, 23, 5, new int[]{5,5,5}, null, false));
     assertToken(tokenList.get(5), new TokenInfo("dogs", null, "<ALPHANUM>", 24, 28, 6, new int[]{6,6,6}, null, false));
-    tokenList = valueResult.get("org.apache.lucene.analysis.StopFilter");
+    tokenList = valueResult.get("org.apache.lucene.analysis.core.StopFilter");
     assertNotNull("Expecting the 'StopFilter' to be applied on the index for the 'text' field", tokenList);
     assertEquals("Expecting 4 tokens after stop word removal", 4, tokenList.size());
-    assertToken(tokenList.get(0), new TokenInfo("fox", null, "<ALPHANUM>", 4, 7, 1, new int[]{2,2,2,1}, null, false));
-    assertToken(tokenList.get(1), new TokenInfo("jumped", null, "<ALPHANUM>", 8, 14, 2, new int[]{3,3,3,2}, null, false));
-    assertToken(tokenList.get(2), new TokenInfo("over", null, "<ALPHANUM>", 15, 19, 3, new int[]{4,4,4,3}, null, false));
-    assertToken(tokenList.get(3), new TokenInfo("dogs", null, "<ALPHANUM>", 24, 28, 4, new int[]{6,6,6,4}, null, false));
-    tokenList = valueResult.get("org.apache.lucene.analysis.PorterStemFilter");
+    assertToken(tokenList.get(0), new TokenInfo("fox", null, "<ALPHANUM>", 4, 7, 2, new int[]{2,2,2,2}, null, false));
+    assertToken(tokenList.get(1), new TokenInfo("jumped", null, "<ALPHANUM>", 8, 14, 3, new int[]{3,3,3,3}, null, false));
+    assertToken(tokenList.get(2), new TokenInfo("over", null, "<ALPHANUM>", 15, 19, 4, new int[]{4,4,4,4}, null, false));
+    assertToken(tokenList.get(3), new TokenInfo("dogs", null, "<ALPHANUM>", 24, 28, 6, new int[]{6,6,6,6}, null, false));
+    tokenList = valueResult.get("org.apache.lucene.analysis.en.PorterStemFilter");
     assertNotNull("Expecting the 'PorterStemFilter' to be applied on the index for the 'text' field", tokenList);
     assertEquals("Expecting 4 tokens", 4, tokenList.size());
-    assertToken(tokenList.get(0), new TokenInfo("fox", null, "<ALPHANUM>", 4, 7, 1, new int[]{2,2,2,1,1}, null, false));
-    assertToken(tokenList.get(1), new TokenInfo("jump", null, "<ALPHANUM>", 8, 14, 2, new int[]{3,3,3,2,2}, null, true));
-    assertToken(tokenList.get(2), new TokenInfo("over", null, "<ALPHANUM>", 15, 19, 3, new int[]{4,4,4,3,3}, null, false));
-    assertToken(tokenList.get(3), new TokenInfo("dog", null, "<ALPHANUM>", 24, 28, 4, new int[]{6,6,6,4,4}, null, false));
+    assertToken(tokenList.get(0), new TokenInfo("fox", null, "<ALPHANUM>", 4, 7, 2, new int[]{2,2,2,2,2}, null, false));
+    assertToken(tokenList.get(1), new TokenInfo("jump", null, "<ALPHANUM>", 8, 14, 3, new int[]{3,3,3,3,3}, null, true));
+    assertToken(tokenList.get(2), new TokenInfo("over", null, "<ALPHANUM>", 15, 19, 4, new int[]{4,4,4,4,4}, null, false));
+    assertToken(tokenList.get(3), new TokenInfo("dog", null, "<ALPHANUM>", 24, 28, 6, new int[]{6,6,6,6,6}, null, false));
   }
 }

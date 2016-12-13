@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,61 +14,119 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.io.PrintStream;
 
+import org.apache.lucene.codecs.PostingsFormat; // javadocs
+import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat; // javadocs
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.BitVector;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.util.InfoStream;
+import org.apache.lucene.util.MutableBits;
 
 /**
  * Holder class for common parameters used during write.
  * @lucene.experimental
  */
 public class SegmentWriteState {
-  public final PrintStream infoStream;
+
+  /** {@link InfoStream} used for debugging messages. */
+  public final InfoStream infoStream;
+
+  /** {@link Directory} where this segment will be written
+   *  to. */
   public final Directory directory;
-  public final String segmentName;
+
+  /** {@link SegmentInfo} describing this segment. */
+  public final SegmentInfo segmentInfo;
+
+  /** {@link FieldInfos} describing all fields in this
+   *  segment. */
   public final FieldInfos fieldInfos;
-  public final int numDocs;
-  public boolean hasVectors;
 
-  // Deletes to apply while we are flushing the segment.  A
-  // Term is enrolled in here if it was deleted at one
-  // point, and it's mapped to the docIDUpto, meaning any
-  // docID < docIDUpto containing this term should be
-  // deleted.
-  public final BufferedDeletes segDeletes;
+  /** Number of deleted documents set while flushing the
+   *  segment. */
+  public int delCountOnFlush;
 
-  // Lazily created:
-  public BitVector deletedDocs;
-
-  /** Expert: The fraction of terms in the "dictionary" which should be stored
-   * in RAM.  Smaller values use more memory, but make searching slightly
-   * faster, while larger values use less memory and make searching slightly
-   * slower.  Searching is typically not dominated by dictionary lookup, so
-   * tweaking this is rarely useful.*/
-  public final int termIndexInterval;
-
-  /** Expert: The fraction of TermDocs entries stored in skip tables,
-   * used to accelerate {@link TermDocs#skipTo(int)}.  Larger values result in
-   * smaller indexes, greater acceleration, but fewer accelerable cases, while
-   * smaller values result in bigger indexes, less acceleration and more
-   * accelerable cases. More detailed experiments would be useful here. */
-  public final int skipInterval = 16;
-  
-  /** Expert: The maximum number of skip levels. Smaller values result in 
-   * slightly smaller indexes, but slower skipping in big posting lists.
+  /**
+   * Deletes and updates to apply while we are flushing the segment. A Term is
+   * enrolled in here if it was deleted/updated at one point, and it's mapped to
+   * the docIDUpto, meaning any docID &lt; docIDUpto containing this term should
+   * be deleted/updated.
    */
-  public final int maxSkipLevels = 10;
+  public final BufferedUpdates segUpdates;
 
-  public SegmentWriteState(PrintStream infoStream, Directory directory, String segmentName, FieldInfos fieldInfos,
-                           int numDocs, int termIndexInterval, BufferedDeletes segDeletes) {
+  /** {@link MutableBits} recording live documents; this is
+   *  only set if there is one or more deleted documents. */
+  public MutableBits liveDocs;
+
+  /** Unique suffix for any postings files written for this
+   *  segment.  {@link PerFieldPostingsFormat} sets this for
+   *  each of the postings formats it wraps.  If you create
+   *  a new {@link PostingsFormat} then any files you
+   *  write/read must be derived using this suffix (use
+   *  {@link IndexFileNames#segmentFileName(String,String,String)}).
+   *  
+   *  Note: the suffix must be either empty, or be a textual suffix contain exactly two parts (separated by underscore), or be a base36 generation. */
+  public final String segmentSuffix;
+  
+  /** {@link IOContext} for all writes; you should pass this
+   *  to {@link Directory#createOutput(String,IOContext)}. */
+  public final IOContext context;
+
+  /** Sole constructor. */
+  public SegmentWriteState(InfoStream infoStream, Directory directory, SegmentInfo segmentInfo, FieldInfos fieldInfos,
+      BufferedUpdates segUpdates, IOContext context) {
+    this(infoStream, directory, segmentInfo, fieldInfos, segUpdates, context, "");
+  }
+
+  /**
+   * Constructor which takes segment suffix.
+   * 
+   * @see #SegmentWriteState(InfoStream, Directory, SegmentInfo, FieldInfos,
+   *      BufferedUpdates, IOContext)
+   */
+  public SegmentWriteState(InfoStream infoStream, Directory directory, SegmentInfo segmentInfo, FieldInfos fieldInfos,
+      BufferedUpdates segUpdates, IOContext context, String segmentSuffix) {
     this.infoStream = infoStream;
-    this.segDeletes = segDeletes;
+    this.segUpdates = segUpdates;
     this.directory = directory;
-    this.segmentName = segmentName;
+    this.segmentInfo = segmentInfo;
     this.fieldInfos = fieldInfos;
-    this.numDocs = numDocs;
-    this.termIndexInterval = termIndexInterval;
+    assert assertSegmentSuffix(segmentSuffix);
+    this.segmentSuffix = segmentSuffix;
+    this.context = context;
+  }
+  
+  /** Create a shallow copy of {@link SegmentWriteState} with a new segment suffix. */
+  public SegmentWriteState(SegmentWriteState state, String segmentSuffix) {
+    infoStream = state.infoStream;
+    directory = state.directory;
+    segmentInfo = state.segmentInfo;
+    fieldInfos = state.fieldInfos;
+    context = state.context;
+    this.segmentSuffix = segmentSuffix;
+    segUpdates = state.segUpdates;
+    delCountOnFlush = state.delCountOnFlush;
+    liveDocs = state.liveDocs;
+  }
+  
+  // currently only used by assert? clean up and make real check?
+  // either it's a segment suffix (_X_Y) or it's a parseable generation
+  // TODO: this is very confusing how ReadersAndUpdates passes generations via
+  // this mechanism, maybe add 'generation' explicitly to ctor create the 'actual suffix' here?
+  private boolean assertSegmentSuffix(String segmentSuffix) {
+    assert segmentSuffix != null;
+    if (!segmentSuffix.isEmpty()) {
+      int numParts = segmentSuffix.split("_").length;
+      if (numParts == 2) {
+        return true;
+      } else if (numParts == 1) {
+        Long.parseLong(segmentSuffix, Character.MAX_RADIX);
+        return true;
+      }
+      return false; // invalid
+    }
+    return true;
   }
 }

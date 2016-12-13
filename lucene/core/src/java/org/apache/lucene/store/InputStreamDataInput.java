@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.*;
 
@@ -51,7 +51,7 @@ public class InputStreamDataInput extends DataInput implements Closeable {
     }
   }
 
-  // @Override -- not until Java 1.6
+  @Override
   public void close() throws IOException {
     is.close();
   }

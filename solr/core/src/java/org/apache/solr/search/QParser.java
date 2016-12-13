@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +16,9 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.queryParser.ParseException;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.Sort;
 import org.apache.solr.common.params.CommonParams;
-import org.apache.solr.common.params.MapSolrParams;
+import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.StrUtils;
@@ -31,7 +29,7 @@ import java.util.*;
 /**
  * <b>Note: This API is experimental and may change in non backward-compatible ways in the future</b>
  * 
- * @version $Id$
+ *
  */
 public abstract class QParser {
   protected String qstr;
@@ -63,10 +61,11 @@ public abstract class QParser {
     if (localParams != null) {
       String tagStr = localParams.get(CommonParams.TAG);
       if (tagStr != null) {
-        Map context = req.getContext();
-        Map<String,Collection<Object>> tagMap = (Map<String, Collection<Object>>)req.getContext().get("tags");
+        Map<Object,Object> context = req.getContext();
+        @SuppressWarnings("unchecked")
+        Map<Object,Collection<Object>> tagMap = (Map<Object, Collection<Object>>)req.getContext().get("tags");
         if (tagMap == null) {
-          tagMap = new HashMap<String,Collection<Object>>();
+          tagMap = new HashMap<>();
           context.put("tags", tagMap);          
         }
         if (tagStr.indexOf(',') >= 0) {
@@ -85,10 +84,10 @@ public abstract class QParser {
   }
 
 
-  private static void addTag(Map tagMap, Object key, Object val) {
-    Collection lst = (Collection)tagMap.get(key);
+  private static void addTag(Map<Object,Collection<Object>> tagMap, Object key, Object val) {
+    Collection<Object> lst = tagMap.get(key);
     if (lst == null) {
-      lst = new ArrayList(2);
+      lst = new ArrayList<>(2);
       tagMap.put(key, lst);
     }
     lst.add(val);
@@ -98,7 +97,7 @@ public abstract class QParser {
    * there was no input (e.g. no query string) to parse.
    * @see #getQuery()
    **/
-  public abstract Query parse() throws ParseException;
+  public abstract Query parse() throws SyntaxError;
 
   public SolrParams getLocalParams() {
     return localParams;
@@ -135,10 +134,8 @@ public abstract class QParser {
   /**
    * Returns the resulting query from this QParser, calling parse() only the
    * first time and caching the Query result.
-   *
-   * @throws ParseException
    */
-  public Query getQuery() throws ParseException {
+  public Query getQuery() throws SyntaxError {
     if (query==null) {
       query=parse();
 
@@ -174,9 +171,9 @@ public abstract class QParser {
     }
   }
 
-  private void checkRecurse() throws ParseException {
+  private void checkRecurse() throws SyntaxError {
     if (recurseCount++ >= 100) {
-      throw new ParseException("Infinite Recursion detected parsing query '" + qstr + "'");
+      throw new SyntaxError("Infinite Recursion detected parsing query '" + qstr + "'");
     }
   }
 
@@ -197,7 +194,7 @@ public abstract class QParser {
   }
 
   /** Create a new QParser for parsing an embedded sub-query */
-  public QParser subQuery(String q, String defaultType) throws ParseException {
+  public QParser subQuery(String q, String defaultType) throws SyntaxError {
     checkRecurse();
     if (defaultType == null && localParams != null) {
       // if not passed, try and get the defaultType from local params
@@ -209,12 +206,21 @@ public abstract class QParser {
     return nestedParser;
   }
 
+  /**
+   * @param useGlobalParams look up sort, start, rows in global params if not in local params
+   * @return the sort specification
+   * @deprecated Use the not misleadingly named getSortSpec() function instead.
+   */
+  @Deprecated
+  public SortSpec getSort(boolean useGlobalParams) throws SyntaxError {
+    return getSortSpec(useGlobalParams);
+  }
 
   /**
    * @param useGlobalParams look up sort, start, rows in global params if not in local params
    * @return the sort specification
    */
-  public SortSpec getSort(boolean useGlobalParams) throws ParseException {
+  public SortSpec getSortSpec(boolean useGlobalParams) throws SyntaxError {
     getQuery(); // ensure query is parsed first
 
     String sortStr = null;
@@ -244,21 +250,21 @@ public abstract class QParser {
       }
     }
 
-    int start = startS != null ? Integer.parseInt(startS) : 0;
-    int rows = rowsS != null ? Integer.parseInt(rowsS) : 10;
+    int start = startS != null ? Integer.parseInt(startS) : CommonParams.START_DEFAULT;
+    int rows = rowsS != null ? Integer.parseInt(rowsS) : CommonParams.ROWS_DEFAULT;
 
-    Sort sort = null;
-    if( sortStr != null ) {
-      sort = QueryParsing.parseSort(sortStr, req);
-    }
-    return new SortSpec( sort, start, rows );
+    SortSpec sort = SortSpecParsing.parseSortSpec(sortStr, req);
+
+    sort.setOffset(start);
+    sort.setCount(rows);
+    return sort;
   }
 
   public String[] getDefaultHighlightFields() {
     return new String[]{};
   }
 
-  public Query getHighlightQuery() throws ParseException {
+  public Query getHighlightQuery() throws SyntaxError {
     Query query = getQuery();
     return query instanceof WrappedQuery ? ((WrappedQuery)query).getWrappedQuery() : query;
   }
@@ -268,28 +274,39 @@ public abstract class QParser {
   }
 
   /** Create a <code>QParser</code> to parse <code>qstr</code>,
-   * assuming that the default query type is <code>defaultType</code>.
-   * The query type may be overridden by local parameters in the query
-   * string itself.  For example if defaultType=<code>"dismax"</code>
+   * using the "lucene" (QParserPlugin.DEFAULT_QTYPE) query parser.
+   * The query parser may be overridden by local parameters in the query
+   * string itself.  For example if
+   * qstr=<code>{!prefix f=myfield}foo</code>
+   * then the prefix query parser will be used.
+   */
+  public static QParser getParser(String qstr, SolrQueryRequest req) throws SyntaxError {
+    return getParser(qstr, QParserPlugin.DEFAULT_QTYPE, req);
+  }
+
+  /** Create a <code>QParser</code> to parse <code>qstr</code>,
+   * assuming that the default query parser is <code>defaultParser</code>.
+   * The query parser may be overridden by local parameters in the query
+   * string itself.  For example if defaultParser=<code>"dismax"</code>
    * and qstr=<code>foo</code>, then the dismax query parser will be used
    * to parse and construct the query object.  However
    * if qstr=<code>{!prefix f=myfield}foo</code>
    * then the prefix query parser will be used.
    */
-  public static QParser getParser(String qstr, String defaultType, SolrQueryRequest req) throws ParseException {
+  public static QParser getParser(String qstr, String defaultParser, SolrQueryRequest req) throws SyntaxError {
     // SolrParams localParams = QueryParsing.getLocalParams(qstr, req.getParams());
 
     String stringIncludingLocalParams = qstr;
-    SolrParams localParams = null;
+    ModifiableSolrParams localParams = null;
     SolrParams globalParams = req.getParams();
     boolean valFollowedParams = true;
     int localParamsEnd = -1;
 
     if (qstr != null && qstr.startsWith(QueryParsing.LOCALPARAM_START)) {
-      Map<String, String> localMap = new HashMap<String, String>();
-      localParamsEnd = QueryParsing.parseLocalParams(qstr, 0, localMap, globalParams);
+      localParams = new ModifiableSolrParams();
+      localParamsEnd = QueryParsing.parseLocalParams(qstr, 0, localParams, globalParams);
 
-      String val = localMap.get(QueryParsing.V);
+      String val = localParams.get(QueryParsing.V);
       if (val != null) {
         // val was directly specified in localParams via v=<something> or v=$arg
         valFollowedParams = false;
@@ -297,24 +314,23 @@ public abstract class QParser {
         // use the remainder of the string as the value
         valFollowedParams = true;
         val = qstr.substring(localParamsEnd);
-        localMap.put(QueryParsing.V, val);
+        localParams.set(QueryParsing.V, val);
       }
-      localParams = new MapSolrParams(localMap);
     }
 
 
-    String type;
+    String parserName;
     
     if (localParams == null) {
-      type = defaultType;
+      parserName = defaultParser;
     } else {
-      type = localParams.get(QueryParsing.TYPE,defaultType);
+      parserName = localParams.get(QueryParsing.TYPE,defaultParser);
       qstr = localParams.get("v");
     }
 
-    type = type==null ? QParserPlugin.DEFAULT_QTYPE : type;
+    parserName = parserName==null ? QParserPlugin.DEFAULT_QTYPE : parserName;
 
-    QParserPlugin qplug = req.getCore().getQueryPlugin(type);
+    QParserPlugin qplug = req.getCore().getQueryPlugin(parserName);
     QParser parser =  qplug.createParser(qstr, localParams, req.getParams(), req);
 
     parser.stringIncludingLocalParams = stringIncludingLocalParams;

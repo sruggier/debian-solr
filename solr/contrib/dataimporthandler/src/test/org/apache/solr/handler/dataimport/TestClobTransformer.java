@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -28,24 +28,25 @@ import java.util.*;
 /**
  * Test for ClobTransformer
  *
- * @version $Id$
+ *
  * @see org.apache.solr.handler.dataimport.ClobTransformer
  * @since solr 1.4
  */
 public class TestClobTransformer extends AbstractDataImportHandlerTestCase {
   @Test
   public void simple() throws Exception {
-    List<Map<String, String>> flds = new ArrayList<Map<String, String>>();
-    Map<String, String> f = new HashMap<String, String>();
+    List<Map<String, String>> flds = new ArrayList<>();
+    Map<String, String> f = new HashMap<>();
     // <field column="dsc" clob="true" name="description" />
     f.put(DataImporter.COLUMN, "dsc");
     f.put(ClobTransformer.CLOB, "true");
     f.put(DataImporter.NAME, "description");
     flds.add(f);
-    Context ctx = getContext(null, new VariableResolverImpl(), null, Context.FULL_DUMP, flds, Collections.EMPTY_MAP);
+    Context ctx = getContext(null, new VariableResolver(), null, Context.FULL_DUMP, flds, Collections.EMPTY_MAP);
     Transformer t = new ClobTransformer();
-    Map<String, Object> row = new HashMap<String, Object>();
+    Map<String, Object> row = new HashMap<>();
     Clob clob = (Clob) Proxy.newProxyInstance(this.getClass().getClassLoader(), new Class[]{Clob.class}, new InvocationHandler() {
+      @Override
       public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         if (method.getName().equals("getCharacterStream")) {
           return new StringReader("hello!");

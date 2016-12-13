@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -24,9 +24,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.apache.lucene.index.IndexReader;        // javadocs
-import org.apache.lucene.search.NRTManager;        // javadocs
-import org.apache.lucene.search.IndexSearcher;        // javadocs
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.util.IOUtils;
 
@@ -36,16 +34,16 @@ import org.apache.lucene.util.IOUtils;
  *
  * Use it like this:
  *
- * <pre>
+ * <pre class="prettyprint">
  *   SearcherLifetimeManager mgr = new SearcherLifetimeManager();
  * </pre>
  *
  * Per search-request, if it's a "new" search request, then
  * obtain the latest searcher you have (for example, by
- * using {@link SearcherManager} or {@link NRTManager}), and
- * then record this searcher:
+ * using {@link SearcherManager}), and then record this
+ * searcher:
  *
- * <pre>
+ * <pre class="prettyprint">
  *   // Record the current searcher, and save the returend
  *   // token into user's search results (eg as a  hidden
  *   // HTML form field):
@@ -56,7 +54,7 @@ import org.apache.lucene.util.IOUtils;
  * clicks next page, drills down/up, etc., take the token
  * that you saved from the previous search and:
  *
- * <pre>
+ * <pre class="prettyprint">
  *   // If possible, obtain the same searcher as the last
  *   // search:
  *   IndexSearcher searcher = mgr.acquire(token);
@@ -79,16 +77,16 @@ import org.apache.lucene.util.IOUtils;
  * that's periodically reopening your searchers, you should
  * periodically prune old searchers:
  *
- * <pre>
+ * <pre class="prettyprint">
  *   mgr.prune(new PruneByAge(600.0));
  * </pre>
  *
  * <p><b>NOTE</b>: keeping many searchers around means
  * you'll use more resources (open files, RAM) than a single
  * searcher.  However, as long as you are using {@link
- * IndexReader#openIfChanged}, the searchers will usually
- * share almost all segments and the added resource usage is
- * contained.  When a large merge has completed, and
+ * DirectoryReader#openIfChanged(DirectoryReader)}, the searchers
+ * will usually share almost all segments and the added resource usage
+ * is contained.  When a large merge has completed, and
  * you reopen, because that is a large change, the new
  * searcher will use higher additional RAM than other
  * searchers; but large merges don't complete very often and
@@ -110,7 +108,7 @@ public class SearcherLifetimeManager implements Closeable {
 
     public SearcherTracker(IndexSearcher searcher) {
       this.searcher = searcher;
-      version = searcher.getIndexReader().getVersion();
+      version = ((DirectoryReader) searcher.getIndexReader()).getVersion();
       searcher.getIndexReader().incRef();
       // Use nanoTime not currentTimeMillis since it [in
       // theory] reduces risk from clock shift
@@ -118,19 +116,12 @@ public class SearcherLifetimeManager implements Closeable {
     }
 
     // Newer searchers are sort before older ones:
+    @Override
     public int compareTo(SearcherTracker other) {
-      // Be defensive: cannot subtract since it could
-      // technically overflow long, though, we'd never hit
-      // that in practice:
-      if (recordTimeSec < other.recordTimeSec) {
-        return 1;
-      } else if (other.recordTimeSec < recordTimeSec) {
-        return -1;
-      } else {
-        return 0;
-      }
+      return Double.compare(other.recordTimeSec, recordTimeSec);
     }
 
+    @Override
     public synchronized void close() throws IOException {
       searcher.getIndexReader().decRef();
     }
@@ -141,7 +132,7 @@ public class SearcherLifetimeManager implements Closeable {
   // TODO: we could get by w/ just a "set"; need to have
   // Tracker hash by its version and have compareTo(Long)
   // compare to its version
-  private final ConcurrentHashMap<Long,SearcherTracker> searchers = new ConcurrentHashMap<Long,SearcherTracker>();
+  private final ConcurrentHashMap<Long,SearcherTracker> searchers = new ConcurrentHashMap<>();
 
   private void ensureOpen() {
     if (closed) {
@@ -151,8 +142,7 @@ public class SearcherLifetimeManager implements Closeable {
 
   /** Records that you are now using this IndexSearcher.
    *  Always call this when you've obtained a possibly new
-   *  {@link IndexSearcher}, for example from one of the
-   *  <code>get</code> methods in {@link NRTManager} or {@link
+   *  {@link IndexSearcher}, for example from {@link
    *  SearcherManager}.  It's fine if you already passed the
    *  same searcher to this method before.
    *
@@ -167,7 +157,7 @@ public class SearcherLifetimeManager implements Closeable {
     // TODO: we don't have to use IR.getVersion to track;
     // could be risky (if it's buggy); we could get better
     // bug isolation if we assign our own private ID:
-    final long version = searcher.getIndexReader().getVersion();
+    final long version = ((DirectoryReader) searcher.getIndexReader()).getVersion();
     SearcherTracker tracker = searchers.get(version);
     if (tracker == null) {
       //System.out.println("RECORD version=" + version + " ms=" + System.currentTimeMillis());
@@ -238,6 +228,7 @@ public class SearcherLifetimeManager implements Closeable {
       this.maxAgeSec = maxAgeSec;
     }
 
+    @Override
     public boolean doPrune(double ageSec, IndexSearcher searcher) {
       return ageSec > maxAgeSec;
     }
@@ -255,7 +246,7 @@ public class SearcherLifetimeManager implements Closeable {
     // (not thread-safe since the values can change while
     // ArrayList is init'ing itself); must instead iterate
     // ourselves:
-    final List<SearcherTracker> trackers = new ArrayList<SearcherTracker>();
+    final List<SearcherTracker> trackers = new ArrayList<>();
     for(SearcherTracker tracker : searchers.values()) {
       trackers.add(tracker);
     }
@@ -287,13 +278,14 @@ public class SearcherLifetimeManager implements Closeable {
    *  should still call {@link #release} after they are
    *  done.
    *
-   *  <p><b>NOTE: you must ensure no other threads are
+   *  <p><b>NOTE</b>: you must ensure no other threads are
    *  calling {@link #record} while you call close();
    *  otherwise it's possible not all searcher references
    *  will be freed. */
+  @Override
   public synchronized void close() throws IOException {
     closed = true;
-    final List<SearcherTracker> toClose = new ArrayList<SearcherTracker>(searchers.values());
+    final List<SearcherTracker> toClose = new ArrayList<>(searchers.values());
 
     // Remove up front in case exc below, so we don't
     // over-decRef on double-close:

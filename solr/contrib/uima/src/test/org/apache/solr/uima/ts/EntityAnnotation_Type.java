@@ -1,4 +1,3 @@
-
 /* First created by JCasGen Sat May 07 22:33:38 JST 2011 */
 package org.apache.solr.uima.ts;
 
@@ -18,22 +17,24 @@ import org.apache.uima.jcas.tcas.Annotation_Type;
  * @generated */
 public class EntityAnnotation_Type extends Annotation_Type {
   /** @generated */
+  @Override
   protected FSGenerator getFSGenerator() {return fsGenerator;}
   /** @generated */
   private final FSGenerator fsGenerator = 
     new FSGenerator() {
+      @Override
       public FeatureStructure createFS(int addr, CASImpl cas) {
-  			 if (EntityAnnotation_Type.this.useExistingInstance) {
-  			   // Return eq fs instance if already created
-  		     FeatureStructure fs = EntityAnnotation_Type.this.jcas.getJfsFromCaddr(addr);
-  		     if (null == fs) {
-  		       fs = new EntityAnnotation(addr, EntityAnnotation_Type.this);
-  			   EntityAnnotation_Type.this.jcas.putJfsFromCaddr(addr, fs);
-  			   return fs;
-  		     }
-  		     return fs;
+         if (EntityAnnotation_Type.this.useExistingInstance) {
+           // Return eq fs instance if already created
+           FeatureStructure fs = EntityAnnotation_Type.this.jcas.getJfsFromCaddr(addr);
+           if (null == fs) {
+             fs = new EntityAnnotation(addr, EntityAnnotation_Type.this);
+             EntityAnnotation_Type.this.jcas.putJfsFromCaddr(addr, fs);
+             return fs;
+           }
+           return fs;
         } else return new EntityAnnotation(addr, EntityAnnotation_Type.this);
-  	  }
+      }
     };
   /** @generated */
   public final static int typeIndexID = EntityAnnotation.typeIndexID;
@@ -80,7 +81,7 @@ public class EntityAnnotation_Type extends Annotation_Type {
 
 
   /** initialize variables to correspond with Cas Type and Features
-	* @generated */
+  * @generated */
   public EntityAnnotation_Type(JCas jcas, Type casType) {
     super(jcas, casType);
     casImpl.getFSClassRegistry().addGeneratorForType((TypeImpl)this.casType, getFSGenerator());

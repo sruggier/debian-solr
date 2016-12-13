@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,12 +17,14 @@
 package org.apache.solr.handler.dataimport;
 
 import org.apache.solr.common.util.XMLErrorLogger;
+import org.apache.solr.common.EmptyEntityResolver;
 import javax.xml.stream.XMLInputFactory;
 import static javax.xml.stream.XMLStreamConstants.*;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.IOException;
 import java.io.Reader;
+import java.lang.invoke.MethodHandles;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,21 +45,19 @@ import org.slf4j.LoggerFactory;
  * /a//b...
  * /a/b/c
  * </pre>
- * A record is a Map<String,Object> . The key is the provided name
- * and the value is a String or a List<String>
+ * A record is a Map&lt;String,Object&gt; . The key is the provided name
+ * and the value is a String or a List&lt;String&gt;
  *
  * This class is thread-safe for parsing xml. But adding fields is not
  * thread-safe. The recommended usage is to addField() in one thread and 
  * then share the instance across threads.
- * </p>
- * <p/>
- * <b>This API is experimental and may change in the future.</b>
  * <p>
- * @version $Id$
+ * <b>This API is experimental and may change in the future.</b>
+ *
  * @since solr 1.3
  */
 public class XPathRecordReader {
-  private static final Logger LOG = LoggerFactory.getLogger(XPathRecordReader.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final XMLErrorLogger XMLLOG = new XMLErrorLogger(LOG);
 
   private Node rootNode = new Node("/", null);
@@ -70,9 +70,9 @@ public class XPathRecordReader {
   public static final int FLATTEN = 1;
 
   /**
-   * A constructor called with a '|' seperated list of Xpath expressions
+   * A constructor called with a '|' separated list of Xpath expressions
    * which define sub sections of the XML stream that are to be emitted as
-   * seperate records.
+   * separate records.
    * 
    * @param forEachXpath  The XPATH for which a record is emitted. Once the
    * xpath tag is encountered, the Node.parse method starts collecting wanted 
@@ -98,14 +98,14 @@ public class XPathRecordReader {
   }
 
   /**
-   * A wrapper around {@link #addField0 addField0()} to create a series of  
+   * A wrapper around <code>addField0</code> to create a series of  
    * Nodes based on the supplied Xpath and a given fieldName. The created  
    * nodes are inserted into a Node tree.
    *
    * @param name The name for this field in the emitted record
    * @param xpath The xpath expression for this field
    * @param multiValued If 'true' then the emitted record will have values in 
-   *                    a List<String>
+   *                    a List&lt;String&gt;
    */
   public synchronized XPathRecordReader addField(String name, String xpath, boolean multiValued) {
     addField0(xpath, name, multiValued, false, 0);
@@ -113,15 +113,15 @@ public class XPathRecordReader {
   }
 
   /**
-   * A wrapper around {@link #addField0 addField0()} to create a series of  
+   * A wrapper around <code>addField0</code> to create a series of  
    * Nodes based on the supplied Xpath and a given fieldName. The created  
    * nodes are inserted into a Node tree.
    *
    * @param name The name for this field in the emitted record
    * @param xpath The xpath expression for this field
    * @param multiValued If 'true' then the emitted record will have values in 
-   *                    a List<String>
-   * @param flags FLATTEN: Recursivly combine text from all child XML elements
+   *                    a List&lt;String&gt;
+   * @param flags FLATTEN: Recursively combine text from all child XML elements
    */
   public synchronized XPathRecordReader addField(String name, String xpath, boolean multiValued, int flags) {
     addField0(xpath, name, multiValued, false, flags);
@@ -136,7 +136,7 @@ public class XPathRecordReader {
    * @param xpath The xpath expression for this field
    * @param name The name for this field in the emitted record
    * @param multiValued If 'true' then the emitted record will have values in 
-   *                    a List<String>
+   *                    a List&lt;String&gt;
    * @param isRecord Flags that this XPATH is from a forEach statement
    * @param flags The only supported flag is 'FLATTEN'
    */
@@ -161,12 +161,8 @@ public class XPathRecordReader {
    * @return results a List of emitted records
    */
   public List<Map<String, Object>> getAllRecords(Reader r) {
-    final List<Map<String, Object>> results = new ArrayList<Map<String, Object>>();
-    streamRecords(r, new Handler() {
-      public void handle(Map<String, Object> record, String s) {
-        results.add(record);
-      }
-    });
+    final List<Map<String, Object>> results = new ArrayList<>();
+    streamRecords(r, (record, s) -> results.add(record));
     return results;
   }
 
@@ -181,8 +177,8 @@ public class XPathRecordReader {
   public void streamRecords(Reader r, Handler handler) {
     try {
       XMLStreamReader parser = factory.createXMLStreamReader(r);
-      rootNode.parse(parser, handler, new HashMap<String, Object>(),
-              new Stack<Set<String>>(), false);
+      rootNode.parse(parser, handler, new HashMap<>(),
+          new Stack<>(), false);
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -247,7 +243,7 @@ public class XPathRecordReader {
         // prepare for the clean up that will occurr when the record
         // is emitted after its END_ELEMENT is matched 
         recordStarted = true;
-        valuesAddedinThisFrame = new HashSet<String>();
+        valuesAddedinThisFrame = new HashSet<>();
         stack.push(valuesAddedinThisFrame);
       } else if (recordStarted) {
         // This node is a child of some parent which matched against forEach 
@@ -272,7 +268,7 @@ public class XPathRecordReader {
           }
         }
 
-        Set<Node> childrenFound = new HashSet<Node>();
+        Set<Node> childrenFound = new HashSet<>();
         int event = -1;
         int flattenedStarts=0; // our tag depth when flattening elements
         StringBuilder text = new StringBuilder();
@@ -294,7 +290,7 @@ public class XPathRecordReader {
                 for (Node n : childNodes) {
                   // For the multivalue child nodes where we could have, but
                   // didnt, collect text. Push a null string into values.
-                  if (!childrenFound.contains(n)) n.putNulls(values);
+                  if (!childrenFound.contains(n)) n.putNulls(values, valuesAddedinThisFrame);
                 }
               }
               return;
@@ -340,7 +336,7 @@ public class XPathRecordReader {
                                     Stack<Set<String>> stack, boolean recordStarted)
             throws IOException, XMLStreamException {
       Node n = getMatchingNode(parser,childNodes);
-      Map<String, Object> decends=new HashMap<String, Object>();
+      Map<String, Object> decends=new HashMap<>();
       if (n != null) {
         childrenFound.add(n);
         n.parse(parser, handler, values, stack, recordStarted);
@@ -427,18 +423,28 @@ public class XPathRecordReader {
      * pushing a null string onto every multiValued fieldName's List of values
      * where a value has not been provided from the stream.
      */
-    private void putNulls(Map<String, Object> values) {
+    private void putNulls(Map<String, Object> values, Set<String> valuesAddedinThisFrame) {
       if (attributes != null) {
         for (Node n : attributes) {
-          if (n.multiValued)
-            putText(values, null, n.fieldName, true);
+          if (n.multiValued) {
+            putANull(n.fieldName, values, valuesAddedinThisFrame);
+          }
         }
       }
-      if (hasText && multiValued)
-        putText(values, null, fieldName, true);
+      if (hasText && multiValued) {
+        putANull(fieldName, values, valuesAddedinThisFrame);
+      }
       if (childNodes != null) {
-        for (Node childNode : childNodes)
-          childNode.putNulls(values);
+        for (Node childNode : childNodes) {
+          childNode.putNulls(values, valuesAddedinThisFrame);
+        }
+      }
+    }
+    
+    private void putANull(String thisFieldName, Map<String, Object> values, Set<String> valuesAddedinThisFrame) {
+      putText(values, null, thisFieldName, true);
+      if( valuesAddedinThisFrame != null) {
+        valuesAddedinThisFrame.add(thisFieldName);
       }
     }
 
@@ -454,7 +460,7 @@ public class XPathRecordReader {
       if (multiValued) {
         List<String> v = (List<String>) values.get(fieldName);
         if (v == null) {
-          v = new ArrayList<String>();
+          v = new ArrayList<>();
           values.put(fieldName, v);
         }
         v.add(value);
@@ -498,7 +504,7 @@ public class XPathRecordReader {
         // we have reached end of element portion of Xpath and can now only
         // have an element attribute. Add it to this nodes list of attributes
         if (attributes == null) {
-          attributes = new ArrayList<Node>();
+          attributes = new ArrayList<>();
         }
         xpseg = xpseg.substring(1); // strip the '@'
         attributes.add(new Node(xpseg, fieldName, multiValued));
@@ -506,7 +512,7 @@ public class XPathRecordReader {
       else if ( xpseg.length() == 0) {
         // we have a '//' selector for all decendents of the current nodes
         xpseg = paths.remove(0); // shift out next Xpath segment
-        if (wildCardNodes == null) wildCardNodes = new ArrayList<Node>();
+        if (wildCardNodes == null) wildCardNodes = new ArrayList<>();
         Node n = getOrAddNode(xpseg, wildCardNodes);
         if (paths.isEmpty()) {
           // We are current a leaf node.
@@ -523,7 +529,7 @@ public class XPathRecordReader {
       }
       else {
         if (childNodes == null)
-          childNodes = new ArrayList<Node>();
+          childNodes = new ArrayList<>();
         // does this "name" already exist as a child node.
         Node n = getOrAddNode(xpseg,childNodes);
         if (paths.isEmpty()) {
@@ -554,19 +560,19 @@ public class XPathRecordReader {
       for (Node n : searchList)
         if (n.xpathName.equals(xpathName)) return n;
       // new territory! add a new node for this Xpath bitty
-      Node n = new Node(xpathName, this); // a minimal Node initalization
+      Node n = new Node(xpathName, this); // a minimal Node initialization
       Matcher m = ATTRIB_PRESENT_WITHVAL.matcher(xpathName);
       if (m.find()) {
         n.name = m.group(1);
         int start = m.start(2);
         while (true) {
-          HashMap<String, String> attribs = new HashMap<String, String>();
+          HashMap<String, String> attribs = new HashMap<>();
           if (!m.find(start))
             break;
           attribs.put(m.group(3), m.group(5));
           start = m.end(6);
           if (n.attribAndValues == null)
-            n.attribAndValues = new ArrayList<Map.Entry<String, String>>();
+            n.attribAndValues = new ArrayList<>();
           n.attribAndValues.addAll(attribs.entrySet());
         }
       }
@@ -580,7 +586,7 @@ public class XPathRecordReader {
      * deep-copied for thread safety
      */
     private static Map<String, Object> getDeepCopy(Map<String, Object> values) {
-      Map<String, Object> result = new HashMap<String, Object>();
+      Map<String, Object> result = new HashMap<>();
       for (Map.Entry<String, Object> entry : values.entrySet()) {
         if (entry.getValue() instanceof List) {
           result.put(entry.getKey(), new ArrayList((List) entry.getValue()));
@@ -604,7 +610,7 @@ public class XPathRecordReader {
    * seperator or if a sequence of multiple seperator's appear. 
    */
   private static List<String> splitEscapeQuote(String str) {
-    List<String> result = new LinkedList<String>();
+    List<String> result = new LinkedList<>();
     String[] ss = str.split("/");
     for (int i=0; i<ss.length; i++) { // i=1: skip seperator at start of string
       StringBuilder sb = new StringBuilder();
@@ -625,25 +631,37 @@ public class XPathRecordReader {
   }
 
   static XMLInputFactory factory = XMLInputFactory.newInstance();
-  static{
-    factory.setProperty(XMLInputFactory.IS_VALIDATING , Boolean.FALSE); 
-    factory.setProperty(XMLInputFactory.SUPPORT_DTD , Boolean.FALSE);
+  static {
+    EmptyEntityResolver.configureXMLInputFactory(factory);
     factory.setXMLReporter(XMLLOG);
+    try {
+      // The java 1.6 bundled stax parser (sjsxp) does not currently have a thread-safe
+      // XMLInputFactory, as that implementation tries to cache and reuse the
+      // XMLStreamReader.  Setting the parser-specific "reuse-instance" property to false
+      // prevents this.
+      // All other known open-source stax parsers (and the bea ref impl)
+      // have thread-safe factories.
+      factory.setProperty("reuse-instance", Boolean.FALSE);
+    } catch (IllegalArgumentException ex) {
+      // Other implementations will likely throw this exception since "reuse-instance"
+      // isimplementation specific.
+      LOG.debug("Unable to set the 'reuse-instance' property for the input chain: " + factory);
+    }
   }
 
   /**Implement this interface to stream records as and when one is found.
    *
    */
-  public static interface Handler {
+  public interface Handler {
     /**
      * @param record The record map. The key is the field name as provided in 
      * the addField() methods. The value can be a single String (for single 
-     * valued fields) or a List<String> (for multiValued).
+     * valued fields) or a List&lt;String&gt; (for multiValued).
      * @param xpath The forEach XPATH for which this record is being emitted
      * If there is any change all parsing will be aborted and the Exception
-     * is propogated up
+     * is propagated up
      */
-    public void handle(Map<String, Object> record, String xpath);
+    void handle(Map<String, Object> record, String xpath);
   }
 
   private static final Pattern ATTRIB_PRESENT_WITHVAL = Pattern

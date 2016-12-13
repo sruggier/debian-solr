@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 
@@ -24,7 +24,7 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
 
@@ -36,9 +36,9 @@ public class TestSameTokenSamePosition extends LuceneTestCase {
    */
   public void test() throws Exception {
     Directory dir = newDirectory();
-    RandomIndexWriter riw = new RandomIndexWriter(random, dir);
+    RandomIndexWriter riw = new RandomIndexWriter(random(), dir);
     Document doc = new Document();
-    doc.add(new Field("eng", new BugReproTokenStream()));
+    doc.add(new TextField("eng", new BugReproTokenStream()));
     riw.addDocument(doc);
     riw.close();
     dir.close();
@@ -49,10 +49,10 @@ public class TestSameTokenSamePosition extends LuceneTestCase {
    */
   public void testMoreDocs() throws Exception {
     Directory dir = newDirectory();
-    RandomIndexWriter riw = new RandomIndexWriter(random, dir);
+    RandomIndexWriter riw = new RandomIndexWriter(random(), dir);
     for (int i = 0; i < 100; i++) {
       Document doc = new Document();
-      doc.add(new Field("eng", new BugReproTokenStream()));
+      doc.add(new TextField("eng", new BugReproTokenStream()));
       riw.addDocument(doc);
     }
     riw.close();
@@ -72,13 +72,13 @@ final class BugReproTokenStream extends TokenStream {
   private final int incs[] = new int[]{1, 0, 1, 0};
 
   @Override
-  public boolean incrementToken() throws IOException {
+  public boolean incrementToken() {
     if (nextTokenIndex < tokenCount) {
       termAtt.setEmpty().append(terms[nextTokenIndex]);
       offsetAtt.setOffset(starts[nextTokenIndex], ends[nextTokenIndex]);
       posIncAtt.setPositionIncrement(incs[nextTokenIndex]);
       nextTokenIndex++;
-      return true;			
+      return true;
     } else {
       return false;
     }

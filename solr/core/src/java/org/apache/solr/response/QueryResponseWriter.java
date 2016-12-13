@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.response;
 
 import java.io.Writer;
@@ -40,7 +39,7 @@ import org.apache.solr.util.plugin.NamedListInitializedPlugin;
  * A single instance of any registered QueryResponseWriter is created
  * via the default constructor and is reused for all relevant queries.
  *
- * @version $Id$
+ *
  */
 public interface QueryResponseWriter extends NamedListInitializedPlugin {
   public static String CONTENT_TYPE_XML_UTF8="application/xml; charset=UTF-8";
@@ -51,7 +50,7 @@ public interface QueryResponseWriter extends NamedListInitializedPlugin {
    * Write a SolrQueryResponse, this method must be thread save.
    *
    * <p>
-   * Information about the request (in particular: formating options) may be 
+   * Information about the request (in particular: formatting options) may be 
    * obtained from <code>req</code> but the dominant source of information 
    * should be <code>rsp</code>.
    * <p>
@@ -80,6 +79,7 @@ public interface QueryResponseWriter extends NamedListInitializedPlugin {
    * may be specified when declaring a response writer in
    * solrconfig.xml
    */
+  @Override
   public void init(NamedList args);
 }
 

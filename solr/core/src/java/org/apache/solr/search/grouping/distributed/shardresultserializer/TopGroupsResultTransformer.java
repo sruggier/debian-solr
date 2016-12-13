@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.distributed.shardresultserializer;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,31 +14,37 @@ package org.apache.solr.search.grouping.distributed.shardresultserializer;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.distributed.shardresultserializer;
+
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.FieldSelector;
-import org.apache.lucene.document.FieldSelectorResult;
+import org.apache.lucene.document.DocumentStoredFieldVisitor;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TopFieldDocs;
 import org.apache.lucene.search.grouping.GroupDocs;
 import org.apache.lucene.search.grouping.TopGroups;
+import org.apache.lucene.util.BytesRef;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.handler.component.ResponseBuilder;
 import org.apache.solr.handler.component.ShardDoc;
 import org.apache.solr.schema.FieldType;
+import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.search.grouping.Command;
 import org.apache.solr.search.grouping.distributed.command.QueryCommand;
 import org.apache.solr.search.grouping.distributed.command.QueryCommandResult;
 import org.apache.solr.search.grouping.distributed.command.TopGroupsFieldCommand;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Implementation for transforming {@link TopGroups} and {@link TopDocs} into a {@link NamedList} structure and
@@ -50,6 +54,8 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
 
   private final ResponseBuilder rb;
 
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
   public TopGroupsResultTransformer(ResponseBuilder rb) {
     this.rb = rb;
   }
@@ -57,13 +63,15 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
   /**
    * {@inheritDoc}
    */
+  @Override
   public NamedList transform(List<Command> data) throws IOException {
-    NamedList<NamedList> result = new NamedList<NamedList>();
+    NamedList<NamedList> result = new NamedList<>();
+    final IndexSchema schema = rb.req.getSearcher().getSchema();
     for (Command command : data) {
       NamedList commandResult;
       if (TopGroupsFieldCommand.class.isInstance(command)) {
         TopGroupsFieldCommand fieldCommand = (TopGroupsFieldCommand) command;
-        SchemaField groupField = rb.req.getSearcher().getSchema().getField(fieldCommand.getKey());
+        SchemaField groupField = schema.getField(fieldCommand.getKey());
         commandResult = serializeTopGroups(fieldCommand.result(), groupField);
       } else if (QueryCommand.class.isInstance(command)) {
         QueryCommand queryCommand = (QueryCommand) command;
@@ -80,8 +88,11 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
   /**
    * {@inheritDoc}
    */
+  @Override
   public Map<String, ?> transformToNative(NamedList<NamedList> shardResponse, Sort groupSort, Sort sortWithinGroup, String shard) {
-    Map<String, Object> result = new HashMap<String, Object>();
+    Map<String, Object> result = new HashMap<>();
+
+    final IndexSchema schema = rb.req.getSearcher().getSchema();
 
     for (Map.Entry<String, NamedList> entry : shardResponse) {
       String key = entry.getKey();
@@ -97,24 +108,20 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
 
         @SuppressWarnings("unchecked")
         List<NamedList<Object>> documents = (List<NamedList<Object>>) commandResult.get("documents");
-        ScoreDoc[] scoreDocs = new ScoreDoc[documents.size()];
-        int j = 0;
-        for (NamedList<Object> document : documents) {
-          Object uniqueId = document.get("id").toString();
-          Float score = (Float) document.get("score");
-          if (score == null) {
-            score = Float.NaN;
-          }
-          Object[] sortValues = ((List) document.get("sortValues")).toArray();
-          scoreDocs[j++] = new ShardDoc(score, sortValues, uniqueId, shard);
+        ScoreDoc[] scoreDocs = transformToNativeShardDoc(documents, groupSort, shard, schema);
+        final TopDocs topDocs;
+        if (sortWithinGroup.equals(Sort.RELEVANCE)) {
+          topDocs = new TopDocs(totalHits, scoreDocs, maxScore);
+        } else {
+          topDocs = new TopFieldDocs(totalHits, scoreDocs, sortWithinGroup.getSort(), maxScore);
         }
-        result.put(key, new QueryCommandResult(new TopDocs(totalHits, scoreDocs, maxScore), matches));
+        result.put(key, new QueryCommandResult(topDocs, matches));
         continue;
       }
 
       Integer totalHitCount = (Integer) commandResult.get("totalHitCount");
 
-      List<GroupDocs<String>> groupDocs = new ArrayList<GroupDocs<String>>();
+      List<GroupDocs<BytesRef>> groupDocs = new ArrayList<>();
       for (int i = 2; i < commandResult.size(); i++) {
         String groupValue = commandResult.getName(i);
         @SuppressWarnings("unchecked")
@@ -127,26 +134,16 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
 
         @SuppressWarnings("unchecked")
         List<NamedList<Object>> documents = (List<NamedList<Object>>) groupResult.get("documents");
-        ScoreDoc[] scoreDocs = new ScoreDoc[documents.size()];
-        int j = 0;
-        for (NamedList<Object> document : documents) {
-          Object uniqueId = document.get("id").toString();
-          Float score = (Float) document.get("score");
-          if (score == null) {
-            score = Float.NaN;
-          }
-          Object[] sortValues = ((List) document.get("sortValues")).toArray();
-          scoreDocs[j++] = new ShardDoc(score, sortValues, uniqueId, shard);
-        }
+        ScoreDoc[] scoreDocs = transformToNativeShardDoc(documents, sortWithinGroup, shard, schema);
 
-        String groupValueRef = groupValue != null ? groupValue : null;
-        groupDocs.add(new GroupDocs<String>(maxScore, totalGroupHits, scoreDocs, groupValueRef, null));
+        BytesRef groupValueRef = groupValue != null ? new BytesRef(groupValue) : null;
+        groupDocs.add(new GroupDocs<>(Float.NaN, maxScore, totalGroupHits, scoreDocs, groupValueRef, null));
       }
 
       @SuppressWarnings("unchecked")
-      GroupDocs<String>[] groupDocsArr = groupDocs.toArray(new GroupDocs[groupDocs.size()]);
-      TopGroups<String> topGroups = new TopGroups<String>(
-        groupSort.getSort(), sortWithinGroup.getSort(), totalHitCount, totalGroupedHitCount, groupDocsArr
+      GroupDocs<BytesRef>[] groupDocsArr = groupDocs.toArray(new GroupDocs[groupDocs.size()]);
+      TopGroups<BytesRef> topGroups = new TopGroups<>(
+           groupSort.getSort(), sortWithinGroup.getSort(), totalHitCount, totalGroupedHitCount, groupDocsArr, Float.NaN
       );
 
       result.put(key, topGroups);
@@ -155,33 +152,72 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
     return result;
   }
 
-  protected NamedList serializeTopGroups(TopGroups<String> data, SchemaField groupField) throws IOException {
-    NamedList<Object> result = new NamedList<Object>();
+  protected ScoreDoc[] transformToNativeShardDoc(List<NamedList<Object>> documents, Sort groupSort, String shard,
+                                                 IndexSchema schema) {
+    ScoreDoc[] scoreDocs = new ScoreDoc[documents.size()];
+    int j = 0;
+    for (NamedList<Object> document : documents) {
+      Object docId = document.get("id");
+      if (docId != null) {
+        docId = docId.toString();
+      } else {
+        log.error("doc {} has null 'id'", document);
+      }
+      Float score = (Float) document.get("score");
+      if (score == null) {
+        score = Float.NaN;
+      }
+      Object[] sortValues = null;
+      Object sortValuesVal = document.get("sortValues");
+      if (sortValuesVal != null) {
+        sortValues = ((List) sortValuesVal).toArray();
+        for (int k = 0; k < sortValues.length; k++) {
+          SchemaField field = groupSort.getSort()[k].getField() != null
+              ? schema.getFieldOrNull(groupSort.getSort()[k].getField()) : null;
+          if (field != null) {
+            FieldType fieldType = field.getType();
+            if (sortValues[k] != null) {
+              sortValues[k] = fieldType.unmarshalSortValue(sortValues[k]);
+            }
+          }
+        }
+      } else {
+        log.debug("doc {} has null 'sortValues'", document);
+      }
+      scoreDocs[j++] = new ShardDoc(score, sortValues, docId, shard);
+    }
+    return scoreDocs;
+  }
+
+  protected NamedList serializeTopGroups(TopGroups<BytesRef> data, SchemaField groupField) throws IOException {
+    NamedList<Object> result = new NamedList<>();
     result.add("totalGroupedHitCount", data.totalGroupedHitCount);
     result.add("totalHitCount", data.totalHitCount);
     if (data.totalGroupCount != null) {
       result.add("totalGroupCount", data.totalGroupCount);
     }
-    SchemaField uniqueField = rb.req.getSearcher().getSchema().getUniqueKeyField();
-    for (GroupDocs<String> searchGroup : data.groups) {
-      NamedList<Object> groupResult = new NamedList<Object>();
+
+    final IndexSchema schema = rb.req.getSearcher().getSchema();
+    SchemaField uniqueField = schema.getUniqueKeyField();
+    for (GroupDocs<BytesRef> searchGroup : data.groups) {
+      NamedList<Object> groupResult = new NamedList<>();
       groupResult.add("totalHits", searchGroup.totalHits);
       if (!Float.isNaN(searchGroup.maxScore)) {
         groupResult.add("maxScore", searchGroup.maxScore);
       }
 
-      List<NamedList<Object>> documents = new ArrayList<NamedList<Object>>();
+      List<NamedList<Object>> documents = new ArrayList<>();
       for (int i = 0; i < searchGroup.scoreDocs.length; i++) {
-        NamedList<Object> document = new NamedList<Object>();
+        NamedList<Object> document = new NamedList<>();
         documents.add(document);
 
         Document doc = retrieveDocument(uniqueField, searchGroup.scoreDocs[i].doc);
-        document.add("id", uniqueField.getType().toExternal(doc.getFieldable(uniqueField.getName())));
+        document.add("id", uniqueField.getType().toExternal(doc.getField(uniqueField.getName())));
         if (!Float.isNaN(searchGroup.scoreDocs[i].score))  {
           document.add("score", searchGroup.scoreDocs[i].score);
         }
         if (!(searchGroup.scoreDocs[i] instanceof FieldDoc)) {
-          continue;
+          continue; // thus don't add sortValues below
         }
 
         FieldDoc fieldDoc = (FieldDoc) searchGroup.scoreDocs[i];
@@ -189,11 +225,11 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
         for (int j = 0; j < fieldDoc.fields.length; j++) {
           Object sortValue  = fieldDoc.fields[j];
           Sort sortWithinGroup = rb.getGroupingSpec().getSortWithinGroup();
-          SchemaField field = sortWithinGroup.getSort()[j].getField() != null ? rb.req.getSearcher().getSchema().getFieldOrNull(sortWithinGroup.getSort()[j].getField()) : null;
+          SchemaField field = sortWithinGroup.getSort()[j].getField() != null ? schema.getFieldOrNull(sortWithinGroup.getSort()[j].getField()) : null;
           if (field != null) {
             FieldType fieldType = field.getType();
-            if (sortValue instanceof String) {
-              sortValue = fieldType.toObject(field.createField(fieldType.indexedToReadable((String) sortValue), 0.0f));
+            if (sortValue != null) {
+              sortValue = fieldType.marshalSortValue(sortValue);
             }
           }
           convertedSortValues[j] = sortValue;
@@ -201,7 +237,7 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
         document.add("sortValues", convertedSortValues);
       }
       groupResult.add("documents", documents);
-      String groupValue = searchGroup.groupValue != null ? groupField.getType().indexedToReadable(searchGroup.groupValue): null;
+      String groupValue = searchGroup.groupValue != null ? groupField.getType().indexedToReadable(searchGroup.groupValue.utf8ToString()): null;
       result.add(groupValue, groupResult);
     }
 
@@ -209,27 +245,29 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
   }
 
   protected NamedList serializeTopDocs(QueryCommandResult result) throws IOException {
-    NamedList<Object> queryResult = new NamedList<Object>();
+    NamedList<Object> queryResult = new NamedList<>();
     queryResult.add("matches", result.getMatches());
     queryResult.add("totalHits", result.getTopDocs().totalHits);
-    if (rb.getGroupingSpec().isNeedScore()) {
+    // debug: assert !Float.isNaN(result.getTopDocs().getMaxScore()) == rb.getGroupingSpec().isNeedScore();
+    if (!Float.isNaN(result.getTopDocs().getMaxScore())) {
       queryResult.add("maxScore", result.getTopDocs().getMaxScore());
     }
-    List<NamedList> documents = new ArrayList<NamedList>();
+    List<NamedList> documents = new ArrayList<>();
     queryResult.add("documents", documents);
 
-    SchemaField uniqueField = rb.req.getSearcher().getSchema().getUniqueKeyField();
+    final IndexSchema schema = rb.req.getSearcher().getSchema();
+    SchemaField uniqueField = schema.getUniqueKeyField();
     for (ScoreDoc scoreDoc : result.getTopDocs().scoreDocs) {
-      NamedList<Object> document = new NamedList<Object>();
+      NamedList<Object> document = new NamedList<>();
       documents.add(document);
 
       Document doc = retrieveDocument(uniqueField, scoreDoc.doc);
-      document.add("id", uniqueField.getType().toExternal(doc.getFieldable(uniqueField.getName())));
-      if (rb.getGroupingSpec().isNeedScore())  {
+      document.add("id", uniqueField.getType().toExternal(doc.getField(uniqueField.getName())));
+      if (!Float.isNaN(scoreDoc.score))  {
         document.add("score", scoreDoc.score);
       }
       if (!FieldDoc.class.isInstance(scoreDoc)) {
-        continue;
+        continue; // thus don't add sortValues below
       }
 
       FieldDoc fieldDoc = (FieldDoc) scoreDoc;
@@ -237,11 +275,12 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
       for (int j = 0; j < fieldDoc.fields.length; j++) {
         Object sortValue  = fieldDoc.fields[j];
         Sort groupSort = rb.getGroupingSpec().getGroupSort();
-        SchemaField field = groupSort.getSort()[j].getField() != null ? rb.req.getSearcher().getSchema().getFieldOrNull(groupSort.getSort()[j].getField()) : null;
+        SchemaField field = groupSort.getSort()[j].getField() != null
+                          ? schema.getFieldOrNull(groupSort.getSort()[j].getField()) : null;
         if (field != null) {
           FieldType fieldType = field.getType();
-          if (sortValue instanceof String) {
-            sortValue = fieldType.toObject(field.createField(fieldType.indexedToReadable((String) sortValue), 0.0f));
+          if (sortValue != null) {
+            sortValue = fieldType.marshalSortValue(sortValue);
           }
         }
         convertedSortValues[j] = sortValue;
@@ -253,16 +292,9 @@ public class TopGroupsResultTransformer implements ShardResultTransformer<List<C
   }
 
   private Document retrieveDocument(final SchemaField uniqueField, int doc) throws IOException {
-    FieldSelector fieldSelectorVisitor = new FieldSelector() {
-
-      public FieldSelectorResult accept(String fieldName) {
-        if (uniqueField.getName().equals(fieldName)) {
-          return FieldSelectorResult.LOAD_AND_BREAK;
-        }
-        return FieldSelectorResult.NO_LOAD;
-      }
-    };
-    return rb.req.getSearcher().doc(doc, fieldSelectorVisitor);
+    DocumentStoredFieldVisitor visitor = new DocumentStoredFieldVisitor(uniqueField.getName());
+    rb.req.getSearcher().doc(doc, visitor);
+    return visitor.getDocument();
   }
 
 }

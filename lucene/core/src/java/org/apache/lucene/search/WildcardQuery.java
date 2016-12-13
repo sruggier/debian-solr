@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,50 +14,94 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.index.IndexReader;
+
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.lucene.index.Term;
-import org.apache.lucene.util.ToStringUtils;
-
-import java.io.IOException;
+import org.apache.lucene.util.automaton.Automata;
+import org.apache.lucene.util.automaton.Automaton;
+import org.apache.lucene.util.automaton.Operations;
 
 /** Implements the wildcard search query. Supported wildcards are <code>*</code>, which
  * matches any character sequence (including the empty one), and <code>?</code>,
- * which matches any single character. Note this query can be slow, as it
+ * which matches any single character. '\' is the escape character.
+ * <p>
+ * Note this query can be slow, as it
  * needs to iterate over many terms. In order to prevent extremely slow WildcardQueries,
- * a Wildcard term should not start with one of the wildcards <code>*</code> or
- * <code>?</code>.
+ * a Wildcard term should not start with the wildcard <code>*</code>
  * 
  * <p>This query uses the {@link
- * MultiTermQuery#CONSTANT_SCORE_AUTO_REWRITE_DEFAULT}
+ * MultiTermQuery#CONSTANT_SCORE_REWRITE}
  * rewrite method.
  *
- * @see WildcardTermEnum */
-public class WildcardQuery extends MultiTermQuery {
-  private boolean termContainsWildcard;
-  private boolean termIsPrefix;
-  protected Term term;
-    
+ * @see AutomatonQuery
+ */
+public class WildcardQuery extends AutomatonQuery {
+  /** String equality with support for wildcards */
+  public static final char WILDCARD_STRING = '*';
+
+  /** Char equality with support for wildcards */
+  public static final char WILDCARD_CHAR = '?';
+
+  /** Escape character */
+  public static final char WILDCARD_ESCAPE = '\\';
+  
+  /**
+   * Constructs a query for terms matching <code>term</code>. 
+   */
   public WildcardQuery(Term term) {
-    this.term = term;
-    String text = term.text();
-    this.termContainsWildcard = (text.indexOf('*') != -1)
-        || (text.indexOf('?') != -1);
-    this.termIsPrefix = termContainsWildcard 
-        && (text.indexOf('?') == -1) 
-        && (text.indexOf('*') == text.length() - 1);
+    super(term, toAutomaton(term));
+  }
+  
+  /**
+   * Constructs a query for terms matching <code>term</code>.
+   * @param maxDeterminizedStates maximum number of states in the resulting
+   *   automata.  If the automata would need more than this many states
+   *   TooComplextToDeterminizeException is thrown.  Higher number require more
+   *   space but can process more complex automata.
+   */
+  public WildcardQuery(Term term, int maxDeterminizedStates) {
+    super(term, toAutomaton(term), maxDeterminizedStates);
   }
 
-  @Override
-  protected FilteredTermEnum getEnum(IndexReader reader) throws IOException {
-    if (termIsPrefix) {
-      return new PrefixTermEnum(reader, term.createTerm(term.text()
-          .substring(0, term.text().indexOf('*')))); 
-    } else if (termContainsWildcard) {
-      return new WildcardTermEnum(reader, getTerm());
-    } else {
-      return new SingleTermEnum(reader, getTerm());
+  /**
+   * Convert Lucene wildcard syntax into an automaton.
+   * @lucene.internal
+   */
+  @SuppressWarnings("fallthrough")
+  public static Automaton toAutomaton(Term wildcardquery) {
+    List<Automaton> automata = new ArrayList<>();
+    
+    String wildcardText = wildcardquery.text();
+    
+    for (int i = 0; i < wildcardText.length();) {
+      final int c = wildcardText.codePointAt(i);
+      int length = Character.charCount(c);
+      switch(c) {
+        case WILDCARD_STRING: 
+          automata.add(Automata.makeAnyString());
+          break;
+        case WILDCARD_CHAR:
+          automata.add(Automata.makeAnyChar());
+          break;
+        case WILDCARD_ESCAPE:
+          // add the next codepoint instead, if it exists
+          if (i + length < wildcardText.length()) {
+            final int nextChar = wildcardText.codePointAt(i + length);
+            length += Character.charCount(nextChar);
+            automata.add(Automata.makeChar(nextChar));
+            break;
+          } // else fallthru, lenient parsing with a trailing \
+        default:
+          automata.add(Automata.makeChar(c));
+      }
+      i += length;
     }
+    
+    return Operations.concatenate(automata);
   }
   
   /**
@@ -73,38 +115,11 @@ public class WildcardQuery extends MultiTermQuery {
   @Override
   public String toString(String field) {
     StringBuilder buffer = new StringBuilder();
-    if (!term.field().equals(field)) {
-      buffer.append(term.field());
+    if (!getField().equals(field)) {
+      buffer.append(getField());
       buffer.append(":");
     }
     buffer.append(term.text());
-    buffer.append(ToStringUtils.boost(getBoost()));
     return buffer.toString();
   }
-
-  @Override
-  public int hashCode() {
-    final int prime = 31;
-    int result = super.hashCode();
-    result = prime * result + ((term == null) ? 0 : term.hashCode());
-    return result;
-  }
-
-  @Override
-  public boolean equals(Object obj) {
-    if (this == obj)
-      return true;
-    if (!super.equals(obj))
-      return false;
-    if (getClass() != obj.getClass())
-      return false;
-    WildcardQuery other = (WildcardQuery) obj;
-    if (term == null) {
-      if (other.term != null)
-        return false;
-    } else if (!term.equals(other.term))
-      return false;
-    return true;
-  }
-
 }

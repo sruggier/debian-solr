@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,28 +14,36 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.response;
 
 import java.io.Writer;
 import java.io.IOException;
 
+import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
 
 /**
- * @version $Id$
+ *
  */
 public class XMLResponseWriter implements QueryResponseWriter {
+  @Override
   public void init(NamedList n) {
     /* NOOP */
   }
 
+  @Override
   public void write(Writer writer, SolrQueryRequest req, SolrQueryResponse rsp) throws IOException {
-    XMLWriter.writeResponse(writer,req,rsp);
+    XMLWriter w = new XMLWriter(writer, req, rsp);
+    try {
+      w.writeResponse();
+    } finally {
+      w.close();
+    }
   }
 
+  @Override
   public String getContentType(SolrQueryRequest request, SolrQueryResponse response) {
-    return CONTENT_TYPE_XML_UTF8;
+    return XMLResponseParser.XML_CONTENT_TYPE;
   }
 }

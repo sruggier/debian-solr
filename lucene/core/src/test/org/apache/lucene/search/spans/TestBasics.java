@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,25 +14,15 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
+
 
 import java.io.IOException;
-import java.io.Reader;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
 
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.LowerCaseTokenizer;
-import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.analysis.TokenFilter;
-import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
+import org.apache.lucene.analysis.*;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Payload;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
@@ -43,15 +31,15 @@ import org.apache.lucene.search.CheckHits;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.QueryUtils;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.English;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
-import org.junit.Test;
+
+import static org.apache.lucene.search.spans.SpanTestUtil.*;
 
 /**
  * Tests basic search capabilities.
@@ -70,57 +58,16 @@ public class TestBasics extends LuceneTestCase {
   private static IndexReader reader;
   private static Directory directory;
 
-  static final class SimplePayloadFilter extends TokenFilter {
-    String fieldName;
-    int pos;
-    final PayloadAttribute payloadAttr;
-    final CharTermAttribute termAttr;
-
-    public SimplePayloadFilter(TokenStream input, String fieldName) {
-      super(input);
-      this.fieldName = fieldName;
-      pos = 0;
-      payloadAttr = input.addAttribute(PayloadAttribute.class);
-      termAttr = input.addAttribute(CharTermAttribute.class);
-    }
-
-    @Override
-    public boolean incrementToken() throws IOException {
-      if (input.incrementToken()) {
-        payloadAttr.setPayload(new Payload(("pos: " + pos).getBytes()));
-        pos++;
-        return true;
-      } else {
-        return false;
-      }
-    }
-
-    @Override
-    public void reset() throws IOException {
-      super.reset();
-      pos = 0;
-    }
-  }
-  
-  static final Analyzer simplePayloadAnalyzer = new Analyzer() {
-
-    @Override
-    public TokenStream tokenStream(String fieldName, Reader reader) {
-      return new SimplePayloadFilter(new LowerCaseTokenizer(TEST_VERSION_CURRENT, reader), fieldName);
-    }
-    
-  };
-  
   @BeforeClass
   public static void beforeClass() throws Exception {
     directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, simplePayloadAnalyzer)
-                                                     .setMaxBufferedDocs(_TestUtil.nextInt(random, 100, 1000)).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory,
+        newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true))
+            .setMaxBufferedDocs(TestUtil.nextInt(random(), 100, 1000)).setMergePolicy(newLogMergePolicy()));
     //writer.infoStream = System.out;
     for (int i = 0; i < 2000; i++) {
       Document doc = new Document();
-      doc.add(newField("field", English.intToEnglish(i), Field.Store.YES, Field.Index.ANALYZED));
+      doc.add(newTextField("field", English.intToEnglish(i), Field.Store.YES));
       writer.addDocument(doc);
     }
     reader = writer.getReader();
@@ -130,7 +77,6 @@ public class TestBasics extends LuceneTestCase {
 
   @AfterClass
   public static void afterClass() throws Exception {
-    searcher.close();
     reader.close();
     directory.close();
     searcher = null;
@@ -138,7 +84,6 @@ public class TestBasics extends LuceneTestCase {
     directory = null;
   }
 
-  @Test
   public void testTerm() throws Exception {
     Query query = new TermQuery(new Term("field", "seventy"));
     checkHits(query, new int[]
@@ -162,71 +107,54 @@ public class TestBasics extends LuceneTestCase {
               1979});
     }
 
-  @Test
   public void testTerm2() throws Exception {
     Query query = new TermQuery(new Term("field", "seventish"));
     checkHits(query, new int[] {});
   }
 
-  @Test
   public void testPhrase() throws Exception {
-    PhraseQuery query = new PhraseQuery();
-    query.add(new Term("field", "seventy"));
-    query.add(new Term("field", "seven"));
+    PhraseQuery query = new PhraseQuery("field", "seventy", "seven");
     checkHits(query, new int[]
       {77, 177, 277, 377, 477, 577, 677, 777, 877,
               977, 1077, 1177, 1277, 1377, 1477, 1577, 1677, 1777, 1877, 1977});
   }
 
-  @Test
   public void testPhrase2() throws Exception {
-    PhraseQuery query = new PhraseQuery();
-    query.add(new Term("field", "seventish"));
-    query.add(new Term("field", "sevenon"));
+    PhraseQuery query = new PhraseQuery("field", "seventish", "sevenon");
     checkHits(query, new int[] {});
   }
 
-  @Test
   public void testBoolean() throws Exception {
-    BooleanQuery query = new BooleanQuery();
+    BooleanQuery.Builder query = new BooleanQuery.Builder();
     query.add(new TermQuery(new Term("field", "seventy")), BooleanClause.Occur.MUST);
     query.add(new TermQuery(new Term("field", "seven")), BooleanClause.Occur.MUST);
-    checkHits(query, new int[]
+    checkHits(query.build(), new int[]
       {77, 177, 277, 377, 477, 577, 677, 770, 771, 772, 773, 774, 775, 776, 777,
               778, 779, 877, 977, 1077, 1177, 1277, 1377, 1477, 1577, 1677,
               1770, 1771, 1772, 1773, 1774, 1775, 1776, 1777, 1778, 1779, 1877,
               1977});
   }
 
-  @Test
   public void testBoolean2() throws Exception {
-    BooleanQuery query = new BooleanQuery();
+    BooleanQuery.Builder query = new BooleanQuery.Builder();
     query.add(new TermQuery(new Term("field", "sevento")), BooleanClause.Occur.MUST);
     query.add(new TermQuery(new Term("field", "sevenly")), BooleanClause.Occur.MUST);
-    checkHits(query, new int[] {});
+    checkHits(query.build(), new int[] {});
   }
 
-  @Test
   public void testSpanNearExact() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "seventy"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "seven"));
-    SpanNearQuery query = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                            0, true);
+    SpanQuery query = spanNearOrderedQuery("field", 0, "seventy", "seven");
+    
     checkHits(query, new int[]
       {77, 177, 277, 377, 477, 577, 677, 777, 877, 977, 1077, 1177, 1277, 1377, 1477, 1577, 1677, 1777, 1877, 1977});
 
     assertTrue(searcher.explain(query, 77).getValue() > 0.0f);
     assertTrue(searcher.explain(query, 977).getValue() > 0.0f);
-
-    QueryUtils.check(term1);
-    QueryUtils.check(term2);
-    QueryUtils.checkUnequal(term1,term2);
   }
   
   public void testSpanTermQuery() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "seventy"));
-    checkHits(term1, new int[]
-                             { 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 170,
+    checkHits(spanTermQuery("field", "seventy"), 
+              new int[] { 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 170,
         171, 172, 173, 174, 175, 176, 177, 178, 179, 270, 271, 272, 273, 274,
         275, 276, 277, 278, 279, 370, 371, 372, 373, 374, 375, 376, 377, 378,
         379, 470, 471, 472, 473, 474, 475, 476, 477, 478, 479, 570, 571, 572,
@@ -244,38 +172,23 @@ public class TestBasics extends LuceneTestCase {
         1971, 1972, 1973, 1974, 1975, 1976, 1977, 1978, 1979 });
   }
 
-  @Test
   public void testSpanNearUnordered() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "nine"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "six"));
-    SpanNearQuery query = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                            4, false);
-
-    checkHits(query, new int[]
-      {609, 629, 639, 649, 659, 669, 679, 689, 699, 906, 926, 936, 946, 956,
+    checkHits(spanNearUnorderedQuery("field", 4, "nine", "six"), 
+              new int[] { 609, 629, 639, 649, 659, 669, 679, 689, 699, 906, 926, 936, 946, 956,
               966, 976, 986, 996, 1609, 1629, 1639, 1649, 1659, 1669,
               1679, 1689, 1699, 1906, 1926, 1936, 1946, 1956, 1966, 1976, 1986,
               1996});
   }
 
-  @Test
   public void testSpanNearOrdered() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "nine"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "six"));
-    SpanNearQuery query = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                            4, true);
-    checkHits(query, new int[]
-      {906, 926, 936, 946, 956, 966, 976, 986, 996, 1906, 1926, 1936, 1946, 1956, 1966, 1976, 1986, 1996});
+    checkHits(spanNearOrderedQuery("field", 4, "nine", "six"), 
+              new int[] { 906, 926, 936, 946, 956, 966, 976, 986, 996, 1906, 1926, 
+                          1936, 1946, 1956, 1966, 1976, 1986, 1996});
   }
 
-  @Test
   public void testSpanNot() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "eight"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "one"));
-    SpanNearQuery near = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                           4, true);
-    SpanTermQuery term3 = new SpanTermQuery(new Term("field", "forty"));
-    SpanNotQuery query = new SpanNotQuery(near, term3);
+    SpanQuery near = spanNearOrderedQuery("field", 4, "eight", "one");
+    SpanQuery query = spanNotQuery(near, spanTermQuery("field", "forty"));
 
     checkHits(query, new int[]
       {801, 821, 831, 851, 861, 871, 881, 891, 1801, 1821, 1831, 1851, 1861, 1871, 1881, 1891});
@@ -284,17 +197,10 @@ public class TestBasics extends LuceneTestCase {
     assertTrue(searcher.explain(query, 891).getValue() > 0.0f);
   }
   
-  @Test
   public void testSpanWithMultipleNotSingle() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "eight"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "one"));
-    SpanNearQuery near = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                           4, true);
-    SpanTermQuery term3 = new SpanTermQuery(new Term("field", "forty"));
-
-    SpanOrQuery or = new SpanOrQuery(term3);
-
-    SpanNotQuery query = new SpanNotQuery(near, or);
+    SpanQuery near = spanNearOrderedQuery("field", 4, "eight", "one");
+    SpanQuery or = spanOrQuery("field", "forty");
+    SpanQuery query = spanNotQuery(near, or);
 
     checkHits(query, new int[]
       {801, 821, 831, 851, 861, 871, 881, 891,
@@ -304,19 +210,10 @@ public class TestBasics extends LuceneTestCase {
     assertTrue(searcher.explain(query, 891).getValue() > 0.0f);
   }
 
-  @Test
   public void testSpanWithMultipleNotMany() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "eight"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "one"));
-    SpanNearQuery near = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                           4, true);
-    SpanTermQuery term3 = new SpanTermQuery(new Term("field", "forty"));
-    SpanTermQuery term4 = new SpanTermQuery(new Term("field", "sixty"));
-    SpanTermQuery term5 = new SpanTermQuery(new Term("field", "eighty"));
-
-    SpanOrQuery or = new SpanOrQuery(term3, term4, term5);
-
-    SpanNotQuery query = new SpanNotQuery(near, or);
+    SpanQuery near = spanNearOrderedQuery("field", 4, "eight", "one");
+    SpanQuery or = spanOrQuery("field", "forty", "sixty", "eighty");
+    SpanQuery query = spanNotQuery(near, or);
 
     checkHits(query, new int[]
       {801, 821, 831, 851, 871, 891, 1801, 1821, 1831, 1851, 1871, 1891});
@@ -325,18 +222,10 @@ public class TestBasics extends LuceneTestCase {
     assertTrue(searcher.explain(query, 891).getValue() > 0.0f);
   }
 
-  @Test
   public void testNpeInSpanNearWithSpanNot() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "eight"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "one"));
-    SpanNearQuery near = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                           4, true);
-    SpanTermQuery hun = new SpanTermQuery(new Term("field", "hundred"));
-    SpanTermQuery term3 = new SpanTermQuery(new Term("field", "forty"));
-    SpanNearQuery exclude = new SpanNearQuery(new SpanQuery[] {hun, term3},
-                                              1, true);
-    
-    SpanNotQuery query = new SpanNotQuery(near, exclude);
+    SpanQuery near = spanNearOrderedQuery("field", 4, "eight", "one");
+    SpanQuery exclude = spanNearOrderedQuery("field", 1, "hundred", "forty");
+    SpanQuery query = spanNotQuery(near, exclude);
 
     checkHits(query, new int[]
       {801, 821, 831, 851, 861, 871, 881, 891,
@@ -346,18 +235,12 @@ public class TestBasics extends LuceneTestCase {
     assertTrue(searcher.explain(query, 891).getValue() > 0.0f);
   }
 
-  @Test
   public void testNpeInSpanNearInSpanFirstInSpanNot() throws Exception {
-    int n = 5;
-    SpanTermQuery hun = new SpanTermQuery(new Term("field", "hundred"));
-    SpanTermQuery term40 = new SpanTermQuery(new Term("field", "forty"));
-    SpanTermQuery term40c = (SpanTermQuery)term40.clone();
-
-    SpanFirstQuery include = new SpanFirstQuery(term40, n);
-    SpanNearQuery near = new SpanNearQuery(new SpanQuery[]{hun, term40c},
-                                           n-1, true);
-    SpanFirstQuery exclude = new SpanFirstQuery(near, n-1);
-    SpanNotQuery q = new SpanNotQuery(include, exclude);
+    final int n = 5;
+    SpanQuery include = spanFirstQuery(spanTermQuery("field", "forty"), n);
+    SpanQuery near = spanNearOrderedQuery("field", n-1, "hundred", "forty");
+    SpanQuery exclude = spanFirstQuery(near, n-1);
+    SpanQuery q = spanNotQuery(include, exclude);
     
     checkHits(q, new int[]{40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 1040, 1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048,
             1049, 1140, 1141, 1142, 1143, 1144, 1145, 1146, 1147, 1148, 1149, 1240, 1241, 1242, 1243, 1244,
@@ -368,10 +251,58 @@ public class TestBasics extends LuceneTestCase {
             1847, 1848, 1849, 1940, 1941, 1942, 1943, 1944, 1945, 1946, 1947, 1948, 1949});
   }
   
-  @Test
+  public void testSpanNotWindowOne() throws Exception {
+    SpanQuery near = spanNearOrderedQuery("field", 4, "eight", "forty");
+    SpanQuery query = spanNotQuery(near, spanTermQuery("field", "one"), 1, 1);
+
+    checkHits(query, new int[]
+      {840, 842, 843, 844, 845, 846, 847, 848, 849,
+          1840, 1842, 1843, 1844, 1845, 1846, 1847, 1848, 1849});
+
+    assertTrue(searcher.explain(query, 840).getValue() > 0.0f);
+    assertTrue(searcher.explain(query, 1842).getValue() > 0.0f);
+  }
+  
+  public void testSpanNotWindowTwoBefore() throws Exception {
+    SpanQuery near = spanNearOrderedQuery("field", 4, "eight", "forty");
+    SpanQuery query = spanNotQuery(near, spanTermQuery("field", "one"), 2, 0);
+
+    checkHits(query, new int[]
+      {840, 841, 842, 843, 844, 845, 846, 847, 848, 849});
+
+    assertTrue(searcher.explain(query, 840).getValue() > 0.0f);
+    assertTrue(searcher.explain(query, 849).getValue() > 0.0f);
+  }
+
+  public void testSpanNotWindowNeg() throws Exception {
+    //test handling of invalid window < 0
+    SpanQuery near = spanNearOrderedQuery("field", 4, "eight", "one");
+    SpanQuery or = spanOrQuery("field", "forty");
+    SpanQuery query = spanNotQuery(near, or);
+
+    checkHits(query, new int[]
+       {801, 821, 831, 851, 861, 871, 881, 891,
+               1801, 1821, 1831, 1851, 1861, 1871, 1881, 1891});
+
+    assertTrue(searcher.explain(query, 801).getValue() > 0.0f);
+    assertTrue(searcher.explain(query, 891).getValue() > 0.0f);
+  }
+  
+  public void testSpanNotWindowDoubleExcludesBefore() throws Exception {
+    //test hitting two excludes before an include
+    SpanQuery near = spanNearOrderedQuery("field", 2, "forty", "two");
+    SpanQuery exclude = spanTermQuery("field", "one");
+    SpanQuery query = spanNotQuery(near, exclude, 4, 1);
+
+    checkHits(query, new int[]
+       {42, 242, 342, 442, 542, 642, 742, 842, 942});
+
+    assertTrue(searcher.explain(query, 242).getValue() > 0.0f);
+    assertTrue(searcher.explain(query, 942).getValue() > 0.0f);
+  }
+  
   public void testSpanFirst() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "five"));
-    SpanFirstQuery query = new SpanFirstQuery(term1, 1);
+    SpanQuery query = spanFirstQuery(spanTermQuery("field", "five"), 1);
 
     checkHits(query, new int[]
       {5, 500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512, 513,
@@ -388,17 +319,16 @@ public class TestBasics extends LuceneTestCase {
 
   }
 
-  @Test
   public void testSpanPositionRange() throws Exception {
-    SpanPositionRangeQuery query;
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "five"));
-    query = new SpanPositionRangeQuery(term1, 1, 2);
+    SpanQuery term1 = spanTermQuery("field", "five");
+    SpanQuery query = spanPositionRangeQuery(term1, 1, 2);
+    
     checkHits(query, new int[]
       {25,35, 45, 55, 65, 75, 85, 95});
     assertTrue(searcher.explain(query, 25).getValue() > 0.0f);
     assertTrue(searcher.explain(query, 95).getValue() > 0.0f);
 
-    query = new SpanPositionRangeQuery(term1, 0, 1);
+    query = spanPositionRangeQuery(term1, 0, 1);
     checkHits(query, new int[]
       {5, 500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512,
               513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 523, 524, 525,
@@ -410,98 +340,14 @@ public class TestBasics extends LuceneTestCase {
               585, 586, 587, 588, 589, 590, 591, 592, 593, 594, 595, 596, 597,
               598, 599});
 
-    query = new SpanPositionRangeQuery(term1, 6, 7);
+    query = spanPositionRangeQuery(term1, 6, 7);
     checkHits(query, new int[]{});
   }
 
-  @Test
-  public void testSpanPayloadCheck() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "five"));
-    Payload pay = new Payload(("pos: " + 5).getBytes());
-    SpanQuery query = new SpanPayloadCheckQuery(term1, Collections.singletonList(pay.getData()));
-    checkHits(query, new int[]
-      {1125, 1135, 1145, 1155, 1165, 1175, 1185, 1195, 1225, 1235, 1245, 1255, 1265, 1275, 1285, 1295, 1325, 1335, 1345, 1355, 1365, 1375, 1385, 1395, 1425, 1435, 1445, 1455, 1465, 1475, 1485, 1495, 1525, 1535, 1545, 1555, 1565, 1575, 1585, 1595, 1625, 1635, 1645, 1655, 1665, 1675, 1685, 1695, 1725, 1735, 1745, 1755, 1765, 1775, 1785, 1795, 1825, 1835, 1845, 1855, 1865, 1875, 1885, 1895, 1925, 1935, 1945, 1955, 1965, 1975, 1985, 1995});
-    assertTrue(searcher.explain(query, 1125).getValue() > 0.0f);
-
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "hundred"));
-    SpanNearQuery snq;
-    SpanQuery[] clauses;
-    List<byte[]> list;
-    Payload pay2;
-    clauses = new SpanQuery[2];
-    clauses[0] = term1;
-    clauses[1] = term2;
-    snq = new SpanNearQuery(clauses, 0, true);
-    pay = new Payload(("pos: " + 0).getBytes());
-    pay2 = new Payload(("pos: " + 1).getBytes());
-    list = new ArrayList<byte[]>();
-    list.add(pay.getData());
-    list.add(pay2.getData());
-    query = new SpanNearPayloadCheckQuery(snq, list);
-    checkHits(query, new int[]
-      {500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 523, 524, 525, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 537, 538, 539, 540, 541, 542, 543, 544, 545, 546, 547, 548, 549, 550, 551, 552, 553, 554, 555, 556, 557, 558, 559, 560, 561, 562, 563, 564, 565, 566, 567, 568, 569, 570, 571, 572, 573, 574, 575, 576, 577, 578, 579, 580, 581, 582, 583, 584, 585, 586, 587, 588, 589, 590, 591, 592, 593, 594, 595, 596, 597, 598, 599});
-    clauses = new SpanQuery[3];
-    clauses[0] = term1;
-    clauses[1] = term2;
-    clauses[2] = new SpanTermQuery(new Term("field", "five"));
-    snq = new SpanNearQuery(clauses, 0, true);
-    pay = new Payload(("pos: " + 0).getBytes());
-    pay2 = new Payload(("pos: " + 1).getBytes());
-    Payload pay3 = new Payload(("pos: " + 2).getBytes());
-    list = new ArrayList<byte[]>();
-    list.add(pay.getData());
-    list.add(pay2.getData());
-    list.add(pay3.getData());
-    query = new SpanNearPayloadCheckQuery(snq, list);
-    checkHits(query, new int[]
-      {505});
-  }
-
-  public void testComplexSpanChecks() throws Exception {
-    SpanTermQuery one = new SpanTermQuery(new Term("field", "one"));
-    SpanTermQuery thous = new SpanTermQuery(new Term("field", "thousand"));
-    //should be one position in between
-    SpanTermQuery hundred = new SpanTermQuery(new Term("field", "hundred"));
-    SpanTermQuery three = new SpanTermQuery(new Term("field", "three"));
-
-    SpanNearQuery oneThous = new SpanNearQuery(new SpanQuery[]{one, thous}, 0, true);
-    SpanNearQuery hundredThree = new SpanNearQuery(new SpanQuery[]{hundred, three}, 0, true);
-    SpanNearQuery oneThousHunThree = new SpanNearQuery(new SpanQuery[]{oneThous, hundredThree}, 1, true);
-    SpanQuery query;
-    //this one's too small
-    query = new SpanPositionRangeQuery(oneThousHunThree, 1, 2);
-    checkHits(query, new int[]{});
-    //this one's just right
-    query = new SpanPositionRangeQuery(oneThousHunThree, 0, 6);
-    checkHits(query, new int[]{1103, 1203,1303,1403,1503,1603,1703,1803,1903});
-
-    Collection<byte[]> payloads = new ArrayList<byte[]>();
-    Payload pay = new Payload(("pos: " + 0).getBytes());
-    Payload pay2 = new Payload(("pos: " + 1).getBytes());
-    Payload pay3 = new Payload(("pos: " + 3).getBytes());
-    Payload pay4 = new Payload(("pos: " + 4).getBytes());
-    payloads.add(pay.getData());
-    payloads.add(pay2.getData());
-    payloads.add(pay3.getData());
-    payloads.add(pay4.getData());
-    query = new SpanNearPayloadCheckQuery(oneThousHunThree, payloads);
-    checkHits(query, new int[]{1103, 1203,1303,1403,1503,1603,1703,1803,1903});
-
-  }
-
-
-  @Test
   public void testSpanOr() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "thirty"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "three"));
-    SpanNearQuery near1 = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                            0, true);
-    SpanTermQuery term3 = new SpanTermQuery(new Term("field", "forty"));
-    SpanTermQuery term4 = new SpanTermQuery(new Term("field", "seven"));
-    SpanNearQuery near2 = new SpanNearQuery(new SpanQuery[] {term3, term4},
-                                            0, true);
-
-    SpanOrQuery query = new SpanOrQuery(near1, near2);
+    SpanQuery near1 = spanNearOrderedQuery("field", 0, "thirty", "three");
+    SpanQuery near2 = spanNearOrderedQuery("field", 0, "forty", "seven");
+    SpanQuery query = spanOrQuery(near1, near2);
 
     checkHits(query, new int[]
       {33, 47, 133, 147, 233, 247, 333, 347, 433, 447, 533, 547, 633, 647, 733,
@@ -512,40 +358,21 @@ public class TestBasics extends LuceneTestCase {
     assertTrue(searcher.explain(query, 947).getValue() > 0.0f);
   }
 
-  @Test
   public void testSpanExactNested() throws Exception {
-    SpanTermQuery term1 = new SpanTermQuery(new Term("field", "three"));
-    SpanTermQuery term2 = new SpanTermQuery(new Term("field", "hundred"));
-    SpanNearQuery near1 = new SpanNearQuery(new SpanQuery[] {term1, term2},
-                                            0, true);
-    SpanTermQuery term3 = new SpanTermQuery(new Term("field", "thirty"));
-    SpanTermQuery term4 = new SpanTermQuery(new Term("field", "three"));
-    SpanNearQuery near2 = new SpanNearQuery(new SpanQuery[] {term3, term4},
-                                            0, true);
-
-    SpanNearQuery query = new SpanNearQuery(new SpanQuery[] {near1, near2},
-                                            0, true);
-
+    SpanQuery near1 = spanNearOrderedQuery("field", 0, "three", "hundred");
+    SpanQuery near2 = spanNearOrderedQuery("field", 0, "thirty", "three");
+    SpanQuery query = spanNearOrderedQuery(0, near1, near2);
+    
     checkHits(query, new int[] {333, 1333});
 
     assertTrue(searcher.explain(query, 333).getValue() > 0.0f);
   }
 
-  @Test
   public void testSpanNearOr() throws Exception {
-
-    SpanTermQuery t1 = new SpanTermQuery(new Term("field","six"));
-    SpanTermQuery t3 = new SpanTermQuery(new Term("field","seven"));
+    SpanQuery to1 = spanOrQuery("field", "six", "seven");
+    SpanQuery to2 = spanOrQuery("field", "seven", "six");
+    SpanQuery query = spanNearOrderedQuery(10, to1, to2);
     
-    SpanTermQuery t5 = new SpanTermQuery(new Term("field","seven"));
-    SpanTermQuery t6 = new SpanTermQuery(new Term("field","six"));
-
-    SpanOrQuery to1 = new SpanOrQuery(t1, t3);
-    SpanOrQuery to2 = new SpanOrQuery(t5, t6);
-    
-    SpanNearQuery query = new SpanNearQuery(new SpanQuery[] {to1, to2},
-                                            10, true);
-
     checkHits(query, new int[]
       {606, 607, 626, 627, 636, 637, 646, 647, 656, 657, 666, 667, 676, 677,
               686, 687, 696, 697, 706, 707, 726, 727, 736, 737, 746, 747, 756,
@@ -556,25 +383,13 @@ public class TestBasics extends LuceneTestCase {
               1797});
   }
 
-  @Test
   public void testSpanComplex1() throws Exception {
-      
-    SpanTermQuery t1 = new SpanTermQuery(new Term("field","six"));
-    SpanTermQuery t2 = new SpanTermQuery(new Term("field","hundred"));
-    SpanNearQuery tt1 = new SpanNearQuery(new SpanQuery[] {t1, t2}, 0,true);
+    SpanQuery tt1 = spanNearOrderedQuery("field", 0, "six", "hundred");
+    SpanQuery tt2 = spanNearOrderedQuery("field", 0, "seven", "hundred");
 
-    SpanTermQuery t3 = new SpanTermQuery(new Term("field","seven"));
-    SpanTermQuery t4 = new SpanTermQuery(new Term("field","hundred"));
-    SpanNearQuery tt2 = new SpanNearQuery(new SpanQuery[] {t3, t4}, 0,true);
-    
-    SpanTermQuery t5 = new SpanTermQuery(new Term("field","seven"));
-    SpanTermQuery t6 = new SpanTermQuery(new Term("field","six"));
-
-    SpanOrQuery to1 = new SpanOrQuery(tt1, tt2);
-    SpanOrQuery to2 = new SpanOrQuery(t5, t6);
-    
-    SpanNearQuery query = new SpanNearQuery(new SpanQuery[] {to1, to2},
-                                            100, true);
+    SpanQuery to1 = spanOrQuery(tt1, tt2);
+    SpanQuery to2 = spanOrQuery("field", "seven", "six");
+    SpanQuery query = spanNearOrderedQuery(100, to1, to2);
     
     checkHits(query, new int[]
       {606, 607, 626, 627, 636, 637, 646, 647, 656, 657, 666, 667, 676, 677, 686, 687, 696,
@@ -585,48 +400,7 @@ public class TestBasics extends LuceneTestCase {
               1746, 1747, 1756, 1757, 1766, 1767, 1776, 1777, 1786, 1787, 1796, 1797});
   }
   
-  @Test
-  public void testSpansSkipTo() throws Exception {
-    SpanTermQuery t1 = new SpanTermQuery(new Term("field", "seventy"));
-    SpanTermQuery t2 = new SpanTermQuery(new Term("field", "seventy"));
-    Spans s1 = t1.getSpans(searcher.getIndexReader());
-    Spans s2 = t2.getSpans(searcher.getIndexReader());
-
-    assertTrue(s1.next());
-    assertTrue(s2.next());
-
-    boolean hasMore = true;
-
-    do {
-      hasMore = skipToAccoringToJavaDocs(s1, s1.doc());
-      assertEquals(hasMore, s2.skipTo(s2.doc()));
-      assertEquals(s1.doc(), s2.doc());
-    } while (hasMore);
-  }
-
-  /** Skips to the first match beyond the current, whose document number is
-   * greater than or equal to <i>target</i>. <p>Returns true iff there is such
-   * a match.  <p>Behaves as if written: <pre>
-   *   boolean skipTo(int target) {
-   *     do {
-   *       if (!next())
-   *       return false;
-   *     } while (target > doc());
-   *     return true;
-   *   }
-   * </pre>
-   */
-  private boolean skipToAccoringToJavaDocs(Spans s, int target)
-      throws Exception {
-    do {
-      if (!s.next())
-        return false;
-    } while (target > s.doc());
-    return true;
-
-  }
-
   private void checkHits(Query query, int[] results) throws IOException {
-    CheckHits.checkHits(random, query, "field", searcher, results);
+    CheckHits.checkHits(random(), query, "field", searcher, results);
   }
 }

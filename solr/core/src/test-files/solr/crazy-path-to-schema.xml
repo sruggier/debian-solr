@@ -19,14 +19,12 @@
      Striped down schema used by SampleTest to demonstrate picking any
      schema filename you want.
 
-     $Id: schema.xml 382610 2006-03-03 01:43:03Z yonik $
-     $Source: /cvs/main/searching/solr-configs/test/WEB-INF/classes/schema.xml,v $
   -->
 
 <schema name="test" version="1.0">
   <types>
-    <fieldtype name="sint" class="solr.SortableIntField" />
-    <fieldtype name="text" class="solr.TextField">
+    <fieldType name="int" class="solr.TrieIntField" precisionStep="0"/>
+    <fieldType name="text" class="solr.TextField">
       <analyzer>
         <tokenizer class="solr.StandardTokenizerFactory"/>
         <filter class="solr.StandardFilterFactory"/>
@@ -34,12 +32,12 @@
         <filter class="solr.StopFilterFactory"/>
         <filter class="solr.PorterStemFilterFactory"/>
       </analyzer>
-    </fieldtype>
+    </fieldType>
  </types>
 
 
  <fields>
-   <field name="id" type="sint" indexed="true" stored="true"/>
+   <field name="id" type="int" indexed="true" stored="true" multiValued="false"/>
    <field name="subject" type="text" indexed="true" stored="true"/>
  </fields>
 

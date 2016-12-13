@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
+
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -23,19 +23,21 @@ import java.io.StringReader;
 
 import org.apache.lucene.util.LuceneTestCase;
 
+import org.apache.lucene.analysis.WordlistLoader;
+
 public class TestWordlistLoader extends LuceneTestCase {
 
   public void testWordlistLoading() throws IOException {
     String s = "ONE\n  two \nthree";
-    CharArraySet wordSet1 = WordlistLoader.getWordSet(new StringReader(s), TEST_VERSION_CURRENT);
+    CharArraySet wordSet1 = WordlistLoader.getWordSet(new StringReader(s));
     checkSet(wordSet1);
-    CharArraySet wordSet2 = WordlistLoader.getWordSet(new BufferedReader(new StringReader(s)), TEST_VERSION_CURRENT);
+    CharArraySet wordSet2 = WordlistLoader.getWordSet(new BufferedReader(new StringReader(s)));
     checkSet(wordSet2);
   }
 
   public void testComments() throws Exception {
     String s = "ONE\n  two \nthree\n#comment";
-    CharArraySet wordSet1 = WordlistLoader.getWordSet(new StringReader(s), "#", TEST_VERSION_CURRENT);
+    CharArraySet wordSet1 = WordlistLoader.getWordSet(new StringReader(s), "#");
     checkSet(wordSet1);
     assertFalse(wordSet1.contains("#comment"));
     assertFalse(wordSet1.contains("comment"));
@@ -44,8 +46,8 @@ public class TestWordlistLoader extends LuceneTestCase {
 
   private void checkSet(CharArraySet wordset) {
     assertEquals(3, wordset.size());
-    assertTrue(wordset.contains("ONE"));		// case is not modified
-    assertTrue(wordset.contains("two"));		// surrounding whitespace is removed
+    assertTrue(wordset.contains("ONE"));  // case is not modified
+    assertTrue(wordset.contains("two"));  // surrounding whitespace is removed
     assertTrue(wordset.contains("three"));
     assertFalse(wordset.contains("four"));
   }
@@ -64,7 +66,7 @@ public class TestWordlistLoader extends LuceneTestCase {
       "   two   \n" + // stopword with leading/trailing space
       " three   four five \n" + // multiple stopwords
       "six seven | comment\n"; //multiple stopwords + comment
-    CharArraySet wordset = WordlistLoader.getSnowballWordSet(new StringReader(s), TEST_VERSION_CURRENT);
+    CharArraySet wordset = WordlistLoader.getSnowballWordSet(new StringReader(s));
     assertEquals(7, wordset.size());
     assertTrue(wordset.contains("ONE"));
     assertTrue(wordset.contains("two"));

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
 
 import org.apache.solr.SolrTestCaseJ4;
@@ -24,7 +23,7 @@ import org.apache.commons.lang.ArrayUtils;
 /**
  * A base class for all analysis request handler tests.
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public abstract class AnalysisRequestHandlerTestBase extends SolrTestCaseJ4 {

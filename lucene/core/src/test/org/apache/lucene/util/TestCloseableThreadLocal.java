@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.lucene.util;
 
 public class TestCloseableThreadLocal extends LuceneTestCase {
@@ -29,7 +28,7 @@ public class TestCloseableThreadLocal extends LuceneTestCase {
   public void testNullValue() throws Exception {
     // Tests that null can be set as a valid value (LUCENE-1805). This
     // previously failed in get().
-    CloseableThreadLocal<Object> ctl = new CloseableThreadLocal<Object>();
+    CloseableThreadLocal<Object> ctl = new CloseableThreadLocal<>();
     ctl.set(null);
     assertNull(ctl.get());
   }
@@ -37,7 +36,7 @@ public class TestCloseableThreadLocal extends LuceneTestCase {
   public void testDefaultValueWithoutSetting() throws Exception {
     // LUCENE-1805: make sure default get returns null,
     // twice in a row
-    CloseableThreadLocal<Object> ctl = new CloseableThreadLocal<Object>();
+    CloseableThreadLocal<Object> ctl = new CloseableThreadLocal<>();
     assertNull(ctl.get());
   }
 

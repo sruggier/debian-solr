@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -22,21 +22,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.lang.invoke.MethodHandles;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.Properties;
 /**
- * <p> A data source implementation which can be used to read binary streams using HTTP. </p> <p/> <p> Refer to <a
+ * <p> A data source implementation which can be used to read binary streams using HTTP. </p> <p> Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a> for more
  * details. </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 3.1
  */
 public class BinURLDataSource extends DataSource<InputStream>{
-  private static final Logger LOG = LoggerFactory.getLogger(BinURLDataSource.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private String baseUrl;
   private int connectionTimeout = CONNECTION_TIMEOUT;

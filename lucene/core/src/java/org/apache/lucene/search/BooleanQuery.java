@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,14 +14,25 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.util.ToStringUtils;
-import org.apache.lucene.search.BooleanClause.Occur;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.similarities.Similarity;
 
 /** A Query that matches documents matching boolean combinations of other
   * queries, e.g. {@link TermQuery}s, {@link PhraseQuery}s or other
@@ -56,384 +65,337 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
    * Default value is 1024.
    */
   public static void setMaxClauseCount(int maxClauseCount) {
-    if (maxClauseCount < 1)
+    if (maxClauseCount < 1) {
       throw new IllegalArgumentException("maxClauseCount must be >= 1");
+    }
     BooleanQuery.maxClauseCount = maxClauseCount;
   }
 
-  private ArrayList<BooleanClause> clauses = new ArrayList<BooleanClause>();
+  /** A builder for boolean queries. */
+  public static class Builder {
+
+    private boolean disableCoord;
+    private int minimumNumberShouldMatch;
+    private final List<BooleanClause> clauses = new ArrayList<>();
+
+    /** Sole constructor. */
+    public Builder() {}
+
+    /**
+     * {@link Similarity#coord(int,int)} may be disabled in scoring, as
+     * appropriate. For example, this score factor does not make sense for most
+     * automatically generated queries, like {@link WildcardQuery} and {@link
+     * FuzzyQuery}.
+     */
+    public Builder setDisableCoord(boolean disableCoord) {
+      this.disableCoord = disableCoord;
+      return this;
+    }
+
+    /**
+     * Specifies a minimum number of the optional BooleanClauses
+     * which must be satisfied.
+     *
+     * <p>
+     * By default no optional clauses are necessary for a match
+     * (unless there are no required clauses).  If this method is used,
+     * then the specified number of clauses is required.
+     * </p>
+     * <p>
+     * Use of this method is totally independent of specifying that
+     * any specific clauses are required (or prohibited).  This number will
+     * only be compared against the number of matching optional clauses.
+     * </p>
+     *
+     * @param min the number of optional clauses that must match
+     */
+    public Builder setMinimumNumberShouldMatch(int min) {
+      this.minimumNumberShouldMatch = min;
+      return this;
+    }
+
+    /**
+     * Add a new clause to this {@link Builder}. Note that the order in which
+     * clauses are added does not have any impact on matching documents or query
+     * performance.
+     * @throws TooManyClauses if the new number of clauses exceeds the maximum clause number
+     */
+    public Builder add(BooleanClause clause) {
+      add(clause.getQuery(), clause.getOccur());
+      return this;
+    }
+
+    /**
+     * Add a new clause to this {@link Builder}. Note that the order in which
+     * clauses are added does not have any impact on matching documents or query
+     * performance.
+     * @throws TooManyClauses if the new number of clauses exceeds the maximum clause number
+     */
+    public Builder add(Query query, Occur occur) {
+      if (clauses.size() >= maxClauseCount) {
+        throw new TooManyClauses();
+      }
+      clauses.add(new BooleanClause(query, occur));
+      return this;
+    }
+
+    /** Create a new {@link BooleanQuery} based on the parameters that have
+     *  been set on this builder. */
+    public BooleanQuery build() {
+      return new BooleanQuery(disableCoord, minimumNumberShouldMatch, clauses.toArray(new BooleanClause[0]));
+    }
+
+  }
+
   private final boolean disableCoord;
+  private final int minimumNumberShouldMatch;
+  private final List<BooleanClause> clauses;              // used for toString() and getClauses()
+  private final Map<Occur, Collection<Query>> clauseSets; // used for equals/hashcode
 
-  /** Constructs an empty boolean query. */
-  public BooleanQuery() {
-    disableCoord = false;
-  }
-
-  /** Constructs an empty boolean query.
-   *
-   * {@link Similarity#coord(int,int)} may be disabled in scoring, as
-   * appropriate. For example, this score factor does not make sense for most
-   * automatically generated queries, like {@link WildcardQuery} and {@link
-   * FuzzyQuery}.
-   *
-   * @param disableCoord disables {@link Similarity#coord(int,int)} in scoring.
-   */
-  public BooleanQuery(boolean disableCoord) {
+  private BooleanQuery(boolean disableCoord, int minimumNumberShouldMatch,
+      BooleanClause[] clauses) {
     this.disableCoord = disableCoord;
+    this.minimumNumberShouldMatch = minimumNumberShouldMatch;
+    this.clauses = Collections.unmodifiableList(Arrays.asList(clauses));
+    clauseSets = new EnumMap<>(Occur.class);
+    // duplicates matter for SHOULD and MUST
+    clauseSets.put(Occur.SHOULD, new Multiset<>());
+    clauseSets.put(Occur.MUST, new Multiset<>());
+    // but not for FILTER and MUST_NOT
+    clauseSets.put(Occur.FILTER, new HashSet<>());
+    clauseSets.put(Occur.MUST_NOT, new HashSet<>());
+    for (BooleanClause clause : clauses) {
+      clauseSets.get(clause.getOccur()).add(clause.getQuery());
+    }
   }
-
-  /** Returns true iff {@link Similarity#coord(int,int)} is disabled in
-   * scoring for this query instance.
-   * @see #BooleanQuery(boolean)
-   */
-  public boolean isCoordDisabled() { return disableCoord; }
 
   /**
-   * Specifies a minimum number of the optional BooleanClauses
-   * which must be satisfied.
-   *
-   * <p>
-   * By default no optional clauses are necessary for a match
-   * (unless there are no required clauses).  If this method is used,
-   * then the specified number of clauses is required.
-   * </p>
-   * <p>
-   * Use of this method is totally independent of specifying that
-   * any specific clauses are required (or prohibited).  This number will
-   * only be compared against the number of matching optional clauses.
-   * </p>
-   *
-   * @param min the number of optional clauses that must match
+   * Return whether the coord factor is disabled.
    */
-  public void setMinimumNumberShouldMatch(int min) {
-    this.minNrShouldMatch = min;
+  public boolean isCoordDisabled() {
+    return disableCoord;
   }
-  protected int minNrShouldMatch = 0;
 
   /**
    * Gets the minimum number of the optional BooleanClauses
    * which must be satisfied.
    */
   public int getMinimumNumberShouldMatch() {
-    return minNrShouldMatch;
+    return minimumNumberShouldMatch;
   }
 
-  /** Adds a clause to a boolean query.
-   *
-   * @throws TooManyClauses if the new number of clauses exceeds the maximum clause number
-   * @see #getMaxClauseCount()
-   */
-  public void add(Query query, BooleanClause.Occur occur) {
-    add(new BooleanClause(query, occur));
+  /** Return a list of the clauses of this {@link BooleanQuery}. */
+  public List<BooleanClause> clauses() {
+    return clauses;
   }
 
-  /** Adds a clause to a boolean query.
-   * @throws TooManyClauses if the new number of clauses exceeds the maximum clause number
-   * @see #getMaxClauseCount()
-   */
-  public void add(BooleanClause clause) {
-    if (clauses.size() >= maxClauseCount)
-      throw new TooManyClauses();
-
-    clauses.add(clause);
+  /** Return the collection of queries for the given {@link Occur}. */
+  Collection<Query> getClauses(Occur occur) {
+    return clauseSets.get(occur);
   }
-
-  /** Returns the set of clauses in this query. */
-  public BooleanClause[] getClauses() {
-    return clauses.toArray(new BooleanClause[clauses.size()]);
-  }
-
-  /** Returns the list of clauses in this query. */
-  public List<BooleanClause> clauses() { return clauses; }
 
   /** Returns an iterator on the clauses in this query. It implements the {@link Iterable} interface to
    * make it possible to do:
-   * <pre>for (BooleanClause clause : booleanQuery) {}</pre>
+   * <pre class="prettyprint">for (BooleanClause clause : booleanQuery) {}</pre>
    */
-  public final Iterator<BooleanClause> iterator() { return clauses().iterator(); }
+  @Override
+  public final Iterator<BooleanClause> iterator() {
+    return clauses.iterator();
+  }
 
-  /**
-   * Expert: the Weight for BooleanQuery, used to
-   * normalize, score and explain these queries.
-   *
-   * <p>NOTE: this API and implementation is subject to
-   * change suddenly in the next release.</p>
-   */
-  protected class BooleanWeight extends Weight {
-    /** The Similarity implementation. */
-    protected Similarity similarity;
-    protected ArrayList<Weight> weights;
-    protected int maxCoord;  // num optional + num required
-    private final boolean disableCoord;
-
-    public BooleanWeight(Searcher searcher, boolean disableCoord)
-      throws IOException {
-      this.similarity = getSimilarity(searcher);
-      this.disableCoord = disableCoord;
-      weights = new ArrayList<Weight>(clauses.size());
-      for (int i = 0 ; i < clauses.size(); i++) {
-        BooleanClause c = clauses.get(i);
-        weights.add(c.getQuery().createWeight(searcher));
-        if (!c.isProhibited()) maxCoord++;
-      }
-    }
-
-    @Override
-    public Query getQuery() { return BooleanQuery.this; }
-
-    @Override
-    public float getValue() { return getBoost(); }
-
-    @Override
-    public float sumOfSquaredWeights() throws IOException {
-      float sum = 0.0f;
-      for (int i = 0 ; i < weights.size(); i++) {
-        // call sumOfSquaredWeights for all clauses in case of side effects
-        float s = weights.get(i).sumOfSquaredWeights();         // sum sub weights
-        if (!clauses.get(i).isProhibited())
-          // only add to sum for non-prohibited clauses
-          sum += s;
-      }
-
-      sum *= getBoost() * getBoost();             // boost each sub-weight
-
-      return sum ;
-    }
-
-    float coord(int overlap, int maxOverlap) {
-      // LUCENE-4300: in most cases of maxOverlap=1, BQ rewrites itself away,
-      // so coord() is not applied. But when BQ cannot optimize itself away
-      // for a single clause (minNrShouldMatch, prohibited clauses, etc), its
-      // important not to apply coord(1,1) for consistency, it might not be 1.0F
-      return maxOverlap == 1 ? 1F : similarity.coord(overlap, maxOverlap);
-    }
-
-    @Override
-    public void normalize(float norm) {
-      norm *= getBoost();                         // incorporate boost
-      for (Weight w : weights) {
-        // normalize all clauses, (even if prohibited in case of side affects)
-        w.normalize(norm);
-      }
-    }
-
-    @Override
-    public Explanation explain(IndexReader reader, int doc)
-      throws IOException {
-      final int minShouldMatch =
-        BooleanQuery.this.getMinimumNumberShouldMatch();
-      ComplexExplanation sumExpl = new ComplexExplanation();
-      sumExpl.setDescription("sum of:");
-      int coord = 0;
-      float sum = 0.0f;
-      boolean fail = false;
-      int shouldMatchCount = 0;
-      Iterator<BooleanClause> cIter = clauses.iterator();
-      for (Iterator<Weight> wIter = weights.iterator(); wIter.hasNext();) {
-        Weight w = wIter.next();
-        BooleanClause c = cIter.next();
-        if (w.scorer(reader, true, true) == null) {
-          if (c.isRequired()) {
-            fail = true;
-            Explanation r = new Explanation(0.0f, "no match on required clause (" + c.getQuery().toString() + ")");
-            sumExpl.addDetail(r);
-          }
-          continue;
-        }
-        Explanation e = w.explain(reader, doc);
-        if (e.isMatch()) {
-          if (!c.isProhibited()) {
-            sumExpl.addDetail(e);
-            sum += e.getValue();
-            coord++;
-          } else {
-            Explanation r =
-              new Explanation(0.0f, "match on prohibited clause (" + c.getQuery().toString() + ")");
-            r.addDetail(e);
-            sumExpl.addDetail(r);
-            fail = true;
-          }
-          if (c.getOccur() == Occur.SHOULD)
-            shouldMatchCount++;
-        } else if (c.isRequired()) {
-          Explanation r = new Explanation(0.0f, "no match on required clause (" + c.getQuery().toString() + ")");
-          r.addDetail(e);
-          sumExpl.addDetail(r);
-          fail = true;
-        }
-      }
-      if (fail) {
-        sumExpl.setMatch(Boolean.FALSE);
-        sumExpl.setValue(0.0f);
-        sumExpl.setDescription
-          ("Failure to meet condition(s) of required/prohibited clause(s)");
-        return sumExpl;
-      } else if (shouldMatchCount < minShouldMatch) {
-        sumExpl.setMatch(Boolean.FALSE);
-        sumExpl.setValue(0.0f);
-        sumExpl.setDescription("Failure to match minimum number "+
-                               "of optional clauses: " + minShouldMatch);
-        return sumExpl;
-      }
-      
-      sumExpl.setMatch(0 < coord ? Boolean.TRUE : Boolean.FALSE);
-      sumExpl.setValue(sum);
-      
-      final float coordFactor = disableCoord ? 1.0f : coord(coord, maxCoord);
-      if (coordFactor == 1.0f) {
-        return sumExpl;                             // eliminate wrapper
+  private BooleanQuery rewriteNoScoring() {
+    BooleanQuery.Builder newQuery = new BooleanQuery.Builder();
+    // ignore disableCoord, which only matters for scores
+    newQuery.setMinimumNumberShouldMatch(getMinimumNumberShouldMatch());
+    for (BooleanClause clause : clauses) {
+      if (clause.getOccur() == Occur.MUST) {
+        newQuery.add(clause.getQuery(), Occur.FILTER);
       } else {
-        ComplexExplanation result = new ComplexExplanation(sumExpl.isMatch(),
-                                                           sum*coordFactor,
-                                                           "product of:");
-        result.addDetail(sumExpl);
-        result.addDetail(new Explanation(coordFactor,
-                                         "coord("+coord+"/"+maxCoord+")"));
-        return result;
+        newQuery.add(clause);
       }
     }
-
-    @Override
-    public Scorer scorer(IndexReader reader, boolean scoreDocsInOrder, boolean topScorer)
-        throws IOException {
-      List<Scorer> required = new ArrayList<Scorer>();
-      List<Scorer> prohibited = new ArrayList<Scorer>();
-      List<Scorer> optional = new ArrayList<Scorer>();
-      Iterator<BooleanClause> cIter = clauses.iterator();
-      for (Weight w  : weights) {
-        BooleanClause c =  cIter.next();
-        Scorer subScorer = w.scorer(reader, true, false);
-        if (subScorer == null) {
-          if (c.isRequired()) {
-            return null;
-          }
-        } else if (c.isRequired()) {
-          required.add(subScorer);
-        } else if (c.isProhibited()) {
-          prohibited.add(subScorer);
-        } else {
-          optional.add(subScorer);
-        }
-      }
-      
-      // Check if we can return a BooleanScorer
-      if (!scoreDocsInOrder && topScorer && required.size() == 0) {
-        return new BooleanScorer(this, disableCoord, similarity, minNrShouldMatch, optional, prohibited, maxCoord);
-      }
-      
-      if (required.size() == 0 && optional.size() == 0) {
-        // no required and optional clauses.
-        return null;
-      } else if (optional.size() < minNrShouldMatch) {
-        // either >1 req scorer, or there are 0 req scorers and at least 1
-        // optional scorer. Therefore if there are not enough optional scorers
-        // no documents will be matched by the query
-        return null;
-      }
-      
-      // Return a BooleanScorer2
-      return new BooleanScorer2(this, disableCoord, similarity, minNrShouldMatch, required, prohibited, optional, maxCoord);
-    }
-    
-    @Override
-    public boolean scoresDocsOutOfOrder() {
-      for (BooleanClause c : clauses) {
-        if (c.isRequired()) {
-          return false; // BS2 (in-order) will be used by scorer()
-        }
-      }
-      
-      // scorer() will return an out-of-order scorer if requested.
-      return true;
-    }
-    
+    return newQuery.build();
   }
 
   @Override
-  public Weight createWeight(Searcher searcher) throws IOException {
-    return new BooleanWeight(searcher, disableCoord);
+  public Weight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
+    BooleanQuery query = this;
+    if (needsScores == false) {
+      query = rewriteNoScoring();
+    }
+    return new BooleanWeight(query, searcher, needsScores, disableCoord);
   }
 
   @Override
   public Query rewrite(IndexReader reader) throws IOException {
-    if (minNrShouldMatch == 0 && clauses.size() == 1) {                    // optimize 1-clause queries
+    if (clauses.size() == 0) {
+      return new MatchNoDocsQuery("empty BooleanQuery");
+    }
+    
+    // optimize 1-clause queries
+    if (clauses.size() == 1) {
       BooleanClause c = clauses.get(0);
-      if (!c.isProhibited()) {			  // just return clause
-
-        Query query = c.getQuery().rewrite(reader);    // rewrite first
-
-        if (getBoost() != 1.0f) {                 // incorporate boost
-          if (query == c.getQuery())                   // if rewrite was no-op
-            query = (Query)query.clone();         // then clone before boost
-          query.setBoost(getBoost() * query.getBoost());
-        }
-
+      Query query = c.getQuery();
+      if (minimumNumberShouldMatch == 1 && c.getOccur() == Occur.SHOULD) {
         return query;
-      }
-    }
-
-    BooleanQuery clone = null;                    // recursively rewrite
-    for (int i = 0 ; i < clauses.size(); i++) {
-      BooleanClause c = clauses.get(i);
-      Query query = c.getQuery().rewrite(reader);
-      if (query != c.getQuery()) {                     // clause rewrote: must clone
-        if (clone == null)
-          clone = (BooleanQuery)this.clone();
-        clone.clauses.set(i, new BooleanClause(query, c.getOccur()));
-      }
-    }
-    if (clone != null) {
-      return clone;                               // some clauses rewrote
-    } else
-      return this;                                // no clauses rewrote
-  }
-
-  // inherit javadoc
-  @Override
-  public void extractTerms(Set<Term> terms) {
-      for (BooleanClause clause : clauses) {
-          clause.getQuery().extractTerms(terms);
+      } else if (minimumNumberShouldMatch == 0) {
+        switch (c.getOccur()) {
+          case SHOULD:
+          case MUST:
+            return query;
+          case FILTER:
+            // no scoring clauses, so return a score of 0
+            return new BoostQuery(new ConstantScoreQuery(query), 0);
+          case MUST_NOT:
+            // no positive clauses
+            return new MatchNoDocsQuery("pure negative BooleanQuery");
+          default:
+            throw new AssertionError();
         }
-  }
+      }
+    }
 
-  @Override @SuppressWarnings("unchecked")
-  public Object clone() {
-    BooleanQuery clone = (BooleanQuery)super.clone();
-    clone.clauses = (ArrayList<BooleanClause>) this.clauses.clone();
-    return clone;
+    // recursively rewrite
+    {
+      BooleanQuery.Builder builder = new BooleanQuery.Builder();
+      builder.setDisableCoord(isCoordDisabled());
+      builder.setMinimumNumberShouldMatch(getMinimumNumberShouldMatch());
+      boolean actuallyRewritten = false;
+      for (BooleanClause clause : this) {
+        Query query = clause.getQuery();
+        Query rewritten = query.rewrite(reader);
+        if (rewritten != query) {
+          actuallyRewritten = true;
+        }
+        builder.add(rewritten, clause.getOccur());
+      }
+      if (actuallyRewritten) {
+        return builder.build();
+      }
+    }
+
+    // remove duplicate FILTER and MUST_NOT clauses
+    {
+      int clauseCount = 0;
+      for (Collection<Query> queries : clauseSets.values()) {
+        clauseCount += queries.size();
+      }
+      if (clauseCount != clauses.size()) {
+        // since clauseSets implicitly deduplicates FILTER and MUST_NOT
+        // clauses, this means there were duplicates
+        BooleanQuery.Builder rewritten = new BooleanQuery.Builder();
+        rewritten.setDisableCoord(disableCoord);
+        rewritten.setMinimumNumberShouldMatch(minimumNumberShouldMatch);
+        for (Map.Entry<Occur, Collection<Query>> entry : clauseSets.entrySet()) {
+          final Occur occur = entry.getKey();
+          for (Query query : entry.getValue()) {
+            rewritten.add(query, occur);
+          }
+        }
+        return rewritten.build();
+      }
+    }
+
+    // remove FILTER clauses that are also MUST clauses
+    // or that match all documents
+    if (clauseSets.get(Occur.MUST).size() > 0 && clauseSets.get(Occur.FILTER).size() > 0) {
+      final Set<Query> filters = new HashSet<Query>(clauseSets.get(Occur.FILTER));
+      boolean modified = filters.remove(new MatchAllDocsQuery());
+      modified |= filters.removeAll(clauseSets.get(Occur.MUST));
+      if (modified) {
+        BooleanQuery.Builder builder = new BooleanQuery.Builder();
+        builder.setDisableCoord(isCoordDisabled());
+        builder.setMinimumNumberShouldMatch(getMinimumNumberShouldMatch());
+        for (BooleanClause clause : clauses) {
+          if (clause.getOccur() != Occur.FILTER) {
+            builder.add(clause);
+          }
+        }
+        for (Query filter : filters) {
+          builder.add(filter, Occur.FILTER);
+        }
+        return builder.build();
+      }
+    }
+
+    // Rewrite queries whose single scoring clause is a MUST clause on a
+    // MatchAllDocsQuery to a ConstantScoreQuery
+    {
+      final Collection<Query> musts = clauseSets.get(Occur.MUST);
+      final Collection<Query> filters = clauseSets.get(Occur.FILTER);
+      if (musts.size() == 1
+          && filters.size() > 0) {
+        Query must = musts.iterator().next();
+        float boost = 1f;
+        if (must instanceof BoostQuery) {
+          BoostQuery boostQuery = (BoostQuery) must;
+          must = boostQuery.getQuery();
+          boost = boostQuery.getBoost();
+        }
+        if (must.getClass() == MatchAllDocsQuery.class) {
+          // our single scoring clause matches everything: rewrite to a CSQ on the filter
+          // ignore SHOULD clause for now
+          BooleanQuery.Builder builder = new BooleanQuery.Builder();
+          for (BooleanClause clause : clauses) {
+            switch (clause.getOccur()) {
+              case FILTER:
+              case MUST_NOT:
+                builder.add(clause);
+                break;
+              default:
+                // ignore
+                break;
+            }
+          }
+          Query rewritten = builder.build();
+          rewritten = new ConstantScoreQuery(rewritten);
+          if (boost != 1f) {
+            rewritten = new BoostQuery(rewritten, boost);
+          }
+
+          // now add back the SHOULD clauses
+          builder = new BooleanQuery.Builder()
+            .setDisableCoord(isCoordDisabled())
+            .setMinimumNumberShouldMatch(getMinimumNumberShouldMatch())
+            .add(rewritten, Occur.MUST);
+          for (Query query : clauseSets.get(Occur.SHOULD)) {
+            builder.add(query, Occur.SHOULD);
+          }
+          rewritten = builder.build();
+          return rewritten;
+        }
+      }
+    }
+
+    return super.rewrite(reader);
   }
 
   /** Prints a user-readable version of this query. */
   @Override
   public String toString(String field) {
     StringBuilder buffer = new StringBuilder();
-    boolean needParens=(getBoost() != 1.0) || (getMinimumNumberShouldMatch()>0) ;
+    boolean needParens = getMinimumNumberShouldMatch() > 0;
     if (needParens) {
       buffer.append("(");
     }
 
-    for (int i = 0 ; i < clauses.size(); i++) {
-      BooleanClause c = clauses.get(i);
-      if (c.isProhibited())
-        buffer.append("-");
-      else if (c.isRequired())
-        buffer.append("+");
+    int i = 0;
+    for (BooleanClause c : this) {
+      buffer.append(c.getOccur().toString());
 
       Query subQuery = c.getQuery();
-      if (subQuery != null) {
-        if (subQuery instanceof BooleanQuery) {	  // wrap sub-bools in parens
-          buffer.append("(");
-          buffer.append(subQuery.toString(field));
-          buffer.append(")");
-        } else {
-          buffer.append(subQuery.toString(field));
-        }
+      if (subQuery instanceof BooleanQuery) {  // wrap sub-bools in parens
+        buffer.append("(");
+        buffer.append(subQuery.toString(field));
+        buffer.append(")");
       } else {
-        buffer.append("null");
+        buffer.append(subQuery.toString(field));
       }
 
-      if (i != clauses.size()-1)
+      if (i != clauses.size() - 1) {
         buffer.append(" ");
+      }
+      i += 1;
     }
 
     if (needParens) {
@@ -445,31 +407,54 @@ public class BooleanQuery extends Query implements Iterable<BooleanClause> {
       buffer.append(getMinimumNumberShouldMatch());
     }
 
-    if (getBoost() != 1.0f)
-    {
-      buffer.append(ToStringUtils.boost(getBoost()));
-    }
-
     return buffer.toString();
   }
 
-  /** Returns true iff <code>o</code> is equal to this. */
+  /**
+   * Compares the specified object with this boolean query for equality.
+   * Returns true if and only if the provided object<ul>
+   * <li>is also a {@link BooleanQuery},</li>
+   * <li>has the same value of {@link #isCoordDisabled()}</li>
+   * <li>has the same value of {@link #getMinimumNumberShouldMatch()}</li>
+   * <li>has the same {@link Occur#SHOULD} clauses, regardless of the order</li>
+   * <li>has the same {@link Occur#MUST} clauses, regardless of the order</li>
+   * <li>has the same set of {@link Occur#FILTER} clauses, regardless of the
+   * order and regardless of duplicates</li>
+   * <li>has the same set of {@link Occur#MUST_NOT} clauses, regardless of
+   * the order and regardless of duplicates</li></ul>
+   */
   @Override
   public boolean equals(Object o) {
-    if (!(o instanceof BooleanQuery))
-      return false;
-    BooleanQuery other = (BooleanQuery)o;
-    return (this.getBoost() == other.getBoost())
-        && this.clauses.equals(other.clauses)
-        && this.getMinimumNumberShouldMatch() == other.getMinimumNumberShouldMatch()
-        && this.disableCoord == other.disableCoord;
+    return sameClassAs(o) &&
+           equalsTo(getClass().cast(o));
   }
 
-  /** Returns a hash code value for this object.*/
+  private boolean equalsTo(BooleanQuery other) {
+    return getMinimumNumberShouldMatch() == other.getMinimumNumberShouldMatch() && 
+           disableCoord == other.disableCoord &&
+           clauseSets.equals(other.clauseSets);
+  }
+
+  private int computeHashCode() {
+    int hashCode = Objects.hash(disableCoord, minimumNumberShouldMatch, clauseSets);
+    if (hashCode == 0) {
+      hashCode = 1;
+    }
+    return hashCode;
+  }
+
+  // cached hash code is ok since boolean queries are immutable
+  private int hashCode;
+
   @Override
   public int hashCode() {
-    return Float.floatToIntBits(getBoost()) ^ clauses.hashCode()
-      + getMinimumNumberShouldMatch() + (disableCoord ? 17:0);
+    // no need for synchronization, in the worst case we would just compute the hash several times.
+    if (hashCode == 0) {
+      hashCode = computeHashCode();
+      assert hashCode != 0;
+    }
+    assert hashCode == computeHashCode();
+    return hashCode;
   }
-  
+
 }

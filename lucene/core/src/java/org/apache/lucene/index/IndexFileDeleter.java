@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,21 +14,31 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
+
+import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.PrintStream;
+import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
 
+import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.NoSuchDirectoryException;
 import org.apache.lucene.util.CollectionUtil;
+import org.apache.lucene.util.Constants;
+import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.InfoStream;
 
 /*
  * This class keeps track of each SegmentInfos instance that
@@ -53,12 +61,12 @@ import org.apache.lucene.util.CollectionUtil;
  * (IndexDeletionPolicy) is consulted on creation (onInit)
  * and once per commit (onCommit), to decide when a commit
  * should be removed.
- * 
+ *
  * It is the business of the IndexDeletionPolicy to choose
  * when to delete commit points.  The actual mechanics of
  * file deletion, retrying, etc, derived from the deletion
  * of commit points is the business of the IndexFileDeleter.
- * 
+ *
  * The current default deletion policy is {@link
  * KeepOnlyLastCommitDeletionPolicy}, which removes all
  * prior commits when a new commit has completed.  This
@@ -69,56 +77,40 @@ import org.apache.lucene.util.CollectionUtil;
  * directly with no retry logic.
  */
 
-final class IndexFileDeleter {
+final class IndexFileDeleter implements Closeable {
 
-  /* Files that we tried to delete but failed (likely
-   * because they are open and we are running on Windows),
-   * so we will retry them again later: */
-  private List<String> deletable;
-
-  /* Reference count for all files in the index.  
+  /* Reference count for all files in the index.
    * Counts how many existing commits reference a file.
    **/
-  private Map<String, RefCount> refCounts = new HashMap<String, RefCount>();
+  private Map<String, RefCount> refCounts = new HashMap<>();
 
   /* Holds all commits (segments_N) currently in the index.
    * This will have just 1 commit if you are using the
    * default delete policy (KeepOnlyLastCommitDeletionPolicy).
    * Other policies may leave commit points live for longer
    * in which case this list would be longer than 1: */
-  private List<CommitPoint> commits = new ArrayList<CommitPoint>();
+  private List<CommitPoint> commits = new ArrayList<>();
 
   /* Holds files we had incref'd from the previous
    * non-commit checkpoint: */
-  private List<Collection<String>> lastFiles = new ArrayList<Collection<String>>();
+  private final List<String> lastFiles = new ArrayList<>();
 
-  /* Commits that the IndexDeletionPolicy have decided to delete: */ 
-  private List<CommitPoint> commitsToDelete = new ArrayList<CommitPoint>();
+  /* Commits that the IndexDeletionPolicy have decided to delete: */
+  private List<CommitPoint> commitsToDelete = new ArrayList<>();
 
-  private PrintStream infoStream;
-  private Directory directory;
-  private IndexDeletionPolicy policy;
+  private final InfoStream infoStream;
+  private final Directory directoryOrig; // for commit point metadata
+  private final Directory directory;
+  private final IndexDeletionPolicy policy;
 
   final boolean startingCommitDeleted;
   private SegmentInfos lastSegmentInfos;
 
   /** Change to true to see details of reference counts when
-   *  infoStream != null */
+   *  infoStream is enabled */
   public static boolean VERBOSE_REF_COUNTS = false;
 
-  // Used only for assert
   private final IndexWriter writer;
-
-  void setInfoStream(PrintStream infoStream) {
-    this.infoStream = infoStream;
-    if (infoStream != null) {
-      message("setInfoStream deletionPolicy=" + policy);
-    }
-  }
-  
-  private void message(String message) {
-    infoStream.println("IFD [" + new Date() + "; " + Thread.currentThread().getName() + "]: " + message);
-  }
 
   // called only from assert
   private boolean locked() {
@@ -130,86 +122,55 @@ final class IndexFileDeleter {
    * the Directory, incref the files they reference, call
    * the policy to let it delete commits.  This will remove
    * any files not referenced by any of the commits.
-   * @throws CorruptIndexException if the index is corrupt
    * @throws IOException if there is a low-level IO error
    */
-  public IndexFileDeleter(Directory directory, IndexDeletionPolicy policy, SegmentInfos segmentInfos, PrintStream infoStream, IndexWriter writer)
-    throws CorruptIndexException, IOException {
-
+  public IndexFileDeleter(String[] files, Directory directoryOrig, Directory directory, IndexDeletionPolicy policy, SegmentInfos segmentInfos,
+                          InfoStream infoStream, IndexWriter writer, boolean initialIndexExists,
+                          boolean isReaderInit) throws IOException {
+    Objects.requireNonNull(writer);
     this.infoStream = infoStream;
     this.writer = writer;
 
     final String currentSegmentsFile = segmentInfos.getSegmentsFileName();
 
-    if (infoStream != null) {
-      message("init: current segments file is \"" + currentSegmentsFile + "\"; deletionPolicy=" + policy);
+    if (infoStream.isEnabled("IFD")) {
+      infoStream.message("IFD", "init: current segments file is \"" + currentSegmentsFile + "\"; deletionPolicy=" + policy);
     }
 
     this.policy = policy;
+    this.directoryOrig = directoryOrig;
     this.directory = directory;
 
     // First pass: walk the files and initialize our ref
     // counts:
-    long currentGen = segmentInfos.getGeneration();
-    IndexFileNameFilter filter = IndexFileNameFilter.getFilter();
-
     CommitPoint currentCommitPoint = null;
-    String[] files = null;
-    try {
-      files = directory.listAll();
-    } catch (NoSuchDirectoryException e) {  
-      // it means the directory is empty, so ignore it.
-      files = new String[0];
-    }
 
-    for (String fileName : files) {
-
-      if (filter.accept(null, fileName) && !fileName.equals(IndexFileNames.SEGMENTS_GEN)) {
-        
-        // Add this file to refCounts with initial count 0:
-        getRefCount(fileName);
-
-        if (fileName.startsWith(IndexFileNames.SEGMENTS)) {
-
-          // This is a commit (segments or segments_N), and
-          // it's valid (<= the max gen).  Load it, then
-          // incref all files it refers to:
-          if (infoStream != null) {
-            message("init: load commit \"" + fileName + "\"");
-          }
-          SegmentInfos sis = new SegmentInfos();
-          try {
-            sis.read(directory, fileName);
-          } catch (FileNotFoundException e) {
-            // LUCENE-948: on NFS (and maybe others), if
-            // you have writers switching back and forth
-            // between machines, it's very likely that the
-            // dir listing will be stale and will claim a
-            // file segments_X exists when in fact it
-            // doesn't.  So, we catch this and handle it
-            // as if the file does not exist
-            if (infoStream != null) {
-              message("init: hit FileNotFoundException when loading commit \"" + fileName + "\"; skipping this commit point");
+    if (currentSegmentsFile != null) {
+      Matcher m = IndexFileNames.CODEC_FILE_PATTERN.matcher("");
+      for (String fileName : files) {
+        m.reset(fileName);
+        if (!fileName.endsWith("write.lock") && (m.matches() || fileName.startsWith(IndexFileNames.SEGMENTS) || fileName.startsWith(IndexFileNames.PENDING_SEGMENTS))) {
+          
+          // Add this file to refCounts with initial count 0:
+          getRefCount(fileName);
+          
+          if (fileName.startsWith(IndexFileNames.SEGMENTS) && !fileName.equals(IndexFileNames.OLD_SEGMENTS_GEN)) {
+            
+            // This is a commit (segments or segments_N), and
+            // it's valid (<= the max gen).  Load it, then
+            // incref all files it refers to:
+            if (infoStream.isEnabled("IFD")) {
+              infoStream.message("IFD", "init: load commit \"" + fileName + "\"");
             }
-            sis = null;
-          } catch (IOException e) {
-            if (SegmentInfos.generationFromSegmentsFileName(fileName) <= currentGen && directory.fileLength(fileName) > 0) {
-              throw e;
-            } else {
-              // Most likely we are opening an index that
-              // has an aborted "future" commit, so suppress
-              // exc in this case
-              sis = null;
-            }
-          }
-          if (sis != null) {
-            CommitPoint commitPoint = new CommitPoint(commitsToDelete, directory, sis);
+            SegmentInfos sis = SegmentInfos.readCommit(directoryOrig, fileName);
+
+            final CommitPoint commitPoint = new CommitPoint(commitsToDelete, directoryOrig, sis);
             if (sis.getGeneration() == segmentInfos.getGeneration()) {
               currentCommitPoint = commitPoint;
             }
             commits.add(commitPoint);
             incRef(sis, true);
-
+              
             if (lastSegmentInfos == null || sis.getGeneration() > lastSegmentInfos.getGeneration()) {
               lastSegmentInfos = sis;
             }
@@ -218,7 +179,7 @@ final class IndexFileDeleter {
       }
     }
 
-    if (currentCommitPoint == null && currentSegmentsFile != null) {
+    if (currentCommitPoint == null && currentSegmentsFile != null && initialIndexExists) {
       // We did not in fact see the segments_N file
       // corresponding to the segmentInfos that was passed
       // in.  Yet, it must exist, because our caller holds
@@ -226,50 +187,173 @@ final class IndexFileDeleter {
       // listing was stale (eg when index accessed via NFS
       // client with stale directory listing cache).  So we
       // try now to explicitly open this commit point:
-      SegmentInfos sis = new SegmentInfos();
+      SegmentInfos sis = null;
       try {
-        sis.read(directory, currentSegmentsFile);
+        sis = SegmentInfos.readCommit(directoryOrig, currentSegmentsFile);
       } catch (IOException e) {
-        throw new CorruptIndexException("failed to locate current segments_N file");
+        throw new CorruptIndexException("unable to read current segments_N file", currentSegmentsFile, e);
       }
-      if (infoStream != null) {
-        message("forced open of current segments file " + segmentInfos.getSegmentsFileName());
+      if (infoStream.isEnabled("IFD")) {
+        infoStream.message("IFD", "forced open of current segments file " + segmentInfos.getSegmentsFileName());
       }
-      currentCommitPoint = new CommitPoint(commitsToDelete, directory, sis);
+      currentCommitPoint = new CommitPoint(commitsToDelete, directoryOrig, sis);
       commits.add(currentCommitPoint);
       incRef(sis, true);
     }
 
+    if (isReaderInit) {
+      // Incoming SegmentInfos may have NRT changes not yet visible in the latest commit, so we have to protect its files from deletion too:
+      checkpoint(segmentInfos, false);
+    }
+
     // We keep commits list in sorted order (oldest to newest):
-    CollectionUtil.mergeSort(commits);
+    CollectionUtil.timSort(commits);
+
+    // refCounts only includes "normal" filenames (does not include write.lock)
+    inflateGens(segmentInfos, refCounts.keySet(), infoStream);
 
     // Now delete anything with ref count at 0.  These are
     // presumably abandoned files eg due to crash of
     // IndexWriter.
-    for(Map.Entry<String, RefCount> entry : refCounts.entrySet() ) {  
+    Set<String> toDelete = new HashSet<>();
+    for(Map.Entry<String, RefCount> entry : refCounts.entrySet() ) {
       RefCount rc = entry.getValue();
       final String fileName = entry.getKey();
       if (0 == rc.count) {
-        if (infoStream != null) {
-          message("init: removing unreferenced file \"" + fileName + "\"");
+        // A segments_N file should never have ref count 0 on init:
+        if (fileName.startsWith(IndexFileNames.SEGMENTS)) {
+          throw new IllegalStateException("file \"" + fileName + "\" has refCount=0, which should never happen on init");
         }
-        deleteFile(fileName);
+        if (infoStream.isEnabled("IFD")) {
+          infoStream.message("IFD", "init: removing unreferenced file \"" + fileName + "\"");
+        }
+        toDelete.add(fileName);
       }
     }
 
+    deleteFiles(toDelete);
+
     // Finally, give policy a chance to remove things on
     // startup:
-    if (currentSegmentsFile != null) {
-      policy.onInit(commits);
-    }
+    policy.onInit(commits);
 
     // Always protect the incoming segmentInfos since
     // sometime it may not be the most recent commit
     checkpoint(segmentInfos, false);
-    
-    startingCommitDeleted = currentCommitPoint == null ? false : currentCommitPoint.isDeleted();
+
+    if (currentCommitPoint == null) {
+      startingCommitDeleted = false;
+    } else {
+      startingCommitDeleted = currentCommitPoint.isDeleted();
+    }
 
     deleteCommits();
+  }
+
+  /** Set all gens beyond what we currently see in the directory, to avoid double-write in cases where the previous IndexWriter did not
+   *  gracefully close/rollback (e.g. os/machine crashed or lost power). */
+  static void inflateGens(SegmentInfos infos, Collection<String> files, InfoStream infoStream) {
+
+    long maxSegmentGen = Long.MIN_VALUE;
+    int maxSegmentName = Integer.MIN_VALUE;
+
+    // Confusingly, this is the union of liveDocs, field infos, doc values
+    // (and maybe others, in the future) gens.  This is somewhat messy,
+    // since it means DV updates will suddenly write to the next gen after
+    // live docs' gen, for example, but we don't have the APIs to ask the
+    // codec which file is which:
+    Map<String,Long> maxPerSegmentGen = new HashMap<>();
+
+    for(String fileName : files) {
+      if (fileName.equals(IndexFileNames.OLD_SEGMENTS_GEN) || fileName.equals(IndexWriter.WRITE_LOCK_NAME)) {
+        // do nothing
+      } else if (fileName.startsWith(IndexFileNames.SEGMENTS)) {
+        try {
+          maxSegmentGen = Math.max(SegmentInfos.generationFromSegmentsFileName(fileName), maxSegmentGen);
+        } catch (NumberFormatException ignore) {
+          // trash file: we have to handle this since we allow anything starting with 'segments' here
+        }
+      } else if (fileName.startsWith(IndexFileNames.PENDING_SEGMENTS)) {
+        try {
+          maxSegmentGen = Math.max(SegmentInfos.generationFromSegmentsFileName(fileName.substring(8)), maxSegmentGen);
+        } catch (NumberFormatException ignore) {
+          // trash file: we have to handle this since we allow anything starting with 'pending_segments' here
+        }
+      } else {
+        String segmentName = IndexFileNames.parseSegmentName(fileName);
+        assert segmentName.startsWith("_"): "wtf? file=" + fileName;
+
+        if (fileName.toLowerCase(Locale.ROOT).endsWith(".tmp")) {
+          // A temp file: don't try to look at its gen
+          continue;
+        }
+
+        maxSegmentName = Math.max(maxSegmentName, Integer.parseInt(segmentName.substring(1), Character.MAX_RADIX));
+
+        Long curGen = maxPerSegmentGen.get(segmentName);
+        if (curGen == null) {
+          curGen = 0L;
+        }
+
+        try {
+          curGen = Math.max(curGen, IndexFileNames.parseGeneration(fileName));
+        } catch (NumberFormatException ignore) {
+          // trash file: we have to handle this since codec regex is only so good
+        }
+        maxPerSegmentGen.put(segmentName, curGen);
+      }
+    }
+
+    // Generation is advanced before write:
+    infos.setNextWriteGeneration(Math.max(infos.getGeneration(), maxSegmentGen));
+    if (infos.counter < 1+maxSegmentName) {
+      if (infoStream.isEnabled("IFD")) {
+        infoStream.message("IFD", "init: inflate infos.counter to " + (1+maxSegmentName) + " vs current=" + infos.counter);
+      }
+      infos.counter = 1+maxSegmentName;
+    }
+
+    for(SegmentCommitInfo info : infos) {
+      Long gen = maxPerSegmentGen.get(info.info.name);
+      assert gen != null;
+      long genLong = gen;
+      if (info.getNextWriteDelGen() < genLong+1) {
+        if (infoStream.isEnabled("IFD")) {
+          infoStream.message("IFD", "init: seg=" + info.info.name + " set nextWriteDelGen=" + (genLong+1) + " vs current=" + info.getNextWriteDelGen());
+        }
+        info.setNextWriteDelGen(genLong+1);
+      }
+      if (info.getNextWriteFieldInfosGen() < genLong+1) {
+        if (infoStream.isEnabled("IFD")) {
+          infoStream.message("IFD", "init: seg=" + info.info.name + " set nextWriteFieldInfosGen=" + (genLong+1) + " vs current=" + info.getNextWriteFieldInfosGen());
+        }
+        info.setNextWriteFieldInfosGen(genLong+1);
+      }
+      if (info.getNextWriteDocValuesGen() < genLong+1) {
+        if (infoStream.isEnabled("IFD")) {
+          infoStream.message("IFD", "init: seg=" + info.info.name + " set nextWriteDocValuesGen=" + (genLong+1) + " vs current=" + info.getNextWriteDocValuesGen());
+        }
+        info.setNextWriteDocValuesGen(genLong+1);
+      }
+    }
+  }
+
+  void ensureOpen() throws AlreadyClosedException {
+    writer.ensureOpen(false);
+    // since we allow 'closing' state, we must still check this, we could be closing because we hit e.g. OOM
+    if (writer.tragedy != null) {
+      throw new AlreadyClosedException("refusing to delete any files: this IndexWriter hit an unrecoverable exception", writer.tragedy);
+    }
+  }
+
+  // for testing
+  boolean isClosed() {
+    try {
+      ensureOpen();
+      return false;
+    } catch (AlreadyClosedException ace) {
+      return true;
+    }
   }
 
   public SegmentInfos getLastSegmentInfos() {
@@ -280,7 +364,7 @@ final class IndexFileDeleter {
    * Remove the CommitPoints in the commitsToDelete List by
    * DecRef'ing all files from each SegmentInfos.
    */
-  private void deleteCommits() throws IOException {
+  private void deleteCommits() {
 
     int size = commitsToDelete.size();
 
@@ -288,16 +372,24 @@ final class IndexFileDeleter {
 
       // First decref all files that had been referred to by
       // the now-deleted commits:
+      Throwable firstThrowable = null;
       for(int i=0;i<size;i++) {
         CommitPoint commit = commitsToDelete.get(i);
-        if (infoStream != null) {
-          message("deleteCommits: now decRef commit \"" + commit.getSegmentsFileName() + "\"");
+        if (infoStream.isEnabled("IFD")) {
+          infoStream.message("IFD", "deleteCommits: now decRef commit \"" + commit.getSegmentsFileName() + "\"");
         }
-        for (final String file : commit.files) {
-          decRef(file);
+        try {
+          decRef(commit.files);
+        } catch (Throwable t) {
+          if (firstThrowable == null) {
+            firstThrowable = t;
+          }
         }
       }
       commitsToDelete.clear();
+
+      // NOTE: does nothing if firstThrowable is null
+      IOUtils.reThrowUnchecked(firstThrowable);
 
       // Now compact commits to remove deleted ones (preserving the sort):
       size = commits.size();
@@ -329,57 +421,47 @@ final class IndexFileDeleter {
    * is non-null, we will only delete files corresponding to
    * that segment.
    */
-  public void refresh(String segmentName) throws IOException {
+  void refresh() throws IOException {
     assert locked();
+    Set<String> toDelete = new HashSet<>();
 
     String[] files = directory.listAll();
-    IndexFileNameFilter filter = IndexFileNameFilter.getFilter();
-    String segmentPrefix1;
-    String segmentPrefix2;
-    if (segmentName != null) {
-      segmentPrefix1 = segmentName + ".";
-      segmentPrefix2 = segmentName + "_";
-    } else {
-      segmentPrefix1 = null;
-      segmentPrefix2 = null;
-    }
-    
+
+    Matcher m = IndexFileNames.CODEC_FILE_PATTERN.matcher("");
+
     for(int i=0;i<files.length;i++) {
       String fileName = files[i];
-      if (filter.accept(null, fileName) &&
-          (segmentName == null || fileName.startsWith(segmentPrefix1) || fileName.startsWith(segmentPrefix2)) &&
+      m.reset(fileName);
+      if (!fileName.endsWith("write.lock") &&
           !refCounts.containsKey(fileName) &&
-          !fileName.equals(IndexFileNames.SEGMENTS_GEN)) {
+          (m.matches() || fileName.startsWith(IndexFileNames.SEGMENTS) 
+              // we only try to clear out pending_segments_N during rollback(), because we don't ref-count it
+              // TODO: this is sneaky, should we do this, or change TestIWExceptions? rollback closes anyway, and 
+              // any leftover file will be deleted/retried on next IW bootup anyway...
+              || fileName.startsWith(IndexFileNames.PENDING_SEGMENTS))) {
         // Unreferenced file, so remove it
-        if (infoStream != null) {
-          message("refresh [prefix=" + segmentName + "]: removing newly created unreferenced file \"" + fileName + "\"");
+        if (infoStream.isEnabled("IFD")) {
+          infoStream.message("IFD", "refresh: removing newly created unreferenced file \"" + fileName + "\"");
         }
-        deleteFile(fileName);
+        toDelete.add(fileName);
       }
     }
+
+    deleteFiles(toDelete);
   }
 
-  public void refresh() throws IOException {
-    // Set to null so that we regenerate the list of pending
-    // files; else we can accumulate same file more than
-    // once
-    assert locked();
-    deletable = null;
-    refresh(null);
-  }
-
+  @Override
   public void close() throws IOException {
     // DecRef old files from the last checkpoint, if any:
     assert locked();
-    int size = lastFiles.size();
-    if (size > 0) {
-      for(int i=0;i<size;i++) {
-        decRef(lastFiles.get(i));
-      }
-      lastFiles.clear();
-    }
 
-    deletePendingFiles();
+    if (!lastFiles.isEmpty()) {
+      try {
+        decRef(lastFiles);
+      } finally {
+        lastFiles.clear();
+      }
+    }
   }
 
   /**
@@ -393,8 +475,8 @@ final class IndexFileDeleter {
    */
   void revisitPolicy() throws IOException {
     assert locked();
-    if (infoStream != null) {
-      message("now revisitPolicy");
+    if (infoStream.isEnabled("IFD")) {
+      infoStream.message("IFD", "now revisitPolicy");
     }
 
     if (commits.size() > 0) {
@@ -402,26 +484,11 @@ final class IndexFileDeleter {
       deleteCommits();
     }
   }
-  
-  public void deletePendingFiles() throws IOException {
-    assert locked();
-    if (deletable != null) {
-      List<String> oldDeletable = deletable;
-      deletable = null;
-      int size = oldDeletable.size();
-      for(int i=0;i<size;i++) {
-        if (infoStream != null) {
-          message("delete pending file " + oldDeletable.get(i));
-        }
-        deleteFile(oldDeletable.get(i));
-      }
-    }
-  }
 
   /**
    * For definition of "check point" see IndexWriter comments:
    * "Clarification: Check Points (and commits)".
-   * 
+   *
    * Writer calls this when it has made a "consistent
    * change" to the index, meaning new files are written to
    * the index and the in-memory SegmentInfos have been
@@ -441,20 +508,19 @@ final class IndexFileDeleter {
   public void checkpoint(SegmentInfos segmentInfos, boolean isCommit) throws IOException {
     assert locked();
 
-    if (infoStream != null) {
-      message("now checkpoint \"" + segmentInfos.getSegmentsFileName() + "\" [" + segmentInfos.size() + " segments " + "; isCommit = " + isCommit + "]");
+    assert Thread.holdsLock(writer);
+    long t0 = 0;
+    if (infoStream.isEnabled("IFD")) {
+      t0 = System.nanoTime();
+      infoStream.message("IFD", "now checkpoint \"" + writer.segString(writer.toLiveInfos(segmentInfos)) + "\" [" + segmentInfos.size() + " segments " + "; isCommit = " + isCommit + "]");
     }
-
-    // Try again now to delete any previously un-deletable
-    // files (because they were in use, on Windows):
-    deletePendingFiles();
 
     // Incref the files:
     incRef(segmentInfos, isCommit);
 
     if (isCommit) {
       // Append to our commits list:
-      commits.add(new CommitPoint(commitsToDelete, directory, segmentInfos));
+      commits.add(new CommitPoint(commitsToDelete, directoryOrig, segmentInfos));
 
       // Tell policy so it can remove commits:
       policy.onCommit(commits);
@@ -463,13 +529,19 @@ final class IndexFileDeleter {
       deleteCommits();
     } else {
       // DecRef old files from the last checkpoint, if any:
-      for (Collection<String> lastFile : lastFiles) {
-        decRef(lastFile);
+      try {
+        decRef(lastFiles);
+      } finally {
+        lastFiles.clear();
       }
-      lastFiles.clear();
 
       // Save files so we can decr on next checkpoint/commit:
-      lastFiles.add(segmentInfos.files(directory, false));
+      lastFiles.addAll(segmentInfos.files(false));
+    }
+
+    if (infoStream.isEnabled("IFD")) {
+      long t1 = System.nanoTime();
+      infoStream.message("IFD", ((t1-t0)/1000000) + " msec to checkpoint");
     }
   }
 
@@ -477,53 +549,102 @@ final class IndexFileDeleter {
     assert locked();
     // If this is a commit point, also incRef the
     // segments_N file:
-    for( final String fileName: segmentInfos.files(directory, isCommit) ) {
+    for(final String fileName: segmentInfos.files(isCommit)) {
       incRef(fileName);
     }
   }
 
-  void incRef(Collection<String> files) throws IOException {
+  void incRef(Collection<String> files) {
     assert locked();
     for(final String file : files) {
       incRef(file);
     }
   }
 
-  void incRef(String fileName) throws IOException {
+  void incRef(String fileName) {
     assert locked();
     RefCount rc = getRefCount(fileName);
-    if (infoStream != null && VERBOSE_REF_COUNTS) {
-      message("  IncRef \"" + fileName + "\": pre-incr count is " + rc.count);
+    if (infoStream.isEnabled("IFD")) {
+      if (VERBOSE_REF_COUNTS) {
+        infoStream.message("IFD", "  IncRef \"" + fileName + "\": pre-incr count is " + rc.count);
+      }
     }
     rc.IncRef();
   }
 
+  /** Decrefs all provided files, even on exception; throws first exception hit, if any. */
   void decRef(Collection<String> files) throws IOException {
     assert locked();
+    Set<String> toDelete = new HashSet<>();
+    Throwable firstThrowable = null;
     for(final String file : files) {
-      decRef(file);
+      try {
+        if (decRef(file)) {
+          toDelete.add(file);
+        }
+      } catch (Throwable t) {
+        if (firstThrowable == null) {
+          // Save first exception and throw it in the end, but be sure to finish decRef all files
+          firstThrowable = t;
+        }
+      }
+    }
+
+    try {
+      deleteFiles(toDelete);
+    } catch (Throwable t) {
+      if (firstThrowable == null) {
+        // Save first exception and throw it in the end, but be sure to finish decRef all files
+        firstThrowable = t;
+      }
+    }
+
+    // NOTE: does nothing if firstThrowable is null
+    IOUtils.reThrow(firstThrowable);
+  }
+
+  /** Decrefs all provided files, ignoring any exceptions hit; call this if
+   *  you are already handling an exception. */
+  void decRefWhileHandlingException(Collection<String> files) {
+    assert locked();
+    Set<String> toDelete = new HashSet<>();
+    for(final String file : files) {
+      try {
+        if (decRef(file)) {
+          toDelete.add(file);
+        }
+      } catch (Throwable t) {
+      }
+    }
+
+    try {
+      deleteFiles(toDelete);
+    } catch (Throwable t) {
     }
   }
 
-  void decRef(String fileName) throws IOException {
+  /** Returns true if the file should now be deleted. */
+  private boolean decRef(String fileName) {
     assert locked();
     RefCount rc = getRefCount(fileName);
-    if (infoStream != null && VERBOSE_REF_COUNTS) {
-      message("  DecRef \"" + fileName + "\": pre-decr count is " + rc.count);
+    if (infoStream.isEnabled("IFD")) {
+      if (VERBOSE_REF_COUNTS) {
+        infoStream.message("IFD", "  DecRef \"" + fileName + "\": pre-decr count is " + rc.count);
+      }
     }
-    if (0 == rc.DecRef()) {
+    if (rc.DecRef() == 0) {
       // This file is no longer referenced by any past
       // commit points nor by the in-memory SegmentInfos:
-      deleteFile(fileName);
       refCounts.remove(fileName);
+      return true;
+    } else {
+      return false;
     }
   }
 
   void decRef(SegmentInfos segmentInfos) throws IOException {
     assert locked();
-    for (final String file : segmentInfos.files(directory, false)) {
-      decRef(file);
-    }
+    decRef(segmentInfos.files(false));
   }
 
   public boolean exists(String fileName) {
@@ -547,52 +668,65 @@ final class IndexFileDeleter {
     return rc;
   }
 
-  void deleteFiles(List<String> files) throws IOException {
-    assert locked();
-    for(final String file: files) {
-      deleteFile(file);
-    }
-  }
-
   /** Deletes the specified files, but only if they are new
    *  (have not yet been incref'd). */
   void deleteNewFiles(Collection<String> files) throws IOException {
     assert locked();
+    Set<String> toDelete = new HashSet<>();
     for (final String fileName: files) {
-      if (!refCounts.containsKey(fileName)) {
-        if (infoStream != null) {
-          message("delete new file \"" + fileName + "\"");
+      // NOTE: it's very unusual yet possible for the
+      // refCount to be present and 0: it can happen if you
+      // open IW on a crashed index, and it removes a bunch
+      // of unref'd files, and then you add new docs / do
+      // merging, and it reuses that segment name.
+      // TestCrash.testCrashAfterReopen can hit this:
+      if (!refCounts.containsKey(fileName) || refCounts.get(fileName).count == 0) {
+        if (infoStream.isEnabled("IFD")) {
+          infoStream.message("IFD", "will delete new file \"" + fileName + "\"");
         }
-        deleteFile(fileName);
+        toDelete.add(fileName);
       }
+    }
+
+    deleteFiles(toDelete);
+  }
+
+  private void deleteFiles(Collection<String> names) throws IOException {
+    assert locked();
+    ensureOpen();
+
+    if (infoStream.isEnabled("IFD")) {
+      infoStream.message("IFD", "delete " + names + "");
+    }
+
+    // We make two passes, first deleting any segments_N files, second deleting the rest.  We do this so that if we throw exc or JVM
+    // crashes during deletions, even when not on Windows, we don't leave the index in an "apparently corrupt" state:
+    for(String name : names) {
+      if (name.startsWith(IndexFileNames.SEGMENTS) == false) {
+        continue;
+      }
+      deleteFile(name);
+    }
+
+    for(String name : names) {
+      if (name.startsWith(IndexFileNames.SEGMENTS) == true) {
+        continue;
+      }
+      deleteFile(name);
     }
   }
 
-  void deleteFile(String fileName)
-       throws IOException {
-    assert locked();
+  private void deleteFile(String fileName) throws IOException {
     try {
-      if (infoStream != null) {
-        message("delete \"" + fileName + "\"");
-      }
       directory.deleteFile(fileName);
-    } catch (IOException e) {			  // if delete fails
-      if (directory.fileExists(fileName)) {
-
-        // Some operating systems (e.g. Windows) don't
-        // permit a file to be deleted while it is opened
-        // for read (e.g. by another process or thread). So
-        // we assume that when a delete fails it is because
-        // the file is open in another process, and queue
-        // the file for subsequent deletion.
-
-        if (infoStream != null) {
-          message("unable to remove file \"" + fileName + "\": " + e.toString() + "; Will re-try later.");
-        }
-        if (deletable == null) {
-          deletable = new ArrayList<String>();
-        }
-        deletable.add(fileName);                  // add to deletable
+    } catch (NoSuchFileException | FileNotFoundException e) {
+      if (Constants.WINDOWS) {
+        // TODO: can we remove this OS-specific hacky logic?  If windows deleteFile is buggy, we should instead contain this workaround in
+        // a WindowsFSDirectory ...
+        // LUCENE-6684: we suppress this assert for Windows, since a file could be in a confusing "pending delete" state, where we already
+        // deleted it once, yet it still shows up in directory listings, and if you try to delete it again you'll hit NSFE/FNFE:
+      } else {
+        throw e;
       }
     }
   }
@@ -638,21 +772,19 @@ final class IndexFileDeleter {
     Collection<String> files;
     String segmentsFileName;
     boolean deleted;
-    Directory directory;
+    Directory directoryOrig;
     Collection<CommitPoint> commitsToDelete;
-    long version;
     long generation;
     final Map<String,String> userData;
     private final int segmentCount;
 
-    public CommitPoint(Collection<CommitPoint> commitsToDelete, Directory directory, SegmentInfos segmentInfos) throws IOException {
-      this.directory = directory;
+    public CommitPoint(Collection<CommitPoint> commitsToDelete, Directory directoryOrig, SegmentInfos segmentInfos) throws IOException {
+      this.directoryOrig = directoryOrig;
       this.commitsToDelete = commitsToDelete;
       userData = segmentInfos.getUserData();
       segmentsFileName = segmentInfos.getSegmentsFileName();
-      version = segmentInfos.getVersion();
       generation = segmentInfos.getGeneration();
-      files = Collections.unmodifiableCollection(segmentInfos.files(directory, true));
+      files = Collections.unmodifiableCollection(segmentInfos.files(true));
       segmentCount = segmentInfos.size();
     }
 
@@ -672,18 +804,13 @@ final class IndexFileDeleter {
     }
 
     @Override
-    public Collection<String> getFileNames() throws IOException {
+    public Collection<String> getFileNames() {
       return files;
     }
 
     @Override
     public Directory getDirectory() {
-      return directory;
-    }
-
-    @Override
-    public long getVersion() {
-      return version;
+      return directoryOrig;
     }
 
     @Override

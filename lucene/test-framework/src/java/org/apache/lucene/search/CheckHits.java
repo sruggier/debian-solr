@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,16 +14,18 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
 import java.io.IOException;
+import java.util.Locale;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.Random;
 
 import junit.framework.Assert;
 
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
 
 /**
@@ -36,9 +36,17 @@ public class CheckHits {
   /**
    * Some explains methods calculate their values though a slightly
    * different  order of operations from the actual scoring method ...
-   * this allows for a small amount of variation
+   * this allows for a small amount of relative variation
    */
-  public static float EXPLAIN_SCORE_TOLERANCE_DELTA = 0.0002f;
+  public static float EXPLAIN_SCORE_TOLERANCE_DELTA = 0.001f;
+  
+  /**
+   * In general we use a relative epsilon, but some tests do crazy things
+   * like boost documents with 0, creating tiny tiny scores where the
+   * relative difference is large but the absolute difference is tiny.
+   * we ensure the the epsilon is always at least this big.
+   */
+  public static float EXPLAIN_SCORE_TOLERANCE_MINIMUM = 1e-6f;
     
   /**
    * Tests that all documents up to maxDoc which are *not* in the
@@ -46,16 +54,16 @@ public class CheckHits {
    * the document does not match
    */
   public static void checkNoMatchExplanations(Query q, String defaultFieldName,
-                                              Searcher searcher, int[] results)
+                                              IndexSearcher searcher, int[] results)
     throws IOException {
 
     String d = q.toString(defaultFieldName);
-    Set<Integer> ignore = new TreeSet<Integer>();
+    Set<Integer> ignore = new TreeSet<>();
     for (int i = 0; i < results.length; i++) {
       ignore.add(Integer.valueOf(results[i]));
     }
     
-    int maxDoc = searcher.maxDoc();
+    int maxDoc = searcher.getIndexReader().maxDoc();
     for (int doc = 0; doc < maxDoc; doc++) {
       if (ignore.contains(Integer.valueOf(doc))) continue;
 
@@ -84,16 +92,16 @@ public class CheckHits {
    * @see #checkHits
    */
   public static void checkHitCollector(Random random, Query query, String defaultFieldName,
-                                       Searcher searcher, int[] results)
+                                       IndexSearcher searcher, int[] results)
     throws IOException {
 
     QueryUtils.check(random,query,searcher);
     
-    Set<Integer> correct = new TreeSet<Integer>();
+    Set<Integer> correct = new TreeSet<>();
     for (int i = 0; i < results.length; i++) {
       correct.add(Integer.valueOf(results[i]));
     }
-    final Set<Integer> actual = new TreeSet<Integer>();
+    final Set<Integer> actual = new TreeSet<>();
     final Collector c = new SetCollector(actual);
 
     searcher.search(query, c);
@@ -102,18 +110,9 @@ public class CheckHits {
 
     for (int i = -1; i < 2; i++) {
       actual.clear();
-      QueryUtils.wrapSearcher(random, searcher, i).search(query, c);
-      Assert.assertEquals("Wrap Searcher " + i + ": " +
-                          query.toString(defaultFieldName),
-                          correct, actual);
-    }
-                        
-    if ( ! ( searcher instanceof IndexSearcher ) ) return;
-
-    for (int i = -1; i < 2; i++) {
-      actual.clear();
-      QueryUtils.wrapUnderlyingReader
-        (random, (IndexSearcher)searcher, i).search(query, c);
+      IndexSearcher s = QueryUtils.wrapUnderlyingReader
+        (random, searcher, i);
+      s.search(query, c);
       Assert.assertEquals("Wrap Reader " + i + ": " +
                           query.toString(defaultFieldName),
                           correct, actual);
@@ -123,7 +122,7 @@ public class CheckHits {
   /**
    * Just collects document ids into a set.
    */
-  public static class SetCollector extends Collector {
+  public static class SetCollector extends SimpleCollector {
     final Set<Integer> bag;
     public SetCollector(Set<Integer> bag) {
       this.bag = bag;
@@ -136,12 +135,13 @@ public class CheckHits {
       bag.add(Integer.valueOf(doc + base));
     }
     @Override
-    public void setNextReader(IndexReader reader, int docBase) {
-      base = docBase;
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
+      base = context.docBase;
     }
+    
     @Override
-    public boolean acceptsDocsOutOfOrder() {
-      return true;
+    public boolean needsScores() {
+      return false;
     }
   }
 
@@ -162,18 +162,18 @@ public class CheckHits {
         Random random,
         Query query,
         String defaultFieldName,
-        Searcher searcher,
+        IndexSearcher searcher,
         int[] results)
           throws IOException {
 
     ScoreDoc[] hits = searcher.search(query, 1000).scoreDocs;
 
-    Set<Integer> correct = new TreeSet<Integer>();
+    Set<Integer> correct = new TreeSet<>();
     for (int i = 0; i < results.length; i++) {
       correct.add(Integer.valueOf(results[i]));
     }
 
-    Set<Integer> actual = new TreeSet<Integer>();
+    Set<Integer> actual = new TreeSet<>();
     for (int i = 0; i < hits.length; i++) {
       actual.add(Integer.valueOf(hits[i].doc));
     }
@@ -184,8 +184,7 @@ public class CheckHits {
   }
 
   /** Tests that a Hits has an expected order of documents */
-  public static void checkDocIds(String mes, int[] results, ScoreDoc[] hits)
-  throws IOException {
+  public static void checkDocIds(String mes, int[] results, ScoreDoc[] hits) {
     Assert.assertEquals(mes + " nr of hits", hits.length, results.length);
     for (int i = 0; i < results.length; i++) {
       Assert.assertEquals(mes + " doc nrs for hit " + i, results[i], hits[i].doc);
@@ -199,15 +198,14 @@ public class CheckHits {
         Query query,
         ScoreDoc[] hits1,
         ScoreDoc[] hits2,
-        int[] results)
-          throws IOException {
+        int[] results) {
 
     checkDocIds("hits1", results, hits1);
     checkDocIds("hits2", results, hits2);
     checkEqual(query, hits1, hits2);
   }
 
-  public static void checkEqual(Query query, ScoreDoc[] hits1, ScoreDoc[] hits2) throws IOException {
+  public static void checkEqual(Query query, ScoreDoc[] hits1, ScoreDoc[] hits2) {
      final float scoreTolerance = 1.0e-6f;
      if (hits1.length != hits2.length) {
        Assert.fail("Unequal lengths: hits1="+hits1.length+",hits2="+hits2.length);
@@ -230,7 +228,7 @@ public class CheckHits {
     }
   }
 
-  public static String hits2str(ScoreDoc[] hits1, ScoreDoc[] hits2, int start, int end) throws IOException {
+  public static String hits2str(ScoreDoc[] hits1, ScoreDoc[] hits2, int start, int end) {
     StringBuilder sb = new StringBuilder();
     int len1=hits1==null ? 0 : hits1.length;
     int len2=hits2==null ? 0 : hits2.length;
@@ -280,7 +278,7 @@ public class CheckHits {
    * query corresponds with the true score. 
    *
    * @see ExplanationAsserter
-   * @see #checkExplanations(Query, String, Searcher, boolean) for a
+   * @see #checkExplanations(Query, String, IndexSearcher, boolean) for a
    * "deep" testing of the explanation details.
    *   
    * @param query the query to test
@@ -289,7 +287,7 @@ public class CheckHits {
    */
   public static void checkExplanations(Query query,
                                        String defaultFieldName,
-                                       Searcher searcher) throws IOException {
+                                       IndexSearcher searcher) throws IOException {
     checkExplanations(query, defaultFieldName, searcher, false);
   }
 
@@ -306,13 +304,19 @@ public class CheckHits {
    */
   public static void checkExplanations(Query query,
                                        String defaultFieldName,
-                                       Searcher searcher, 
+                                       IndexSearcher searcher, 
                                        boolean deep) throws IOException {
 
     searcher.search(query,
                     new ExplanationAsserter
                     (query, defaultFieldName, searcher, deep));
 
+  }
+
+  /** returns a reasonable epsilon for comparing two floats,
+   *  where minor differences are acceptable such as score vs. explain */
+  public static float explainToleranceDelta(float f1, float f2) {
+    return Math.max(EXPLAIN_SCORE_TOLERANCE_MINIMUM, Math.max(Math.abs(f1), Math.abs(f2)) * EXPLAIN_SCORE_TOLERANCE_DELTA);
   }
 
   /** 
@@ -333,22 +337,34 @@ public class CheckHits {
     float value = expl.getValue();
     Assert.assertEquals(q+": score(doc="+doc+")="+score+
         " != explanationScore="+value+" Explanation: "+expl,
-        score,value,EXPLAIN_SCORE_TOLERANCE_DELTA);
+        score,value,explainToleranceDelta(score, value));
 
     if (!deep) return;
 
     Explanation detail[] = expl.getDetails();
-    if (detail!=null) {
+    // TODO: can we improve this entire method? it's really geared to work only with TF/IDF
+    if (expl.getDescription().endsWith("computed from:")) {
+      return; // something more complicated.
+    }
+    String descr = expl.getDescription().toLowerCase(Locale.ROOT);
+    if (descr.startsWith("score based on ") && descr.contains("child docs in range")) {
+      Assert.assertTrue("Child doc explanations are missing", detail.length > 0);
+    }
+    if (detail.length > 0) {
       if (detail.length==1) {
-        // simple containment, no matter what the description says, 
+        // simple containment, unless it's a freq of: (which lets a query explain how the freq is calculated), 
         // just verify contained expl has same score
-        verifyExplanation(q,doc,score,deep,detail[0]);
+        if (expl.getDescription().endsWith("with freq of:") == false
+            // with dismax, even if there is a single sub explanation, its
+            // score might be different if the score is negative
+            && (score >= 0 || expl.getDescription().endsWith("times others of:") == false)) {
+          verifyExplanation(q,doc,score,deep,detail[0]);
+        }
       } else {
         // explanation must either:
         // - end with one of: "product of:", "sum of:", "max of:", or
         // - have "max plus <x> times others" (where <x> is float).
         float x = 0;
-        String descr = expl.getDescription().toLowerCase();
         boolean productOf = descr.endsWith("product of:");
         boolean sumOf = descr.endsWith("sum of:");
         boolean maxOf = descr.endsWith("max of:");
@@ -368,6 +384,7 @@ public class CheckHits {
             }
           }
         }
+        // TODO: this is a TERRIBLE assertion!!!!
         Assert.assertTrue(
             q+": multi valued explanation description=\""+descr
             +"\" must be 'max of plus x times others' or end with 'product of'"
@@ -397,7 +414,7 @@ public class CheckHits {
         }
         Assert.assertEquals(q+": actual subDetails combined=="+combined+
             " != value="+value+" Explanation: "+expl,
-            combined,value,EXPLAIN_SCORE_TOLERANCE_DELTA);
+            combined,value,explainToleranceDelta(combined, value));
       }
     }
   }
@@ -409,22 +426,21 @@ public class CheckHits {
    * @see ExplanationAsserter
    */
   public static class ExplanationAssertingSearcher extends IndexSearcher {
-    public ExplanationAssertingSearcher(IndexReader r) throws IOException {
+    public ExplanationAssertingSearcher(IndexReader r) {
       super(r);
     }
     protected void checkExplanations(Query q) throws IOException {
-      super.search(q, null,
+      super.search(q,
                    new ExplanationAsserter
                    (q, null, this));
     }
     @Override
     public TopFieldDocs search(Query query,
-                               Filter filter,
                                int n,
                                Sort sort) throws IOException {
       
       checkExplanations(query);
-      return super.search(query,filter,n,sort);
+      return super.search(query,n,sort);
     }
     @Override
     public void search(Query query, Collector results) throws IOException {
@@ -432,16 +448,10 @@ public class CheckHits {
       super.search(query, results);
     }
     @Override
-    public void search(Query query, Filter filter, Collector results) throws IOException {
-      checkExplanations(query);
-      super.search(query, filter, results);
-    }
-    @Override
-    public TopDocs search(Query query, Filter filter,
-                          int n) throws IOException {
+    public TopDocs search(Query query, int n) throws IOException {
 
       checkExplanations(query);
-      return super.search(query,filter, n);
+      return super.search(query, n);
     }
   }
     
@@ -454,17 +464,10 @@ public class CheckHits {
    *
    * @see CheckHits#verifyExplanation
    */
-  public static class ExplanationAsserter extends Collector {
-
-    /**
-     * @deprecated
-     * @see CheckHits#EXPLAIN_SCORE_TOLERANCE_DELTA
-     */
-    @Deprecated
-    public static float SCORE_TOLERANCE_DELTA = 0.00005f;
+  public static class ExplanationAsserter extends SimpleCollector {
 
     Query q;
-    Searcher s;
+    IndexSearcher s;
     String d;
     boolean deep;
     
@@ -472,10 +475,10 @@ public class CheckHits {
     private int base = 0;
 
     /** Constructs an instance which does shallow tests on the Explanation */
-    public ExplanationAsserter(Query q, String defaultFieldName, Searcher s) {
+    public ExplanationAsserter(Query q, String defaultFieldName, IndexSearcher s) {
       this(q,defaultFieldName,s,false);
     }      
-    public ExplanationAsserter(Query q, String defaultFieldName, Searcher s, boolean deep) {
+    public ExplanationAsserter(Query q, String defaultFieldName, IndexSearcher s, boolean deep) {
       this.q=q;
       this.s=s;
       this.d = q.toString(defaultFieldName);
@@ -505,11 +508,12 @@ public class CheckHits {
                         exp.isMatch());
     }
     @Override
-    public void setNextReader(IndexReader reader, int docBase) {
-      base = docBase;
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
+      base = context.docBase;
     }
+    
     @Override
-    public boolean acceptsDocsOutOfOrder() {
+    public boolean needsScores() {
       return true;
     }
   }

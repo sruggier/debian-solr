@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,7 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * is safe since the count can only hit zero if it's unregistered (and
  * hence incref() will not be called again on it).
  *
- * @version $Id$
+ *
  */
 
 public abstract class RefCounted<Type> {

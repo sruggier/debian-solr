@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
 
 /**
  * Helper methods to ease implementing {@link Object#toString()}.
@@ -23,15 +23,6 @@ package org.apache.lucene.util;
 public final class ToStringUtils {
 
   private ToStringUtils() {} // no instance
-
-  /**
-   * for printing boost only if not 1.0
-   */
-  public static String boost(float boost) {
-    if (boost != 1.0f) {
-      return "^" + Float.toString(boost);
-    } else return "";
-  }
 
   public static void byteArray(StringBuilder buffer, byte[] bytes) {
     for (int i = 0; i < bytes.length; i++) {
@@ -41,6 +32,16 @@ public final class ToStringUtils {
       }
 
     }
+  }
+
+  private final static char [] HEX = "0123456789abcdef".toCharArray();
+
+  public static String longHex(long x) {
+    char [] asHex = new char [16];
+    for (int i = 16; --i >= 0; x >>>= 4) {
+      asHex[i] = HEX[(int) x & 0x0F];
+    }
+    return "0x" + new String(asHex);
   }
 
 }

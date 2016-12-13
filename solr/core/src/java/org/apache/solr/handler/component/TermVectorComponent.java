@@ -1,39 +1,4 @@
-package org.apache.solr.handler.component;
-
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.SetBasedFieldSelector;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.index.TermEnum;
-import org.apache.lucene.index.TermVectorMapper;
-import org.apache.lucene.index.TermVectorOffsetInfo;
-import org.apache.lucene.document.Fieldable;
-import org.apache.solr.common.SolrException;
-import org.apache.solr.common.params.CommonParams;
-import org.apache.solr.common.params.ModifiableSolrParams;
-import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.params.TermVectorParams;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.common.util.StrUtils;
-import org.apache.solr.core.SolrCore;
-import org.apache.solr.schema.IndexSchema;
-import org.apache.solr.schema.SchemaField;
-import org.apache.solr.search.DocList;
-import org.apache.solr.search.DocListAndSet;
-import org.apache.solr.search.SolrIndexSearcher;
-import org.apache.solr.util.SolrPluginUtils;
-import org.apache.solr.util.plugin.SolrCoreAware;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -49,14 +14,52 @@ import java.util.Map;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.Fields;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.StoredFieldVisitor;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.util.BytesRef;
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.params.SolrParams;
+import org.apache.solr.common.params.TermVectorParams;
+import org.apache.solr.common.util.Base64;
+import org.apache.solr.common.util.NamedList;
+import org.apache.solr.core.SolrCore;
+import org.apache.solr.schema.IndexSchema;
+import org.apache.solr.schema.SchemaField;
+import org.apache.solr.search.DocList;
+import org.apache.solr.search.DocListAndSet;
+import org.apache.solr.search.ReturnFields;
+import org.apache.solr.search.SolrIndexSearcher;
+import org.apache.solr.search.SolrReturnFields;
+import org.apache.solr.util.SolrPluginUtils;
+import org.apache.solr.util.plugin.SolrCoreAware;
 
 /**
  * Return term vectors for the documents in a query result set.
- * <p/>
+ * <p>
  * Info available:
- * term, frequency, position, offset, IDF.
- * <p/>
+ * term, frequency, position, offset, payloads, IDF.
+ * <p>
  * <b>Note</b> Returning IDF can be expensive.
  * 
  * <pre class="prettyprint">
@@ -71,16 +74,64 @@ import java.util.Map;
  *   &lt;/arr&gt;
  * &lt;/requestHandler&gt;</pre>
  *
- * @version $Id$
+ *
  */
 public class TermVectorComponent extends SearchComponent implements SolrCoreAware {
 
 
   public static final String COMPONENT_NAME = "tv";
 
-  protected NamedList initParams;
   public static final String TERM_VECTORS = "termVectors";
 
+  private static final String TV_KEY_WARNINGS = "warnings";
+
+  protected NamedList initParams;
+
+  /**
+   * Helper method for determining the list of fields that we should 
+   * try to find term vectors on.  
+   * <p>
+   * Does simple (non-glob-supporting) parsing on the 
+   * {@link TermVectorParams#FIELDS} param if specified, otherwise it returns 
+   * the concrete field values specified in {@link CommonParams#FL} -- 
+   * ignoring functions, transformers, or literals.  
+   * </p>
+   * <p>
+   * If "fl=*" is used, or neither param is specified, then <code>null</code> 
+   * will be returned.  If the empty set is returned, it means the "fl" 
+   * specified consisted entirely of things that are not real fields 
+   * (ie: functions, transformers, partial-globs, score, etc...) and not 
+   * supported by this component. 
+   * </p>
+   */
+  private Set<String> getFields(ResponseBuilder rb) {
+    SolrParams params = rb.req.getParams();
+    String[] fldLst = params.getParams(TermVectorParams.FIELDS);
+    if (null == fldLst || 0 == fldLst.length || 
+        (1 == fldLst.length && 0 == fldLst[0].length())) {
+
+      // no tv.fl, parse the main fl
+      ReturnFields rf = new SolrReturnFields
+        (params.getParams(CommonParams.FL), rb.req);
+
+      if (rf.wantsAllFields()) {
+        return null;
+      }
+
+      Set<String> fieldNames = rf.getLuceneFieldNames();
+      return (null != fieldNames) ?
+        fieldNames :
+        // return empty set indicating no fields should be used
+        Collections.<String>emptySet();
+    }
+
+    // otherwise us the raw fldList as is, no special parsing or globs
+    Set<String> fieldNames = new LinkedHashSet<>();
+    for (String fl : fldLst) {
+      fieldNames.addAll(Arrays.asList(SolrPluginUtils.split(fl)));
+    }
+    return fieldNames;
+  }
 
   @Override
   public void process(ResponseBuilder rb) throws IOException {
@@ -89,44 +140,56 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
       return;
     }
 
-    NamedList<Object> termVectors = new NamedList<Object>();
+    NamedList<Object> termVectors = new NamedList<>();
     rb.rsp.add(TERM_VECTORS, termVectors);
+
+    IndexSchema schema = rb.req.getSchema();
+    SchemaField keyField = schema.getUniqueKeyField();
+    String uniqFieldName = null;
+    if (keyField != null) {
+      uniqFieldName = keyField.getName();
+    }
+
     FieldOptions allFields = new FieldOptions();
     //figure out what options we have, and try to get the appropriate vector
     allFields.termFreq = params.getBool(TermVectorParams.TF, false);
     allFields.positions = params.getBool(TermVectorParams.POSITIONS, false);
     allFields.offsets = params.getBool(TermVectorParams.OFFSETS, false);
+    allFields.payloads = params.getBool(TermVectorParams.PAYLOADS, false);
     allFields.docFreq = params.getBool(TermVectorParams.DF, false);
     allFields.tfIdf = params.getBool(TermVectorParams.TF_IDF, false);
     //boolean cacheIdf = params.getBool(TermVectorParams.IDF, false);
     //short cut to all values.
-    boolean all = params.getBool(TermVectorParams.ALL, false);
-    if (all == true) {
+    if (params.getBool(TermVectorParams.ALL, false)) {
       allFields.termFreq = true;
       allFields.positions = true;
       allFields.offsets = true;
+      allFields.payloads = true;
       allFields.docFreq = true;
       allFields.tfIdf = true;
     }
 
-    String fldLst = params.get(TermVectorParams.FIELDS);
-    if (fldLst == null) {
-      fldLst = params.get(CommonParams.FL);
-    }
-
-    //use this to validate our fields
-    IndexSchema schema = rb.req.getSchema();
     //Build up our per field mapping
-    Map<String, FieldOptions> fieldOptions = new HashMap<String, FieldOptions>();
-    NamedList<List<String>>  warnings = new NamedList<List<String>> ();
-    List<String>  noTV = new ArrayList<String>();
-    List<String>  noPos = new ArrayList<String>();
-    List<String>  noOff = new ArrayList<String>();
+    Map<String, FieldOptions> fieldOptions = new HashMap<>();
+    NamedList<List<String>> warnings = new NamedList<>();
+    List<String>  noTV = new ArrayList<>();
+    List<String>  noPos = new ArrayList<>();
+    List<String>  noOff = new ArrayList<>();
+    List<String>  noPay = new ArrayList<>();
 
-    //we have specific fields to retrieve
-    if (fldLst != null) {
-      String [] fields = SolrPluginUtils.split(fldLst);
+    Set<String> fields = getFields(rb);
+    if ( null != fields ) {
+      //we have specific fields to retrieve, or no fields
       for (String field : fields) {
+
+        // workaround SOLR-3523
+        if (null == field || "score".equals(field)) continue; 
+
+        // we don't want to issue warnings about the uniqueKey field
+        // since it can cause lots of confusion in distributed requests
+        // where the uniqueKey field is injected into the fl for merging
+        final boolean fieldIsUniqueKey = field.equals(uniqFieldName);
+
         SchemaField sf = schema.getFieldOrNull(field);
         if (sf != null) {
           if (sf.storeTermVector()) {
@@ -142,15 +205,19 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
             option.tfIdf = params.getFieldBool(field, TermVectorParams.TF_IDF, allFields.tfIdf);
             //Validate these are even an option
             option.positions = params.getFieldBool(field, TermVectorParams.POSITIONS, allFields.positions);
-            if (option.positions && !sf.storeTermPositions()){
+            if (option.positions && !sf.storeTermPositions() && !fieldIsUniqueKey){
               noPos.add(field);
             }
             option.offsets = params.getFieldBool(field, TermVectorParams.OFFSETS, allFields.offsets);
-            if (option.offsets && !sf.storeTermOffsets()){
+            if (option.offsets && !sf.storeTermOffsets() && !fieldIsUniqueKey){
               noOff.add(field);
             }
+            option.payloads = params.getFieldBool(field, TermVectorParams.PAYLOADS, allFields.payloads);
+            if (option.payloads && !sf.storeTermPayloads() && !fieldIsUniqueKey){
+              noPay.add(field);
+            }
           } else {//field doesn't have term vectors
-            noTV.add(field);
+            if (!fieldIsUniqueKey) noTV.add(field);
           }
         } else {
           //field doesn't exist
@@ -158,21 +225,25 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
         }
       }
     } //else, deal with all fields
-    boolean hasWarnings = false;
+
+    // NOTE: currently all types of warnings are schema driven, and guaranteed
+    // to be consistent across all shards - if additional types of warnings 
+    // are added that might be different between shards, finishStage() needs
+    // to be changed to account for that.
     if (!noTV.isEmpty()) {
       warnings.add("noTermVectors", noTV);
-      hasWarnings = true;
     }
     if (!noPos.isEmpty()) {
       warnings.add("noPositions", noPos);
-      hasWarnings = true;
     }
     if (!noOff.isEmpty()) {
       warnings.add("noOffsets", noOff);
-      hasWarnings = true;
     }
-    if (hasWarnings) {
-      termVectors.add("warnings", warnings);
+    if (!noPay.isEmpty()) {
+      warnings.add("noPayloads", noPay);
+    }
+    if (warnings.size() > 0) {
+      termVectors.add(TV_KEY_WARNINGS, warnings);
     }
 
     DocListAndSet listAndSet = rb.getResults();
@@ -186,43 +257,158 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
     }
     SolrIndexSearcher searcher = rb.req.getSearcher();
 
-    IndexReader reader = searcher.getReader();
+    IndexReader reader = searcher.getIndexReader();
     //the TVMapper is a TermVectorMapper which can be used to optimize loading of Term Vectors
-    SchemaField keyField = schema.getUniqueKeyField();
-    String uniqFieldName = null;
-    if (keyField != null) {
-      uniqFieldName = keyField.getName();
-    }
-    //Only load the id field to get the uniqueKey of that field
-    SetBasedFieldSelector fieldSelector = new SetBasedFieldSelector(Collections.singleton(uniqFieldName), Collections.<String>emptySet());
-    TVMapper mapper = new TVMapper(reader);
-    mapper.fieldOptions = allFields; //this will only stay set if fieldOptions.isEmpty() (in other words, only if the user didn't set any fields)
+
+    //Only load the id field to get the uniqueKey of that
+    //field
+
+    final String finalUniqFieldName = uniqFieldName;
+
+    final List<String> uniqValues = new ArrayList<>();
+    
+    // TODO: is this required to be single-valued? if so, we should STOP
+    // once we find it...
+    final StoredFieldVisitor getUniqValue = new StoredFieldVisitor() {
+      @Override 
+      public void stringField(FieldInfo fieldInfo, byte[] bytes) {
+        uniqValues.add(new String(bytes, StandardCharsets.UTF_8));
+      }
+
+      @Override 
+      public void intField(FieldInfo fieldInfo, int value) {
+        uniqValues.add(Integer.toString(value));
+      }
+
+      @Override 
+      public void longField(FieldInfo fieldInfo, long value) {
+        uniqValues.add(Long.toString(value));
+      }
+
+      @Override
+      public Status needsField(FieldInfo fieldInfo) {
+        return (fieldInfo.name.equals(finalUniqFieldName)) ? Status.YES : Status.NO;
+      }
+    };
+
     while (iter.hasNext()) {
       Integer docId = iter.next();
-      NamedList<Object> docNL = new NamedList<Object>();
-      mapper.docNL = docNL;
-      termVectors.add("doc-" + docId, docNL);
+      NamedList<Object> docNL = new NamedList<>();
 
       if (keyField != null) {
-        Document document = reader.document(docId, fieldSelector);
-        Fieldable uniqId = document.getFieldable(uniqFieldName);
+        reader.document(docId, getUniqValue);
         String uniqVal = null;
-        if (uniqId != null) {
-          uniqVal = keyField.getType().storedToReadable(uniqId);          
-        }
-        if (uniqVal != null) {
+        if (uniqValues.size() != 0) {
+          uniqVal = uniqValues.get(0);
+          uniqValues.clear();
           docNL.add("uniqueKey", uniqVal);
-          termVectors.add("uniqueKeyFieldName", uniqFieldName);
-        }
-      }
-      if (!fieldOptions.isEmpty()) {
-        for (Map.Entry<String, FieldOptions> entry : fieldOptions.entrySet()) {
-          mapper.fieldOptions = entry.getValue();
-          reader.getTermFreqVector(docId, entry.getKey(), mapper);
+          termVectors.add(uniqVal, docNL);
         }
       } else {
-        //deal with all fields by using the allFieldMapper
-        reader.getTermFreqVector(docId, mapper);
+        // support for schemas w/o a unique key,
+        termVectors.add("doc-" + docId, docNL);
+      }
+
+      if ( null != fields ) {
+        for (Map.Entry<String, FieldOptions> entry : fieldOptions.entrySet()) {
+          final String field = entry.getKey();
+          final Terms vector = reader.getTermVector(docId, field);
+          if (vector != null) {
+            TermsEnum termsEnum = vector.iterator();
+            mapOneVector(docNL, entry.getValue(), reader, docId, termsEnum, field);
+          }
+        }
+      } else {
+        // extract all fields
+        final Fields vectors = reader.getTermVectors(docId);
+        for (String field : vectors) {
+          Terms terms = vectors.terms(field);
+          if (terms != null) {
+            TermsEnum termsEnum = terms.iterator();
+            mapOneVector(docNL, allFields, reader, docId, termsEnum, field);
+          }
+        }
+      }
+    }
+  }
+
+  private void mapOneVector(NamedList<Object> docNL, FieldOptions fieldOptions, IndexReader reader, int docID, TermsEnum termsEnum, String field) throws IOException {
+    NamedList<Object> fieldNL = new NamedList<>();
+    docNL.add(field, fieldNL);
+
+    BytesRef text;
+    PostingsEnum dpEnum = null;
+    while((text = termsEnum.next()) != null) {
+      String term = text.utf8ToString();
+      NamedList<Object> termInfo = new NamedList<>();
+      fieldNL.add(term, termInfo);
+      final int freq = (int) termsEnum.totalTermFreq();
+      if (fieldOptions.termFreq == true) {
+        termInfo.add("tf", freq);
+      }
+
+      int dpEnumFlags = 0;
+      dpEnumFlags |= fieldOptions.positions ? PostingsEnum.POSITIONS : 0;
+      //payloads require offsets
+      dpEnumFlags |= (fieldOptions.offsets || fieldOptions.payloads) ? PostingsEnum.OFFSETS : 0;
+      dpEnumFlags |= fieldOptions.payloads ? PostingsEnum.PAYLOADS : 0;
+      dpEnum = termsEnum.postings(dpEnum, dpEnumFlags);
+
+      boolean atNextDoc = false;
+      if (dpEnum != null) {
+        dpEnum.nextDoc();
+        atNextDoc = true;
+      }
+
+      if (atNextDoc && dpEnumFlags != 0) {
+        NamedList<Integer> positionsNL = null;
+        NamedList<Number> theOffsets = null;
+        NamedList<String> thePayloads = null;
+
+        for (int i = 0; i < freq; i++) {
+          final int pos = dpEnum.nextPosition();
+          if (fieldOptions.positions && pos >= 0) {
+            if (positionsNL == null) {
+              positionsNL = new NamedList<>();
+              termInfo.add("positions", positionsNL);
+            }
+            positionsNL.add("position", pos);
+          }
+
+          int startOffset = fieldOptions.offsets ? dpEnum.startOffset() : -1;
+          if (startOffset >= 0) {
+            if (theOffsets == null) {
+              theOffsets = new NamedList<>();
+              termInfo.add("offsets", theOffsets);
+            }
+            theOffsets.add("start", dpEnum.startOffset());
+            theOffsets.add("end", dpEnum.endOffset());
+          }
+
+          BytesRef payload = fieldOptions.payloads ? dpEnum.getPayload() : null;
+          if (payload != null) {
+            if (thePayloads == null) {
+              thePayloads = new NamedList<>();
+              termInfo.add("payloads", thePayloads);
+            }
+            thePayloads.add("payload", Base64.byteArrayToBase64(payload.bytes, payload.offset, payload.length));
+          }
+        }
+      }
+      
+      int df = 0;
+      if (fieldOptions.docFreq || fieldOptions.tfIdf) {
+        df = reader.docFreq(new Term(field, text));
+      }
+
+      if (fieldOptions.docFreq) {
+        termInfo.add("df", df);
+      }
+
+      // TODO: this is not TF/IDF by anyone's definition!
+      if (fieldOptions.tfIdf) {
+        double tfIdfVal = ((double) freq) / df;
+        termInfo.add("tf-idf", tfIdfVal);
       }
     }
   }
@@ -230,7 +416,7 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
   private List<Integer> getInts(String[] vals) {
     List<Integer> result = null;
     if (vals != null && vals.length > 0) {
-      result = new ArrayList<Integer>(vals.length);
+      result = new ArrayList<>(vals.length);
       for (int i = 0; i < vals.length; i++) {
         try {
           result.add(new Integer(vals[i]));
@@ -243,132 +429,39 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
   }
 
   @Override
-  public int distributedProcess(ResponseBuilder rb) throws IOException {
-    int result = ResponseBuilder.STAGE_DONE;
-    if (rb.stage == ResponseBuilder.STAGE_GET_FIELDS) {
-      //Go ask each shard for it's vectors
-      // for each shard, collect the documents for that shard.
-      HashMap<String, Collection<ShardDoc>> shardMap = new HashMap<String, Collection<ShardDoc>>();
-      for (ShardDoc sdoc : rb.resultIds.values()) {
-        Collection<ShardDoc> shardDocs = shardMap.get(sdoc.shard);
-        if (shardDocs == null) {
-          shardDocs = new ArrayList<ShardDoc>();
-          shardMap.put(sdoc.shard, shardDocs);
-        }
-        shardDocs.add(sdoc);
-      }
-      // Now create a request for each shard to retrieve the stored fields
-      for (Collection<ShardDoc> shardDocs : shardMap.values()) {
-        ShardRequest sreq = new ShardRequest();
-        sreq.purpose = ShardRequest.PURPOSE_GET_FIELDS;
+  public void prepare(ResponseBuilder rb) throws IOException {
 
-        sreq.shards = new String[]{shardDocs.iterator().next().shard};
-
-        sreq.params = new ModifiableSolrParams();
-
-        // add original params
-        sreq.params.add(rb.req.getParams());
-        sreq.params.remove(CommonParams.Q);//remove the query
-        ArrayList<String> ids = new ArrayList<String>(shardDocs.size());
-        for (ShardDoc shardDoc : shardDocs) {
-          ids.add(shardDoc.id.toString());
-        }
-        sreq.params.add(TermVectorParams.DOC_IDS, StrUtils.join(ids, ','));
-
-        rb.addRequest(this, sreq);
-      }
-      result = ResponseBuilder.STAGE_DONE;
-    }
-    return result;
-  }
-
-  private static class TVMapper extends TermVectorMapper {
-    private IndexReader reader;
-    private NamedList<Object> docNL;
-
-    //needs to be set for each new field
-    FieldOptions fieldOptions;
-
-    //internal vars not passed in by construction
-    private boolean useOffsets, usePositions;
-    //private Map<String, Integer> idfCache;
-    private NamedList<Object> fieldNL;
-    private Term currentTerm;
-
-
-    public TVMapper(IndexReader reader) {
-      this.reader = reader;
-    }
-
-    @Override
-    public void map(String term, int frequency, TermVectorOffsetInfo[] offsets, int[] positions) {
-      NamedList<Object> termInfo = new NamedList<Object>();
-        fieldNL.add(term, termInfo);
-        if (fieldOptions.termFreq) {
-          termInfo.add("tf", frequency);
-        }
-        if (useOffsets) {
-          NamedList<Integer> theOffsets = new NamedList<Integer>();
-          termInfo.add("offsets", theOffsets);
-          for (int i = 0; i < offsets.length; i++) {
-            TermVectorOffsetInfo offset = offsets[i];
-            theOffsets.add("start", offset.getStartOffset());
-            theOffsets.add("end", offset.getEndOffset());
-          }
-        }
-        if (usePositions) {
-          NamedList<Integer> positionsNL = new NamedList<Integer>();
-          for (int i = 0; i < positions.length; i++) {
-            positionsNL.add("position", positions[i]);
-          }
-          termInfo.add("positions", positionsNL);
-        }
-        if (fieldOptions.docFreq) {
-          termInfo.add("df", getDocFreq(term));
-        }
-        if (fieldOptions.tfIdf) {
-          double tfIdfVal = ((double) frequency) / getDocFreq(term);
-          termInfo.add("tf-idf", tfIdfVal);
-        }
-    }
-
-    private int getDocFreq(String term) {
-      int result = 1;
-      currentTerm = currentTerm.createTerm(term);
-      try {
-        final TermEnum termEnum = reader.terms(currentTerm);
-        if (termEnum != null && termEnum.term().equals(currentTerm)) {
-          result = termEnum.docFreq();
-        }
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
-      return result;
-    }
-
-    @Override
-    public void setExpectations(String field, int numTerms, boolean storeOffsets, boolean storePositions) {
-      currentTerm = new Term(field);
-      useOffsets = storeOffsets && fieldOptions.offsets;
-      usePositions = storePositions && fieldOptions.positions;
-      fieldNL = new NamedList<Object>();
-      docNL.add(field, fieldNL);
-    }
-
-    @Override
-    public boolean isIgnoringPositions() {
-      return fieldOptions.positions == false;  // if we are not interested in positions, then return true telling Lucene to skip loading them
-    }
-
-    @Override
-    public boolean isIgnoringOffsets() {
-      return fieldOptions.offsets == false;  //  if we are not interested in offsets, then return true telling Lucene to skip loading them
-    }
   }
 
   @Override
-  public void prepare(ResponseBuilder rb) throws IOException {
+  public void finishStage(ResponseBuilder rb) {
+    if (rb.stage == ResponseBuilder.STAGE_GET_FIELDS) {
+      
+      NamedList<Object> termVectorsNL = new NamedList<>();
+      Map.Entry<String, Object>[] arr = new NamedList.NamedListEntry[rb.resultIds.size()];
 
+      for (ShardRequest sreq : rb.finished) {
+        if ((sreq.purpose & ShardRequest.PURPOSE_GET_FIELDS) == 0 || !sreq.params.getBool(COMPONENT_NAME, false)) {
+          continue;
+        }
+        for (ShardResponse srsp : sreq.responses) {
+          NamedList<Object> nl = (NamedList<Object>)srsp.getSolrResponse().getResponse().get(TERM_VECTORS);
+
+          // Add metadata (that which isn't a uniqueKey value):
+          Object warningsNL = nl.get(TV_KEY_WARNINGS);
+          // assume if that if warnings is already present; we don't need to merge.
+          if (warningsNL != null && termVectorsNL.indexOf(TV_KEY_WARNINGS, 0) < 0) {
+            termVectorsNL.add(TV_KEY_WARNINGS, warningsNL);
+          }
+
+          // UniqueKey data
+          SolrPluginUtils.copyNamedListIntoArrayByDocPosInResponse(nl, rb.resultIds, arr);
+        }
+      }
+      // remove nulls in case not all docs were able to be retrieved
+      SolrPluginUtils.removeNulls(arr, termVectorsNL);
+      rb.rsp.add(TERM_VECTORS, termVectorsNL);
+    }
   }
 
   //////////////////////// NamedListInitializedPlugin methods //////////////////////
@@ -379,23 +472,9 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
     this.initParams = args;
   }
 
+  @Override
   public void inform(SolrCore core) {
 
-  }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id:$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$Revision:$";
   }
 
   @Override
@@ -406,5 +485,5 @@ public class TermVectorComponent extends SearchComponent implements SolrCoreAwar
 
 class FieldOptions {
   String fieldName;
-  boolean termFreq, positions, offsets, docFreq, tfIdf;
+  boolean termFreq, positions, offsets, payloads, docFreq, tfIdf;
 }

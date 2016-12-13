@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,18 +14,27 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.zip.CRC32;
+import java.util.zip.Checksum;
+
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 
 /**
  * A memory-resident {@link IndexOutput} implementation.
  *
  * @lucene.internal
  */
-public class RAMOutputStream extends IndexOutput {
+public class RAMOutputStream extends IndexOutput implements Accountable {
   static final int BUFFER_SIZE = 1024;
 
-  private RAMFile file;
+  private final RAMFile file;
 
   private byte[] currentBuffer;
   private int currentBufferIndex;
@@ -35,23 +42,37 @@ public class RAMOutputStream extends IndexOutput {
   private int bufferPosition;
   private long bufferStart;
   private int bufferLength;
+  
+  private final Checksum crc;
 
   /** Construct an empty output buffer. */
   public RAMOutputStream() {
-    this(new RAMFile());
+    this("noname", new RAMFile(), false);
   }
 
-  public RAMOutputStream(RAMFile f) {
+  /** Creates this, with no name. */
+  public RAMOutputStream(RAMFile f, boolean checksum) {
+    this("noname", f, checksum);
+  }
+
+  /** Creates this, with specified name. */
+  public RAMOutputStream(String name, RAMFile f, boolean checksum) {
+    super("RAMOutputStream(name=\"" + name + "\")", name);
     file = f;
 
     // make sure that we switch to the
     // first needed buffer lazily
     currentBufferIndex = -1;
     currentBuffer = null;
+    if (checksum) {
+      crc = new BufferedChecksum(new CRC32());
+    } else {
+      crc = null;
+    }
   }
 
-  /** Copy the current contents of this buffer to the named output. */
-  public void writeTo(IndexOutput out) throws IOException {
+  /** Copy the current contents of this buffer to the provided {@link DataOutput}. */
+  public void writeTo(DataOutput out) throws IOException {
     flush();
     final long end = file.length;
     long pos = 0;
@@ -67,6 +88,26 @@ public class RAMOutputStream extends IndexOutput {
     }
   }
 
+  /** Copy the current contents of this buffer to output
+   *  byte array */
+  public void writeTo(byte[] bytes, int offset) throws IOException {
+    flush();
+    final long end = file.length;
+    long pos = 0;
+    int buffer = 0;
+    int bytesUpto = offset;
+    while (pos < end) {
+      int length = BUFFER_SIZE;
+      long nextPos = pos + length;
+      if (nextPos > end) {                        // at the last buffer
+        length = (int)(end - pos);
+      }
+      System.arraycopy(file.getBuffer(buffer++), 0, bytes, bytesUpto, length);
+      bytesUpto += length;
+      pos = nextPos;
+    }
+  }
+
   /** Resets this to an empty file. */
   public void reset() {
     currentBuffer = null;
@@ -75,6 +116,9 @@ public class RAMOutputStream extends IndexOutput {
     bufferStart = 0;
     bufferLength = 0;
     file.setLength(0);
+    if (crc != null) {
+      crc.reset();
+    }
   }
 
   @Override
@@ -83,28 +127,13 @@ public class RAMOutputStream extends IndexOutput {
   }
 
   @Override
-  public void seek(long pos) throws IOException {
-    // set the file length in case we seek back
-    // and flush() has not been called yet
-    setFileLength();
-    if (pos < bufferStart || pos >= bufferStart + bufferLength) {
-      currentBufferIndex = (int) (pos / BUFFER_SIZE);
-      switchCurrentBuffer();
-    }
-
-    bufferPosition = (int) (pos % BUFFER_SIZE);
-  }
-
-  @Override
-  public long length() {
-    return file.length;
-  }
-
-  @Override
   public void writeByte(byte b) throws IOException {
     if (bufferPosition == bufferLength) {
       currentBufferIndex++;
       switchCurrentBuffer();
+    }
+    if (crc != null) {
+      crc.update(b);
     }
     currentBuffer[bufferPosition++] = b;
   }
@@ -112,6 +141,9 @@ public class RAMOutputStream extends IndexOutput {
   @Override
   public void writeBytes(byte[] b, int offset, int len) throws IOException {
     assert b != null;
+    if (crc != null) {
+      crc.update(b, offset, len);
+    }
     while (len > 0) {
       if (bufferPosition ==  bufferLength) {
         currentBufferIndex++;
@@ -127,7 +159,7 @@ public class RAMOutputStream extends IndexOutput {
     }
   }
 
-  private final void switchCurrentBuffer() throws IOException {
+  private final void switchCurrentBuffer() {
     if (currentBufferIndex == file.numBuffers()) {
       currentBuffer = file.addBuffer(BUFFER_SIZE);
     } else {
@@ -145,9 +177,8 @@ public class RAMOutputStream extends IndexOutput {
     }
   }
 
-  @Override
-  public void flush() throws IOException {
-    file.setLastModified(System.currentTimeMillis());
+  /** Forces any buffered output to be written. */
+  protected void flush() throws IOException {
     setFileLength();
   }
 
@@ -157,29 +188,22 @@ public class RAMOutputStream extends IndexOutput {
   }
 
   /** Returns byte usage of all buffers. */
-  public long sizeInBytes() {
+  @Override
+  public long ramBytesUsed() {
     return (long) file.numBuffers() * (long) BUFFER_SIZE;
   }
   
   @Override
-  public void copyBytes(DataInput input, long numBytes) throws IOException {
-    assert numBytes >= 0: "numBytes=" + numBytes;
-
-    while (numBytes > 0) {
-      if (bufferPosition == bufferLength) {
-        currentBufferIndex++;
-        switchCurrentBuffer();
-      }
-
-      int toCopy = currentBuffer.length - bufferPosition;
-      if (numBytes < toCopy) {
-        toCopy = (int) numBytes;
-      }
-      input.readBytes(currentBuffer, bufferPosition, toCopy, false);
-      numBytes -= toCopy;
-      bufferPosition += toCopy;
-    }
-
+  public Collection<Accountable> getChildResources() {
+    return Collections.singleton(Accountables.namedAccountable("file", file));
   }
-  
+
+  @Override
+  public long getChecksum() throws IOException {
+    if (crc == null) {
+      throw new IllegalStateException("internal RAMOutputStream created with checksum disabled");
+    } else {
+      return crc.getValue();
+    }
+  }
 }

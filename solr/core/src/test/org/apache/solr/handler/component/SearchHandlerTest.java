@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,30 +14,40 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.component;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.client.solrj.embedded.JettySolrRunner;
+import org.apache.solr.client.solrj.impl.CloudSolrClient;
+import org.apache.solr.client.solrj.request.CollectionAdminRequest;
+import org.apache.solr.client.solrj.request.QueryRequest;
+import org.apache.solr.client.solrj.response.QueryResponse;
+import org.apache.solr.cloud.MiniSolrCloudCluster;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
-
-public class SearchHandlerTest extends AbstractSolrTestCase 
+public class SearchHandlerTest extends SolrTestCaseJ4 
 {
-  @Override public String getSchemaFile() { return "schema.xml"; }
-  @Override public String getSolrConfigFile() { return "solrconfig.xml"; }
+  @BeforeClass
+  public static void beforeTests() throws Exception {
+    initCore("solrconfig.xml","schema.xml");
+  }
+
   
   @SuppressWarnings("unchecked")
-  public void testInitalization()
+  @Test
+  public void testInitialization()
   {
     SolrCore core = h.getCore();
     
     // Build an explicit list
     //-----------------------------------------------
-    List<String> names0 = new ArrayList<String>();
+    List<String> names0 = new ArrayList<>();
     names0.add( MoreLikeThisComponent.COMPONENT_NAME );
     
     NamedList args = new NamedList();
@@ -52,7 +62,7 @@ public class SearchHandlerTest extends AbstractSolrTestCase
 
     // Build an explicit list that includes the debug comp.
     //-----------------------------------------------
-    names0 = new ArrayList<String>();
+    names0 = new ArrayList<>();
     names0.add( FacetComponent.COMPONENT_NAME );
     names0.add( DebugComponent.COMPONENT_NAME );
     names0.add( MoreLikeThisComponent.COMPONENT_NAME );
@@ -74,10 +84,10 @@ public class SearchHandlerTest extends AbstractSolrTestCase
 
     // First/Last list
     //-----------------------------------------------
-    names0 = new ArrayList<String>();
+    names0 = new ArrayList<>();
     names0.add( MoreLikeThisComponent.COMPONENT_NAME );
     
-    List<String> names1 = new ArrayList<String>();
+    List<String> names1 = new ArrayList<>();
     names1.add( FacetComponent.COMPONENT_NAME );
     
     args = new NamedList();
@@ -93,5 +103,37 @@ public class SearchHandlerTest extends AbstractSolrTestCase
     assertEquals( core.getSearchComponent( FacetComponent.COMPONENT_NAME ), comps.get( comps.size()-2 ) );
     //Debug component is always last in this case
     assertEquals( core.getSearchComponent( DebugComponent.COMPONENT_NAME ), comps.get( comps.size()-1 ) );
+  }
+  
+  @Test
+  public void testZkConnected() throws Exception{
+    MiniSolrCloudCluster miniCluster = new MiniSolrCloudCluster(5, createTempDir(), buildJettyConfig("/solr"));
+
+    final CloudSolrClient cloudSolrClient = miniCluster.getSolrClient();
+
+    try {
+      assertNotNull(miniCluster.getZkServer());
+      List<JettySolrRunner> jettys = miniCluster.getJettySolrRunners();
+      assertEquals(5, jettys.size());
+      for (JettySolrRunner jetty : jettys) {
+        assertTrue(jetty.isRunning());
+      }
+
+      // create collection
+      String collectionName = "testSolrCloudCollection";
+      String configName = "solrCloudCollectionConfig";
+      miniCluster.uploadConfigSet(SolrTestCaseJ4.TEST_PATH().resolve("collection1/conf"), configName);
+
+      CollectionAdminRequest.createCollection(collectionName, configName, 2, 2)
+          .process(miniCluster.getSolrClient());
+    
+      QueryRequest req = new QueryRequest();
+      QueryResponse rsp = req.process(cloudSolrClient, collectionName);
+      assertTrue(rsp.getResponseHeader().getBooleanArg("zkConnected"));
+
+    }
+    finally {
+      miniCluster.shutdown();
+    }
   }
 }

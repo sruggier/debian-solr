@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,13 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search.function;
 
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.search.Searcher;
-import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Scorer;
+import org.apache.lucene.util.Bits;
+import org.apache.solr.search.BitsFilteredDocIdSet;
 import org.apache.solr.search.SolrFilter;
 
 import java.io.IOException;
@@ -45,8 +48,10 @@ public class ValueSourceRangeFilter extends SolrFilter {
     this.valueSource = valueSource;
     this.lowerVal = lowerVal;
     this.upperVal = upperVal;
-    this.includeLower = lowerVal != null && includeLower;
-    this.includeUpper = upperVal != null && includeUpper;
+    this.includeLower = includeLower;
+    this.includeUpper = includeUpper;
+//    this.includeLower = lowerVal != null && includeLower;
+//    this.includeUpper = upperVal != null && includeUpper;
   }
 
   public ValueSource getValueSource() {
@@ -71,22 +76,32 @@ public class ValueSourceRangeFilter extends SolrFilter {
 
 
   @Override
-  public DocIdSet getDocIdSet(final Map context, final IndexReader reader) throws IOException {
-     return new DocIdSet() {
+  public DocIdSet getDocIdSet(final Map context, final LeafReaderContext readerContext, Bits acceptDocs) throws IOException {
+     return BitsFilteredDocIdSet.wrap(new DocIdSet() {
        @Override
-      public DocIdSetIterator iterator() throws IOException {
-         return valueSource.getValues(context, reader).getRangeScorer(reader, lowerVal, upperVal, includeLower, includeUpper);
+       public DocIdSetIterator iterator() throws IOException {
+         Scorer scorer = valueSource.getValues(context, readerContext).getRangeScorer(readerContext, lowerVal, upperVal, includeLower, includeUpper);
+         return scorer == null ? null : scorer.iterator();
        }
-     };
+       @Override
+       public Bits bits() {
+         return null;  // don't use random access
+       }
+
+       @Override
+       public long ramBytesUsed() {
+         return 0L;
+       }
+     }, acceptDocs);
   }
 
   @Override
-  public void createWeight(Map context, Searcher searcher) throws IOException {
+  public void createWeight(Map context, IndexSearcher searcher) throws IOException {
     valueSource.createWeight(context, searcher);
   }
 
   @Override
-  public String toString() {
+  public String toString(String field) {
     StringBuilder sb = new StringBuilder();
     sb.append("frange(");
     sb.append(valueSource);

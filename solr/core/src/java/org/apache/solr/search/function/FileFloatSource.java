@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,53 +16,59 @@
  */
 package org.apache.solr.search.function;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.WeakHashMap;
-
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.TermDocs;
-import org.apache.lucene.index.TermEnum;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.util.StringHelper;
-import org.apache.solr.core.SolrCore;
+import org.apache.lucene.index.*;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.docvalues.FloatDocValues;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.handler.RequestHandlerUtils;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.SchemaField;
-import org.apache.solr.search.QParser;
-import org.apache.solr.search.SolrIndexReader;
 import org.apache.solr.update.processor.UpdateRequestProcessor;
 import org.apache.solr.util.VersionedFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.lang.invoke.MethodHandles;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+
 /**
  * Obtains float field values from an external file.
- * @version $Id$
+ *
+ * @see org.apache.solr.schema.ExternalFileField
+ * @see org.apache.solr.schema.ExternalFileFieldReloader
  */
 
 public class FileFloatSource extends ValueSource {
+
   private SchemaField field;
   private final SchemaField keyField;
   private final float defVal;
-
   private final String dataDir;
 
-  public FileFloatSource(SchemaField field, SchemaField keyField, float defVal, QParser parser) {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+  /**
+   * Creates a new FileFloatSource
+   * @param field the source's SchemaField
+   * @param keyField the field to use as a key
+   * @param defVal the default value to use if a field has no entry in the external file
+   * @param datadir the directory in which to look for the external file
+   */
+  public FileFloatSource(SchemaField field, SchemaField keyField, float defVal, String datadir) {
     this.field = field;
     this.keyField = keyField;
     this.defVal = defVal;
-    this.dataDir = parser.getReq().getCore().getDataDir();
+    this.dataDir = datadir;
   }
 
   @Override
@@ -71,48 +77,20 @@ public class FileFloatSource extends ValueSource {
   }
 
   @Override
-  public DocValues getValues(Map context, IndexReader reader) throws IOException {
-    int offset = 0;
-    if (reader instanceof SolrIndexReader) {
-      SolrIndexReader r = (SolrIndexReader)reader;
-      while (r.getParent() != null) {
-        offset += r.getBase();
-        r = r.getParent();
-      }
-      reader = r;
-    }
-    final int off = offset;
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
+    final int off = readerContext.docBase;
+    IndexReaderContext topLevelContext = ReaderUtil.getTopLevelContext(readerContext);
 
-    final float[] arr = getCachedFloats(reader);
-    return new DocValues() {
+    final float[] arr = getCachedFloats(topLevelContext.reader());
+    return new FloatDocValues(this) {
       @Override
       public float floatVal(int doc) {
         return arr[doc + off];
       }
 
       @Override
-      public int intVal(int doc) {
-        return (int)arr[doc + off];
-      }
-
-      @Override
-      public long longVal(int doc) {
-        return (long)arr[doc + off];
-      }
-
-      @Override
-      public double doubleVal(int doc) {
-        return (double)arr[doc + off];
-      }
-
-      @Override
-      public String strVal(int doc) {
-        return Float.toString(arr[doc + off]);
-      }
-
-      @Override
-      public String toString(int doc) {
-        return description() + '=' + floatVal(doc);
+      public Object objectVal(int doc) {
+        return floatVal(doc);   // TODO: keep track of missing values
       }
     };
   }
@@ -138,9 +116,25 @@ public class FileFloatSource extends ValueSource {
             + ",defVal="+defVal+",dataDir="+dataDir+")";
 
   }
-  
+
+  /**
+   * Remove all cached entries.  Values are lazily loaded next time getValues() is
+   * called.
+   */
   public static void resetCache(){
     floatCache.resetCache();
+  }
+
+  /**
+   * Refresh the cache for an IndexReader.  The new values are loaded in the background
+   * and then swapped in, so queries against the cache should not block while the reload
+   * is happening.
+   * @param reader the IndexReader whose cache needs refreshing
+   */
+  public void refreshCache(IndexReader reader) {
+    log.info("Refreshing FileFloatSource cache for field {}", this.field.getName());
+    floatCache.refresh(reader, new Entry(this));
+    log.info("FileFloatSource cache for field {} reloaded", this.field.getName());
   }
 
   private final float[] getCachedFloats(IndexReader reader) {
@@ -159,6 +153,18 @@ public class FileFloatSource extends ValueSource {
     private final Map readerCache = new WeakHashMap();
 
     protected abstract Object createValue(IndexReader reader, Object key);
+
+    public void refresh(IndexReader reader, Object key) {
+      Object refreshedValues = createValue(reader, key);
+      synchronized (readerCache) {
+        Map innerCache = (Map) readerCache.get(reader);
+        if (innerCache == null) {
+          innerCache = new HashMap();
+          readerCache.put(reader, innerCache);
+        }
+        innerCache.put(key, refreshedValues);
+      }
+    }
 
     public Object get(IndexReader reader, Object key) {
       Map innerCache;
@@ -196,7 +202,7 @@ public class FileFloatSource extends ValueSource {
     
     public void resetCache(){
       synchronized(readerCache){
-        // Map.clear() is optional and can throw UnsipportedOperationException,
+        // Map.clear() is optional and can throw UnsupportedOperationException,
         // but readerCache is WeakHashMap and it supports clear().
         readerCache.clear();
       }
@@ -242,154 +248,80 @@ public class FileFloatSource extends ValueSource {
       is = VersionedFile.getLatestFile(ffs.dataDir, fname);
     } catch (IOException e) {
       // log, use defaults
-      SolrCore.log.error("Error opening external value source file: " +e);
+      log.error("Error opening external value source file: " +e);
       return vals;
     }
 
-    BufferedReader r = new BufferedReader(new InputStreamReader(is));
+    BufferedReader r = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
 
-    String idName = StringHelper.intern(ffs.keyField.getName());
+    String idName = ffs.keyField.getName();
     FieldType idType = ffs.keyField.getType();
-    boolean sorted=true;   // assume sorted until we discover it's not
-
 
     // warning: lucene's termEnum.skipTo() is not optimized... it simply does a next()
     // because of this, simply ask the reader for a new termEnum rather than
     // trying to use skipTo()
 
-    List<String> notFound = new ArrayList<String>();
+    List<String> notFound = new ArrayList<>();
     int notFoundCount=0;
     int otherErrors=0;
 
-    TermDocs termDocs = null;
-    Term protoTerm = new Term(idName, "");
-    TermEnum termEnum = null;
-    // Number of times to try termEnum.next() before resorting to skip
-    int numTimesNext = 10;
-
     char delimiter='=';
-    String termVal;
-    boolean hasNext=true;
-    String prevKey="";
 
-    String lastVal="\uFFFF\uFFFF\uFFFF\uFFFF\uFFFF\uFFFF\uFFFF\uFFFF";
+    BytesRefBuilder internalKey = new BytesRefBuilder();
 
     try {
-      termDocs = reader.termDocs();
-      termEnum = reader.terms(protoTerm);
-      Term t = termEnum.term();
-      if (t != null && t.field() == idName) { // intern'd comparison
-        termVal = t.text();
-      } else {
-        termVal = lastVal;
-      }
+      TermsEnum termsEnum = MultiFields.getTerms(reader, idName).iterator();
+      PostingsEnum postingsEnum = null;
 
+      // removing deleted docs shouldn't matter
+      // final Bits liveDocs = MultiFields.getLiveDocs(reader);
 
       for (String line; (line=r.readLine())!=null;) {
         int delimIndex = line.lastIndexOf(delimiter);
         if (delimIndex < 0) continue;
 
         int endIndex = line.length();
-        /* EOLs should already be removed for BufferedReader.readLine()
-        for(int endIndex = line.length();endIndex>delimIndex+1; endIndex--) {
-          char ch = line.charAt(endIndex-1);
-          if (ch!='\n' && ch!='\r') break;
-        }
-        */
         String key = line.substring(0, delimIndex);
         String val = line.substring(delimIndex+1, endIndex);
 
-        String internalKey = "";
         float fval;
         try {
-          internalKey = idType.toInternal(key);
+          idType.readableToIndexed(key, internalKey);
           fval=Float.parseFloat(val);
         } catch (Exception e) {
           if (++otherErrors<=10) {
-            SolrCore.log.error( "Error loading external value source + fileName + " + e
-              + (otherErrors<10 ? "" : "\tSkipping future errors for this file.")                    
+            log.error( "Error loading external value source + fileName + " + e
+              + (otherErrors<10 ? "" : "\tSkipping future errors for this file.")
             );
           }
           continue;  // go to next line in file.. leave values as default.
         }
 
-        if (sorted) {
-          // make sure this key is greater than the previous key
-          sorted = internalKey.compareTo(prevKey) >= 0;
-          prevKey = internalKey;
-
-          if (sorted) {
-            int countNext = 0;
-            for(;;) {
-              int cmp = internalKey.compareTo(termVal);
-              if (cmp == 0) {
-                termDocs.seek(termEnum);
-                while (termDocs.next()) {
-                  vals[termDocs.doc()] = fval;
-                }
-                break;
-              } else if (cmp < 0) {
-                // term enum has already advanced past current key... we didn't find it.
-                if (notFoundCount<10) {  // collect first 10 not found for logging
-                  notFound.add(key);
-                }
-                notFoundCount++;
-                break;
-              } else {
-                // termEnum is less than our current key, so skip ahead
-
-                // try next() a few times to see if we hit or pass the target.
-                // Lucene's termEnum.skipTo() is currently unoptimized (it just does next())
-                // so the best thing is to simply ask the reader for a new termEnum(target)
-                // if we really need to skip.
-                if (++countNext > numTimesNext) {
-                  termEnum = reader.terms(protoTerm.createTerm(internalKey));
-                  t = termEnum.term();
-                } else {
-                  hasNext = termEnum.next();
-                  t = hasNext ? termEnum.term() : null;
-                }
-
-                if (t != null && t.field() == idName) { // intern'd comparison
-                  termVal = t.text();
-                } else {
-                  termVal = lastVal;
-                }
-              }
-            } // end for(;;)
+        if (!termsEnum.seekExact(internalKey.get())) {
+          if (notFoundCount<10) {  // collect first 10 not found for logging
+            notFound.add(key);
           }
+          notFoundCount++;
+          continue;
         }
 
-        if (!sorted) {
-          termEnum = reader.terms(protoTerm.createTerm(internalKey));
-          t = termEnum.term();
-          if (t != null && t.field() == idName  // intern'd comparison
-                  && internalKey.equals(t.text()))
-          {
-            termDocs.seek (termEnum);
-            while (termDocs.next()) {
-              vals[termDocs.doc()] = fval;
-            }
-          } else {
-            if (notFoundCount<10) {  // collect first 10 not found for logging
-              notFound.add(key);
-            }
-            notFoundCount++;
-          }
+        postingsEnum = termsEnum.postings(postingsEnum, PostingsEnum.NONE);
+        int doc;
+        while ((doc = postingsEnum.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+          vals[doc] = fval;
         }
       }
+
     } catch (IOException e) {
       // log, use defaults
-      SolrCore.log.error("Error loading external value source: " +e);
+      log.error("Error loading external value source: " +e);
     } finally {
       // swallow exceptions on close so we don't override any
       // exceptions that happened in the loop
-      if (termDocs!=null) try{termDocs.close();}catch(Exception e){}
-      if (termEnum!=null) try{termEnum.close();}catch(Exception e){}
       try{r.close();}catch(Exception e){}
     }
 
-    SolrCore.log.info("Loaded external value source " + fname
+    log.info("Loaded external value source " + fname
       + (notFoundCount==0 ? "" : " :"+notFoundCount+" missing keys "+notFound)
     );
 
@@ -397,8 +329,7 @@ public class FileFloatSource extends ValueSource {
   }
 
   public static class ReloadCacheRequestHandler extends RequestHandlerBase {
-    
-    static final Logger log = LoggerFactory.getLogger(ReloadCacheRequestHandler.class);
+    private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
     @Override
     public void handleRequestBody(SolrQueryRequest req, SolrQueryResponse rsp)
@@ -409,7 +340,7 @@ public class FileFloatSource extends ValueSource {
       UpdateRequestProcessor processor =
         req.getCore().getUpdateProcessingChain(null).createProcessor(req, rsp);
       try{
-        RequestHandlerUtils.handleCommit(processor, req.getParams(), true);
+        RequestHandlerUtils.handleCommit(req, processor, req.getParams(), true);
       }
       finally{
         processor.finish();
@@ -420,20 +351,5 @@ public class FileFloatSource extends ValueSource {
     public String getDescription() {
       return "Reload readerCache request handler";
     }
-
-    @Override
-    public String getSource() {
-      return "$URL$";
-    }
-
-    @Override
-    public String getSourceId() {
-      return "$Id$";
-    }
-
-    @Override
-    public String getVersion() {
-      return "$Revision$";
-    }    
   }
 }

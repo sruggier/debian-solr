@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,35 +14,91 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
-import org.apache.solr.util.AbstractSolrTestCase;
+import javax.script.ScriptEngineManager;
 
-public class TestBadConfig extends AbstractSolrTestCase {
+import org.junit.Assume;
 
-  @Override
-  public String getSchemaFile() { return "schema.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "bad_solrconfig.xml"; }
+public class TestBadConfig extends AbstractBadConfigTestBase {
 
-  @Override
-  public void setUp() throws Exception {
-    ignoreException("unset.sys.property");
+  public void testUnsetSysProperty() throws Exception {
+    assertConfigs("bad_solrconfig.xml","schema.xml","unset.sys.property");
+  }
+
+  public void testNRTModeProperty() throws Exception {
+    assertConfigs("bad-solrconfig-nrtmode.xml","schema.xml", "nrtMode");
+  }
+
+  public void testMultipleDirectoryFactories() throws Exception {
+      assertConfigs("bad-solrconfig-multiple-dirfactory.xml", "schema12.xml",
+                    "directoryFactory");
+  }
+  public void testMultipleIndexConfigs() throws Exception {
+      assertConfigs("bad-solrconfig-multiple-indexconfigs.xml", "schema12.xml",
+                    "indexConfig");
+  }
+  public void testMultipleCFS() throws Exception {
+      assertConfigs("bad-solrconfig-multiple-cfs.xml", "schema12.xml",
+                    "useCompoundFile");
+  }
+
+  public void testUpdateLogButNoVersionField() throws Exception {
+    
+    System.setProperty("enable.update.log", "true");
     try {
-      super.setUp();
-      fail("Exception should have been thrown");
-    } catch (Exception e) {
-      assertTrue(e.getMessage().contains("unset.sys.property"));
+      assertConfigs("solrconfig.xml", "schema12.xml", "_version_");
     } finally {
-      resetExceptionIgnores();
-      SolrConfig.severeErrors.clear();
+      System.clearProperty("enable.update.log");
     }
   }
-    
 
-  public void testNothing() {
-    // Empty test case as the real test is that the initialization of the TestHarness fails
-    assertTrue(true);
+  public void testBogusScriptEngine() throws Exception {
+    // sanity check
+    Assume.assumeTrue(null == (new ScriptEngineManager()).getEngineByName("giberish"));
+                      
+    assertConfigs("bad-solrconfig-bogus-scriptengine-name.xml",
+                  "schema.xml","giberish");
+  }
+
+  public void testMissingScriptFile() throws Exception {
+    // sanity check
+    Assume.assumeNotNull((new ScriptEngineManager()).getEngineByExtension("js"));
+    assertConfigs("bad-solrconfig-missing-scriptfile.xml",
+                  "schema.xml","a-file-name-that-does-not-exist.js");
+  }
+
+  public void testInvalidScriptFile() throws Exception {
+    // sanity check
+    Assume.assumeNotNull((new ScriptEngineManager()).getEngineByName("javascript"));
+    assertConfigs("bad-solrconfig-invalid-scriptfile.xml",
+                  "schema.xml","currency.xml");
+  }
+
+  public void testBogusMergePolicy() throws Exception {
+    assertConfigs("bad-mp-solrconfig.xml", "schema-minimal.xml",
+                  "DummyMergePolicy");
+    assertConfigs("bad-mpf-solrconfig.xml", "schema-minimal.xml",
+                  "DummyMergePolicyFactory");
+  }
+
+  public void testSchemaMutableButNotManaged() throws Exception {
+    assertConfigs("bad-solrconfig-schema-mutable-but-not-managed.xml",
+                  "schema-minimal.xml", "Unexpected arg(s): {mutable=false,managedSchemaResourceName=schema.xml}");
+  }
+
+  public void testManagedSchemaCannotBeNamedSchemaDotXml() throws Exception {
+    assertConfigs("bad-solrconfig-managed-schema-named-schema.xml.xml",
+                  "schema-minimal.xml", "managedSchemaResourceName can't be 'schema.xml'");
+  }
+  
+  public void testUnknownSchemaAttribute() throws Exception {
+    assertConfigs("bad-solrconfig-unexpected-schema-attribute.xml", "schema-minimal.xml",
+                  "Unexpected arg(s): {bogusParam=bogusValue}");
+  }
+
+  public void testTolerantUpdateProcessorNoUniqueKey() throws Exception {
+    assertConfigs("solrconfig-tolerant-update-minimal.xml", "schema-minimal.xml",
+                  "requires a schema that includes a uniqueKey field");
   }
 }

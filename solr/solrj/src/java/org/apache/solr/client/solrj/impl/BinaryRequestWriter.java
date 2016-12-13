@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -30,7 +30,7 @@ import java.util.List;
 /**
  * A RequestWriter which writes requests in the javabin format
  *
- * @version $Id$
+ *
  * @see org.apache.solr.client.solrj.request.RequestWriter
  * @since solr 1.4
  */
@@ -41,12 +41,12 @@ public class BinaryRequestWriter extends RequestWriter {
     if (req instanceof UpdateRequest) {
       UpdateRequest updateRequest = (UpdateRequest) req;
       if (isNull(updateRequest.getDocuments()) &&
-              isNull(updateRequest.getDeleteById()) &&
+              isNull(updateRequest.getDeleteByIdMap()) &&
               isNull(updateRequest.getDeleteQuery())
               && (updateRequest.getDocIterator() == null) ) {
         return null;
       }
-      List<ContentStream> l = new ArrayList<ContentStream>();
+      List<ContentStream> l = new ArrayList<>();
       l.add(new LazyContentStream(updateRequest));
       return l;
     } else {
@@ -58,36 +58,43 @@ public class BinaryRequestWriter extends RequestWriter {
 
   @Override
   public String getUpdateContentType() {
-    return "application/octet-stream";
+    return "application/javabin";
   }
 
   @Override
   public ContentStream getContentStream(final UpdateRequest request) throws IOException {
     final BAOS baos = new BAOS();
-      new JavaBinUpdateRequestCodec().marshal(request, baos);
+    new JavaBinUpdateRequestCodec().marshal(request, baos);
+    
     return new ContentStream() {
+      @Override
       public String getName() {
         return null;
       }
 
+      @Override
       public String getSourceInfo() {
         return "javabin";
       }
 
+      @Override
       public String getContentType() {
-        return "application/octet-stream";
+        return "application/javabin";
       }
 
+      @Override
       public Long getSize() // size if we know it, otherwise null
       {
         return new Long(baos.size());
       }
 
-      public InputStream getStream() throws IOException {
+      @Override
+      public InputStream getStream() {
         return new ByteArrayInputStream(baos.getbuf(), 0, baos.size());
       }
 
-      public Reader getReader() throws IOException {
+      @Override
+      public Reader getReader() {
         throw new RuntimeException("No reader available . this is a binarystream");
       }
     };
@@ -99,23 +106,15 @@ public class BinaryRequestWriter extends RequestWriter {
     if (request instanceof UpdateRequest) {
       UpdateRequest updateRequest = (UpdateRequest) request;
       new JavaBinUpdateRequestCodec().marshal(updateRequest, os);
-    } 
-
-  }/*
-   * A hack to get access to the protected internal buffer and avoid an additional copy 
+    }
+  }
+  
+  /*
+   * A hack to get access to the protected internal buffer and avoid an additional copy
    */
   class BAOS extends ByteArrayOutputStream {
     byte[] getbuf() {
       return super.buf;
-    }
-  }
-
-  @Override
-  public String getPath(SolrRequest req) {
-    if (req instanceof UpdateRequest) {
-      return "/update/javabin";
-    } else {
-      return req.getPath();
     }
   }
 }

@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
 
 import java.io.PrintWriter;
 import java.io.IOException;
@@ -94,7 +93,7 @@ public class TokenStreamToDot {
         final int endOffset = offsetAtt.endOffset();
         //System.out.println("start=" + startOffset + " end=" + endOffset + " len=" + inputText.length());
         if (inputText != null) {
-          arcLabel += "  / " + inputText.substring(startOffset, endOffset);
+          arcLabel += " / " + inputText.substring(startOffset, endOffset);
         } else {
           arcLabel += " / " + startOffset + "-" + endOffset;
         }

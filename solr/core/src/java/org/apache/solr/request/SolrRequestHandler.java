@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.request;
 
 import org.apache.solr.common.util.NamedList;
@@ -28,16 +27,16 @@ import org.apache.solr.response.SolrQueryResponse;
  * One way to register a SolrRequestHandler with the core is thorugh the <code>solrconfig.xml</code> file.
  * <p>
  * Example <code>solrconfig.xml</code> entry to register a <code>SolrRequestHandler</code> implementation to
- * handle all queries with a query type of "test":
+ * handle all queries with a Request Handler of "/test":
  * <p>
  * <code>
- *    &lt;requestHandler name="test" class="solr.tst.TestRequestHandler" /&gt;
+ *    &lt;requestHandler name="/test" class="solr.tst.TestRequestHandler" /&gt;
  * </code>
  * <p>
  * A single instance of any registered SolrRequestHandler is created
  * via the default constructor and is reused for all relevant queries.
  *
- * @version $Id$
+ *
  */
 public interface SolrRequestHandler extends SolrInfoMBean {
 
@@ -60,5 +59,7 @@ public interface SolrRequestHandler extends SolrInfoMBean {
    * all interface obligations.
    */
   public void handleRequest(SolrQueryRequest req, SolrQueryResponse rsp);
+
+  public static final String TYPE = "requestHandler";
 }
 

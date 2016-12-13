@@ -1,6 +1,4 @@
-package org.apache.solr.common.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.common.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.common.util;
 
 import java.util.*;
 
@@ -32,7 +31,7 @@ import java.util.*;
  * the same way.
  * </p>
  * <p>
- * This class does not provide efficient lookup by key, it's main purpose is
+ * This class does not provide efficient lookup by key, its main purpose is
  * to hold data to be serialized.  It aims to minimize overhead and to be
  * efficient at adding new elements.
  * </p>
@@ -43,6 +42,10 @@ public class SimpleOrderedMap<T> extends NamedList<T> {
     super();
   }
 
+  public SimpleOrderedMap(int sz) {
+    super(sz);
+  }
+
   /**
    * Creates an instance backed by an explicitly specified list of
    * pairwise names/values.
@@ -50,7 +53,7 @@ public class SimpleOrderedMap<T> extends NamedList<T> {
    * @param nameValuePairs underlying List which should be used to implement a SimpleOrderedMap; modifying this List will affect the SimpleOrderedMap.
    */
   @Deprecated
-  public SimpleOrderedMap(List nameValuePairs) {
+  public SimpleOrderedMap(List<Object> nameValuePairs) {
     super(nameValuePairs);
   }
   
@@ -60,8 +63,8 @@ public class SimpleOrderedMap<T> extends NamedList<T> {
 
   @Override
   public SimpleOrderedMap<T> clone() {
-    ArrayList newList = new ArrayList(nvPairs.size());
+    ArrayList<Object> newList = new ArrayList<>(nvPairs.size());
     newList.addAll(nvPairs);
-    return new SimpleOrderedMap<T>(newList);
+    return new SimpleOrderedMap<>(newList);
   }
 }

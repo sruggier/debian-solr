@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,20 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.servlet;
+
+import java.net.URLEncoder;
 
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
 
 
 public class DirectSolrConnectionTest extends AbstractSolrTestCase 
 {
-  @Override
-  public String getSchemaFile() { return "solr/crazy-path-to-schema.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solr/crazy-path-to-config.xml"; }
+
+  
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solr/crazy-path-to-config.xml", "solr/crazy-path-to-schema.xml");
+  }
+
   
   DirectSolrConnection direct;
   
@@ -70,7 +75,7 @@ public class DirectSolrConnectionTest extends AbstractSolrTestCase
     
     // Test using the Stream body parameter
     for( String cmd : cmds ) {
-      direct.request( "/update?"+CommonParams.STREAM_BODY+"="+cmd, null );
+      direct.request( "/update?"+CommonParams.STREAM_BODY+"="+URLEncoder.encode(cmd, "UTF-8"), null );
     }
     String got = direct.request( getIt, null );
     assertTrue( got.indexOf( value ) > 0 );

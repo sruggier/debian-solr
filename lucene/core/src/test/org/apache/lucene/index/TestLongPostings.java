@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,46 +14,61 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
-import java.io.StringReader;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.analysis.tokenattributes.TermAttribute;
+import org.apache.lucene.analysis.tokenattributes.TermToBytesRefAttribute;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.FixedBitSet;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 
+@SuppressCodecs({ "SimpleText", "Memory", "Direct" })
 public class TestLongPostings extends LuceneTestCase {
 
   // Produces a realistic unicode random string that
   // survives MockAnalyzer unchanged:
   private String getRandomTerm(String other) throws IOException {
-    Analyzer a = new MockAnalyzer(random);
+    Analyzer a = new MockAnalyzer(random());
     while(true) {
-      String s = _TestUtil.randomRealisticUnicodeString(random);
+      String s = TestUtil.randomRealisticUnicodeString(random());
       if (other != null && s.equals(other)) {
         continue;
       }
-      final TokenStream ts = a.tokenStream("foo", new StringReader(s));
-      final TermAttribute termAtt = ts.getAttribute(TermAttribute.class);
-      int count = 0;
-      ts.reset();
-      while(ts.incrementToken()) {
-        if (count == 0 && !termAtt.term().equals(s)) {
-          break;
+      try (TokenStream ts = a.tokenStream("foo", s)) {
+        final TermToBytesRefAttribute termAtt = ts.getAttribute(TermToBytesRefAttribute.class);
+        ts.reset();
+
+        int count = 0;
+        boolean changed = false;
+
+        while(ts.incrementToken()) {
+          final BytesRef termBytes = termAtt.getBytesRef();
+          if (count == 0 && !termBytes.utf8ToString().equals(s)) {
+            // The value was changed during analysis.  Keep iterating so the
+            // tokenStream is exhausted.
+            changed = true;
+          }
+          count++;
         }
-        count++;
-      }
-      if (count == 1) {
-        return s;
+
+        ts.end();
+        // Did we iterate just once and the value was unchanged?
+        if (!changed && count == 1) {
+          return s;
+        }
       }
     }
   }
@@ -63,7 +76,7 @@ public class TestLongPostings extends LuceneTestCase {
   public void testLongPostings() throws Exception {
     // Don't use _TestUtil.getTempDir so that we own the
     // randomness (ie same seed will point to same dir):
-    Directory dir = newFSDirectory(_TestUtil.getTempDir("longpostings" + "." + random.nextLong()));
+    Directory dir = newFSDirectory(createTempDir("longpostings" + "." + random().nextLong()));
 
     final int NUM_DOCS = atLeast(2000);
 
@@ -88,36 +101,32 @@ public class TestLongPostings extends LuceneTestCase {
 
     final FixedBitSet isS1 = new FixedBitSet(NUM_DOCS);
     for(int idx=0;idx<NUM_DOCS;idx++) {
-      if (random.nextBoolean()) {
+      if (random().nextBoolean()) {
         isS1.set(idx);
       }
     }
 
     final IndexReader r;
-    if (true) { 
-      final IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
-        .setMergePolicy(newLogMergePolicy());
-      iwc.setRAMBufferSizeMB(16.0 + 16.0 * random.nextDouble());
-      iwc.setMaxBufferedDocs(-1);
-      final RandomIndexWriter riw = new RandomIndexWriter(random, dir, iwc);
+    final IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()))
+      .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+      .setMergePolicy(newLogMergePolicy());
+    iwc.setRAMBufferSizeMB(16.0 + 16.0 * random().nextDouble());
+    iwc.setMaxBufferedDocs(-1);
+    final RandomIndexWriter riw = new RandomIndexWriter(random(), dir, iwc);
 
-      for(int idx=0;idx<NUM_DOCS;idx++) {
-        final Document doc = new Document();
-        String s = isS1.get(idx) ? s1 : s2;
-        final Field f = newField("field", s, Field.Index.ANALYZED);
-        final int count = _TestUtil.nextInt(random, 1, 4);
-        for(int ct=0;ct<count;ct++) {
-          doc.add(f);
-        }
-        riw.addDocument(doc);
+    for(int idx=0;idx<NUM_DOCS;idx++) {
+      final Document doc = new Document();
+      String s = isS1.get(idx) ? s1 : s2;
+      final Field f = newTextField("field", s, Field.Store.NO);
+      final int count = TestUtil.nextInt(random(), 1, 4);
+      for(int ct=0;ct<count;ct++) {
+        doc.add(f);
       }
-
-      r = riw.getReader();
-      riw.close();
-    } else {
-      r = IndexReader.open(dir);
+      riw.addDocument(doc);
     }
+
+    r = riw.getReader();
+    riw.close();
 
     /*
     if (VERBOSE) {
@@ -140,14 +149,12 @@ public class TestLongPostings extends LuceneTestCase {
     assertTrue(r.docFreq(new Term("field", s1)) > 0);
     assertTrue(r.docFreq(new Term("field", s2)) > 0);
 
-    final byte[] payload = new byte[100];
-
     int num = atLeast(1000);
     for(int iter=0;iter<num;iter++) {
 
       final String term;
       final boolean doS1;
-      if (random.nextBoolean()) {
+      if (random().nextBoolean()) {
         term = s1;
         doS1 = true;
       } else {
@@ -159,11 +166,11 @@ public class TestLongPostings extends LuceneTestCase {
         System.out.println("\nTEST: iter=" + iter + " doS1=" + doS1);
       }
         
-      final TermPositions postings = r.termPositions(new Term("field", term));
+      final PostingsEnum postings = MultiFields.getTermPositionsEnum(r, "field", new BytesRef(term));
 
       int docID = -1;
-      while(docID < Integer.MAX_VALUE) {
-        final int what = random.nextInt(3);
+      while(docID < DocIdSetIterator.NO_MORE_DOCS) {
+        final int what = random().nextInt(3);
         if (what == 0) {
           if (VERBOSE) {
             System.out.println("TEST: docID=" + docID + "; do next()");
@@ -180,27 +187,27 @@ public class TestLongPostings extends LuceneTestCase {
               expected++;
             }
           }
-          boolean result = postings.next();
-          if (!result) {
-            assertEquals(Integer.MAX_VALUE, expected);
-            if (VERBOSE) {
-              System.out.println("  end");
-            }
+          docID = postings.nextDoc();
+          if (VERBOSE) {
+            System.out.println("  got docID=" + docID);
+          }
+          assertEquals(expected, docID);
+          if (docID == DocIdSetIterator.NO_MORE_DOCS) {
             break;
-          } else {
-            docID = postings.doc();
-            if (VERBOSE) {
-              System.out.println("  got docID=" + docID);
-            }
-            assertEquals(expected, docID);
+          }
 
-            if (random.nextInt(6) == 3) {
-              final int freq = postings.freq();
-              assertTrue(freq >=1 && freq <= 4);
-              for(int pos=0;pos<freq;pos++) {
-                assertEquals(pos, postings.nextPosition());
-                if (random.nextBoolean() && postings.isPayloadAvailable()) {
-                  postings.getPayload(payload, 0);
+          if (random().nextInt(6) == 3) {
+            if (VERBOSE) {
+              System.out.println("    check positions");
+            }
+            final int freq = postings.freq();
+            assertTrue(freq >=1 && freq <= 4);
+            for(int pos=0;pos<freq;pos++) {
+              assertEquals(pos, postings.nextPosition());
+              if (random().nextBoolean()) {
+                postings.getPayload();
+                if (random().nextBoolean()) {
+                  postings.getPayload(); // get it again
                 }
               }
             }
@@ -209,12 +216,12 @@ public class TestLongPostings extends LuceneTestCase {
           // advance
           final int targetDocID;
           if (docID == -1) {
-            targetDocID = random.nextInt(NUM_DOCS+1);
+            targetDocID = random().nextInt(NUM_DOCS+1);
           } else {
-            targetDocID = docID + _TestUtil.nextInt(random, 1, NUM_DOCS - docID);
+            targetDocID = docID + TestUtil.nextInt(random(), 1, NUM_DOCS - docID);
           }
           if (VERBOSE) {
-            System.out.println("TEST: docID=" + docID + "; do skipTo(" + targetDocID + ")");
+            System.out.println("TEST: docID=" + docID + "; do advance(" + targetDocID + ")");
           }
           int expected = targetDocID;
           while(true) {
@@ -228,27 +235,24 @@ public class TestLongPostings extends LuceneTestCase {
             }
           }
           
-          final boolean result = postings.skipTo(targetDocID);
-          if (!result) {
-            assertEquals(Integer.MAX_VALUE, expected);
-            if (VERBOSE) {
-              System.out.println("  end");
-            }
+          docID = postings.advance(targetDocID);
+          if (VERBOSE) {
+            System.out.println("  got docID=" + docID);
+          }
+          assertEquals(expected, docID);
+          if (docID == DocIdSetIterator.NO_MORE_DOCS) {
             break;
-          } else {
-            docID = postings.doc();
-            if (VERBOSE) {
-              System.out.println("  got docID=" + docID);
-            }
-            assertEquals(expected, docID);
+          }
           
-            if (random.nextInt(6) == 3) {
-              final int freq = postings.freq();
-              assertTrue(freq >=1 && freq <= 4);
-              for(int pos=0;pos<freq;pos++) {
-                assertEquals(pos, postings.nextPosition());
-                if (random.nextBoolean() && postings.isPayloadAvailable()) {
-                  postings.getPayload(payload, 0);
+          if (random().nextInt(6) == 3) {
+            final int freq = postings.freq();
+            assertTrue(freq >=1 && freq <= 4);
+            for(int pos=0;pos<freq;pos++) {
+              assertEquals(pos, postings.nextPosition());
+              if (random().nextBoolean()) {
+                postings.getPayload();
+                if (random().nextBoolean()) {
+                  postings.getPayload(); // get it again
                 }
               }
             }
@@ -262,14 +266,14 @@ public class TestLongPostings extends LuceneTestCase {
   
   // a weaker form of testLongPostings, that doesnt check positions
   public void testLongPostingsNoPositions() throws Exception {
-    doTestLongPostingsNoPositions(IndexOptions.DOCS_ONLY);
+    doTestLongPostingsNoPositions(IndexOptions.DOCS);
     doTestLongPostingsNoPositions(IndexOptions.DOCS_AND_FREQS);
   }
   
   public void doTestLongPostingsNoPositions(IndexOptions options) throws Exception {
     // Don't use _TestUtil.getTempDir so that we own the
     // randomness (ie same seed will point to same dir):
-    Directory dir = newFSDirectory(_TestUtil.getTempDir("longpostings" + "." + random.nextLong()));
+    Directory dir = newFSDirectory(createTempDir("longpostings" + "." + random().nextLong()));
 
     final int NUM_DOCS = atLeast(2000);
 
@@ -294,26 +298,27 @@ public class TestLongPostings extends LuceneTestCase {
 
     final FixedBitSet isS1 = new FixedBitSet(NUM_DOCS);
     for(int idx=0;idx<NUM_DOCS;idx++) {
-      if (random.nextBoolean()) {
+      if (random().nextBoolean()) {
         isS1.set(idx);
       }
     }
 
     final IndexReader r;
     if (true) { 
-      final IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random))
+      final IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()))
         .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
         .setMergePolicy(newLogMergePolicy());
-      iwc.setRAMBufferSizeMB(16.0 + 16.0 * random.nextDouble());
+      iwc.setRAMBufferSizeMB(16.0 + 16.0 * random().nextDouble());
       iwc.setMaxBufferedDocs(-1);
-      final RandomIndexWriter riw = new RandomIndexWriter(random, dir, iwc);
+      final RandomIndexWriter riw = new RandomIndexWriter(random(), dir, iwc);
 
+      FieldType ft = new FieldType(TextField.TYPE_NOT_STORED);
+      ft.setIndexOptions(options);
       for(int idx=0;idx<NUM_DOCS;idx++) {
         final Document doc = new Document();
         String s = isS1.get(idx) ? s1 : s2;
-        final Field f = newField("field", s, Field.Index.ANALYZED);
-        f.setIndexOptions(options);
-        final int count = _TestUtil.nextInt(random, 1, 4);
+        final Field f = newField("field", s, ft);
+        final int count = TestUtil.nextInt(random(), 1, 4);
         for(int ct=0;ct<count;ct++) {
           doc.add(f);
         }
@@ -323,7 +328,7 @@ public class TestLongPostings extends LuceneTestCase {
       r = riw.getReader();
       riw.close();
     } else {
-      r = IndexReader.open(dir);
+      r = DirectoryReader.open(dir);
     }
 
     /*
@@ -347,14 +352,12 @@ public class TestLongPostings extends LuceneTestCase {
     assertTrue(r.docFreq(new Term("field", s1)) > 0);
     assertTrue(r.docFreq(new Term("field", s2)) > 0);
 
-    final byte[] payload = new byte[100];
-
     int num = atLeast(1000);
     for(int iter=0;iter<num;iter++) {
 
       final String term;
       final boolean doS1;
-      if (random.nextBoolean()) {
+      if (random().nextBoolean()) {
         term = s1;
         doS1 = true;
       } else {
@@ -363,14 +366,24 @@ public class TestLongPostings extends LuceneTestCase {
       }
 
       if (VERBOSE) {
-        System.out.println("\nTEST: iter=" + iter + " doS1=" + doS1);
+        System.out.println("\nTEST: iter=" + iter + " doS1=" + doS1 + " term=" + term);
       }
         
-      final TermDocs postings = r.termDocs(new Term("field", term));
+      final PostingsEnum docs;
+      final PostingsEnum postings;
+
+      if (options == IndexOptions.DOCS) {
+        docs = TestUtil.docs(random(), r, "field", new BytesRef(term), null, PostingsEnum.NONE);
+        postings = null;
+      } else {
+        docs = postings = TestUtil.docs(random(), r, "field", new BytesRef(term), null, PostingsEnum.FREQS);
+        assert postings != null;
+      }
+      assert docs != null;
 
       int docID = -1;
-      while(docID < Integer.MAX_VALUE) {
-        final int what = random.nextInt(3);
+      while(docID < DocIdSetIterator.NO_MORE_DOCS) {
+        final int what = random().nextInt(3);
         if (what == 0) {
           if (VERBOSE) {
             System.out.println("TEST: docID=" + docID + "; do next()");
@@ -387,35 +400,29 @@ public class TestLongPostings extends LuceneTestCase {
               expected++;
             }
           }
-          boolean result = postings.next();
-          if (!result) {
-            assertEquals(Integer.MAX_VALUE, expected);
-            if (VERBOSE) {
-              System.out.println("  end");
-            }
+          docID = docs.nextDoc();
+          if (VERBOSE) {
+            System.out.println("  got docID=" + docID);
+          }
+          assertEquals(expected, docID);
+          if (docID == DocIdSetIterator.NO_MORE_DOCS) {
             break;
-          } else {
-            docID = postings.doc();
-            if (VERBOSE) {
-              System.out.println("  got docID=" + docID);
-            }
-            assertEquals(expected, docID);
+          }
 
-            if (random.nextInt(6) == 3) {
-              final int freq = postings.freq();
-              assertTrue(freq >=1 && freq <= 4);
-            }
+          if (random().nextInt(6) == 3 && postings != null) {
+            final int freq = postings.freq();
+            assertTrue(freq >=1 && freq <= 4);
           }
         } else {
           // advance
           final int targetDocID;
           if (docID == -1) {
-            targetDocID = random.nextInt(NUM_DOCS+1);
+            targetDocID = random().nextInt(NUM_DOCS+1);
           } else {
-            targetDocID = docID + _TestUtil.nextInt(random, 1, NUM_DOCS - docID);
+            targetDocID = docID + TestUtil.nextInt(random(), 1, NUM_DOCS - docID);
           }
           if (VERBOSE) {
-            System.out.println("TEST: docID=" + docID + "; do skipTo(" + targetDocID + ")");
+            System.out.println("TEST: docID=" + docID + "; do advance(" + targetDocID + ")");
           }
           int expected = targetDocID;
           while(true) {
@@ -429,24 +436,18 @@ public class TestLongPostings extends LuceneTestCase {
             }
           }
           
-          final boolean result = postings.skipTo(targetDocID);
-          if (!result) {
-            assertEquals(Integer.MAX_VALUE, expected);
-            if (VERBOSE) {
-              System.out.println("  end");
-            }
+          docID = docs.advance(targetDocID);
+          if (VERBOSE) {
+            System.out.println("  got docID=" + docID);
+          }
+          assertEquals(expected, docID);
+          if (docID == DocIdSetIterator.NO_MORE_DOCS) {
             break;
-          } else {
-            docID = postings.doc();
-            if (VERBOSE) {
-              System.out.println("  got docID=" + docID);
-            }
-            assertEquals(expected, docID);
+          }
           
-            if (random.nextInt(6) == 3) {
-              final int freq = postings.freq();
-              assertTrue(freq >=1 && freq <= 4);
-            }
+          if (random().nextInt(6) == 3 && postings != null) {
+            final int freq = postings.freq();
+            assertTrue("got invalid freq=" + freq, freq >=1 && freq <= 4);
           }
         }
       }

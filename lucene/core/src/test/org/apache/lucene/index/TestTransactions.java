@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,16 +14,21 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.StringField;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.English;
+import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
 
 public class TestTransactions extends LuceneTestCase {
@@ -35,8 +38,13 @@ public class TestTransactions extends LuceneTestCase {
   private class RandomFailure extends MockDirectoryWrapper.Failure {
     @Override
     public void eval(MockDirectoryWrapper dir) throws IOException {
-      if (TestTransactions.doFail && random.nextInt() % 10 <= 3)
+      if (TestTransactions.doFail && random().nextInt() % 10 <= 3) {
+        if (VERBOSE) {
+          System.out.println(Thread.currentThread().getName() + " TEST: now fail on purpose");
+          new Throwable().printStackTrace(System.out);
+        }
         throw new IOException("now failing randomly but on purpose");
+      }
     }
   }
 
@@ -93,7 +101,7 @@ public class TestTransactions extends LuceneTestCase {
 
       IndexWriter writer1 = new IndexWriter(
           dir1,
-          newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).
+          newIndexWriterConfig(new MockAnalyzer(random())).
               setMaxBufferedDocs(3).
               setMergeScheduler(new ConcurrentMergeScheduler()).
               setMergePolicy(newLogMergePolicy(2))
@@ -104,7 +112,7 @@ public class TestTransactions extends LuceneTestCase {
       // happen @ different times
       IndexWriter writer2 = new IndexWriter(
           dir2,
-          newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)).
+          newIndexWriterConfig(new MockAnalyzer(random())).
               setMaxBufferedDocs(2).
               setMergeScheduler(new ConcurrentMergeScheduler()).
               setMergePolicy(newLogMergePolicy(3))
@@ -120,15 +128,25 @@ public class TestTransactions extends LuceneTestCase {
           try {
             writer1.prepareCommit();
           } catch (Throwable t) {
-            writer1.rollback();
-            writer2.rollback();
+            // release resources
+            try {
+              writer1.rollback();
+            } catch (Throwable ignore) {}
+            try {
+              writer2.rollback();
+            } catch (Throwable ignore) {}
             return;
           }
           try {
             writer2.prepareCommit();
-          } catch (Throwable t) { 	
-            writer1.rollback();
-            writer2.rollback();
+          } catch (Throwable t) {
+            // release resources
+            try {
+              writer1.rollback();
+            } catch (Throwable ignore) {}
+            try {
+              writer2.rollback();
+            } catch (Throwable ignore) {}
             return;
           }
 
@@ -145,11 +163,13 @@ public class TestTransactions extends LuceneTestCase {
 
     public void update(IndexWriter writer) throws IOException {
       // Add 10 docs:
+      FieldType customType = new FieldType(StringField.TYPE_NOT_STORED);
+      customType.setStoreTermVectors(true);
       for(int j=0; j<10; j++) {
         Document d = new Document();
-        int n = random.nextInt();
-        d.add(newField("id", Integer.toString(nextID++), Field.Store.YES, Field.Index.NOT_ANALYZED));
-        d.add(newField("contents", English.intToEnglish(n), Field.Store.NO, Field.Index.ANALYZED));
+        int n = random().nextInt();
+        d.add(newField("id", Integer.toString(nextID++), customType));
+        d.add(newTextField("contents", English.intToEnglish(n), Field.Store.NO));
         writer.addDocument(d);
       }
 
@@ -176,24 +196,34 @@ public class TestTransactions extends LuceneTestCase {
 
     @Override
     public void doWork() throws Throwable {
-      IndexReader r1, r2;
+      IndexReader r1=null, r2=null;
       synchronized(lock) {
-        r1 = IndexReader.open(dir1, true);
-        r2 = IndexReader.open(dir2, true);
+        try {
+          r1 = DirectoryReader.open(dir1);
+          r2 = DirectoryReader.open(dir2);
+        } catch (Exception e) {
+          // can be rethrown as RuntimeException if it happens during a close listener
+          if (!e.getMessage().contains("on purpose")) {
+            throw e;
+          }
+          // release resources
+          IOUtils.closeWhileHandlingException(r1, r2);
+          return;
+        }
       }
-      if (r1.numDocs() != r2.numDocs())
+      if (r1.numDocs() != r2.numDocs()) {
         throw new RuntimeException("doc counts differ: r1=" + r1.numDocs() + " r2=" + r2.numDocs());
-      r1.close();
-      r2.close();
+      }
+      IOUtils.closeWhileHandlingException(r1, r2);
     }
   }
 
   public void initIndex(Directory dir) throws Throwable {
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
     for(int j=0; j<7; j++) {
       Document d = new Document();
-      int n = random.nextInt();
-      d.add(newField("contents", English.intToEnglish(n), Field.Store.NO, Field.Index.ANALYZED));
+      int n = random().nextInt();
+      d.add(newTextField("contents", English.intToEnglish(n), Field.Store.NO));
       writer.addDocument(d);
     }
     writer.close();
@@ -201,14 +231,17 @@ public class TestTransactions extends LuceneTestCase {
 
   public void testTransactions() throws Throwable {
     // we cant use non-ramdir on windows, because this test needs to double-write.
-    MockDirectoryWrapper dir1 = new MockDirectoryWrapper(random, new RAMDirectory());
-    MockDirectoryWrapper dir2 = new MockDirectoryWrapper(random, new RAMDirectory());
-    dir1.setPreventDoubleWrite(false);
-    dir2.setPreventDoubleWrite(false);
+    MockDirectoryWrapper dir1 = new MockDirectoryWrapper(random(), new RAMDirectory());
+    MockDirectoryWrapper dir2 = new MockDirectoryWrapper(random(), new RAMDirectory());
     dir1.failOn(new RandomFailure());
     dir2.failOn(new RandomFailure());
     dir1.setFailOnOpenInput(false);
     dir2.setFailOnOpenInput(false);
+
+    // We throw exceptions in deleteFile, which creates
+    // leftover files:
+    dir1.setAssertNoUnrefencedFilesOnClose(false);
+    dir2.setAssertNoUnrefencedFilesOnClose(false);
 
     initIndex(dir1);
     initIndex(dir2);

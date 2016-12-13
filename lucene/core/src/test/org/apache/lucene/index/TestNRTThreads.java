@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,32 +14,46 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
+import org.junit.Before;
 
 // TODO
 //   - mix in forceMerge, addIndexes
 //   - randomoly mix in non-congruent docs
 
+@SuppressCodecs({ "SimpleText", "Memory", "Direct" })
 public class TestNRTThreads extends ThreadedIndexingAndSearchingTestCase {
+  
+  private boolean useNonNrtReaders = true;
+
+  @Before
+  public void setUp() throws Exception {
+    super.setUp();
+    useNonNrtReaders  = random().nextBoolean();
+  }
   
   @Override
   protected void doSearching(ExecutorService es, long stopTime) throws Exception {
 
     boolean anyOpenDelFiles = false;
 
-    IndexReader r = IndexReader.open(writer, true);
+    DirectoryReader r = DirectoryReader.open(writer);
 
     while (System.currentTimeMillis() < stopTime && !failed.get()) {
-      if (random.nextBoolean()) {
+      if (random().nextBoolean()) {
         if (VERBOSE) {
           System.out.println("TEST: now reopen r=" + r);
         }
-        final IndexReader r2 = IndexReader.openIfChanged(r);
+        final DirectoryReader r2 = DirectoryReader.openIfChanged(r);
         if (r2 != null) {
           r.close();
           r = r2;
@@ -61,7 +73,7 @@ public class TestNRTThreads extends ThreadedIndexingAndSearchingTestCase {
         if (VERBOSE) {
           System.out.println("TEST: now open");
         }
-        r = IndexReader.open(writer, true);
+        r = DirectoryReader.open(writer);
       }
       if (VERBOSE) {
         System.out.println("TEST: got new reader=" + r);
@@ -86,9 +98,25 @@ public class TestNRTThreads extends ThreadedIndexingAndSearchingTestCase {
 
     assertFalse("saw non-zero open-but-deleted count", anyOpenDelFiles);
   }
+  
+  @Override
+  protected Directory getDirectory(Directory in) {
+    assert in instanceof MockDirectoryWrapper;
+    if (!useNonNrtReaders) ((MockDirectoryWrapper) in).setAssertNoDeleteOpenFile(true);
+    return in;
+  }
 
+  @Override
+  protected void doAfterWriter(ExecutorService es) throws Exception {
+    // Force writer to do reader pooling, always, so that
+    // all merged segments, even for merges before
+    // doSearching is called, are warmed:
+    writer.getReader().close();
+  }
+  
   private IndexSearcher fixedSearcher;
 
+  @Override
   protected IndexSearcher getCurrentSearcher() throws Exception {
     return fixedSearcher;
   }
@@ -98,18 +126,21 @@ public class TestNRTThreads extends ThreadedIndexingAndSearchingTestCase {
     if (s != fixedSearcher) {
       // Final searcher:
       s.getIndexReader().close();
-      s.close();
     }
   }
 
   @Override
   protected IndexSearcher getFinalSearcher() throws Exception {
     final IndexReader r2;
-    if (random.nextBoolean()) {
-      r2 = writer.getReader();
+    if (useNonNrtReaders) {
+      if (random().nextBoolean()) {
+        r2 = writer.getReader();
+      } else {
+        writer.commit();
+        r2 = DirectoryReader.open(dir);
+      }
     } else {
-      writer.commit();
-      r2 = IndexReader.open(dir);
+      r2 = writer.getReader();
     }
     return newSearcher(r2);
   }

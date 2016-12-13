@@ -1,5 +1,4 @@
-package org.apache.solr.core;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,53 +14,61 @@ package org.apache.solr.core;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.core;
+import java.io.File;
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.nio.file.Path;
 
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockFactory; // javadocs
 import org.apache.lucene.store.MMapDirectory;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.IOException;
-
 
 /**
- *  Directly provide MMapDirectory instead of relying on {@link org.apache.lucene.store.FSDirectory#open}
- *
+ * Directly provide MMapDirectory instead of relying on {@link org.apache.lucene.store.FSDirectory#open}.
+ * <p>
  * Can set the following parameters:
  * <ul>
- *  <li>unmap -- See {@link org.apache.lucene.store.MMapDirectory#setUseUnmap(boolean)}</li>
- *  <li>maxChunkSize -- The Max chunk size.  See {@link org.apache.lucene.store.MMapDirectory#setMaxChunkSize(int)}</li>
+ *  <li>unmap -- See {@link MMapDirectory#setUseUnmap(boolean)}</li>
+ *  <li>maxChunkSize -- The Max chunk size.  See {@link MMapDirectory#MMapDirectory(Path, LockFactory, int)}</li>
  * </ul>
  *
  **/
-public class MMapDirectoryFactory extends DirectoryFactory {
-  private transient static Logger log = LoggerFactory.getLogger(MMapDirectoryFactory.class);
+public class MMapDirectoryFactory extends StandardDirectoryFactory {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   boolean unmapHack;
   private int maxChunk;
 
   @Override
-  public Directory open(String path) throws IOException {
-    MMapDirectory mapDirectory = new MMapDirectory(new File(path));
-    try {
-      mapDirectory.setUseUnmap(unmapHack);
-    } catch (Exception e) {
-      log.warn("Unmap not supported on this JVM, continuing on without setting unmap", e);
-    }
-    mapDirectory.setMaxChunkSize(maxChunk);
-    return mapDirectory;
-  }
-
-  @Override
   public void init(NamedList args) {
+    super.init(args);
     SolrParams params = SolrParams.toSolrParams( args );
-    maxChunk = params.getInt("maxChunkSize", MMapDirectory.DEFAULT_MAX_BUFF);
+    maxChunk = params.getInt("maxChunkSize", MMapDirectory.DEFAULT_MAX_CHUNK_SIZE);
     if (maxChunk <= 0){
       throw new IllegalArgumentException("maxChunk must be greater than 0");
     }
     unmapHack = params.getBool("unmap", true);
+  }
+
+  @Override
+  protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) throws IOException {
+    // we pass NoLockFactory, because the real lock factory is set later by injectLockFactory:
+    MMapDirectory mapDirectory = new MMapDirectory(new File(path).toPath(), lockFactory, maxChunk);
+    try {
+      mapDirectory.setUseUnmap(unmapHack);
+    } catch (IllegalArgumentException e) {
+      log.warn("Unmap not supported on this JVM, continuing on without setting unmap", e);
+    }
+    return mapDirectory;
+  }
+  
+  @Override
+  public boolean isAbsolute(String path) {
+    return new File(path).isAbsolute();
   }
 }

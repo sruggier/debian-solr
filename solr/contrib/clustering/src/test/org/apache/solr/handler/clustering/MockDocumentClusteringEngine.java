@@ -1,5 +1,4 @@
-package org.apache.solr.handler.clustering;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,6 +14,7 @@ package org.apache.solr.handler.clustering;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.clustering;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.search.DocSet;
@@ -26,14 +26,17 @@ import org.apache.solr.search.DocSet;
  **/
 public class MockDocumentClusteringEngine extends DocumentClusteringEngine {
   @Override
-  public NamedList cluster(DocSet docs, SolrParams solrParams) {
-    NamedList result = new NamedList();
-    return result;
+  public NamedList<?> cluster(DocSet docs, SolrParams solrParams) {
+    return new NamedList<>();
   }
 
   @Override
-  public NamedList cluster(SolrParams solrParams) {
-    NamedList result = new NamedList();
-    return result;
+  public NamedList<?> cluster(SolrParams solrParams) {
+    return new NamedList<>();
+  }
+  
+  @Override
+  public boolean isAvailable() {
+    return true;
   }
 }

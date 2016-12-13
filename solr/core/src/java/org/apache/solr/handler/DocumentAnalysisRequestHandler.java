@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,13 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
+
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.invoke.MethodHandles;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.Set;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.util.AttributeSource;
+import org.apache.lucene.util.BytesRef;
 import org.apache.solr.client.solrj.request.DocumentAnalysisRequest;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
@@ -36,21 +45,16 @@ import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.schema.SchemaField;
+import org.apache.solr.common.EmptyEntityResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamConstants;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.*;
+import static org.apache.solr.common.params.CommonParams.NAME;
 
 /**
- * An analysis handler that provides a breakdown of the analysis process of provided docuemnts. This handler expects a
+ * An analysis handler that provides a breakdown of the analysis process of provided documents. This handler expects a
  * (single) content stream of the following format:
- * <p/>
+ * <br>
  * <pre><code>
  *  &lt;docs&gt;
  *      &lt;doc&gt;
@@ -63,23 +67,21 @@ import java.util.*;
  *      ...
  *  &lt;/docs&gt;
  * </code></pre>
- * <p/>
+ * <br>
  * <em><b>Note: Each document must contain a field which serves as the unique key. This key is used in the returned
- * response to assoicate an analysis breakdown to the analyzed document.</b></em>
- * <p/>
- * <p/>
- * <p/>
+ * response to associate an analysis breakdown to the analyzed document.</b></em>
+ * <p>
  * Like the {@link org.apache.solr.handler.FieldAnalysisRequestHandler}, this handler also supports query analysis by
- * sending either an "analysis.query" or "q" request paraemter that holds the query text to be analyzed. It also
+ * sending either an "analysis.query" or "q" request parameter that holds the query text to be analyzed. It also
  * supports the "analysis.showmatch" parameter which when set to {@code true}, all field tokens that match the query
  * tokens will be marked as a "match".
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
 
-  public static final Logger log = LoggerFactory.getLogger(DocumentAnalysisRequestHandler.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final XMLErrorLogger xmllog = new XMLErrorLogger(log);
 
   private static final float DEFAULT_BOOST = 1.0f;
@@ -91,6 +93,8 @@ public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
     super.init(args);
 
     inputFactory = XMLInputFactory.newInstance();
+    EmptyEntityResolver.configureXMLInputFactory(inputFactory);
+    inputFactory.setXMLReporter(xmllog);
     try {
       // The java 1.6 bundled stax parser (sjsxp) does not currently have a thread-safe
       // XMLInputFactory, as that implementation tries to cache and reuse the
@@ -101,10 +105,9 @@ public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
       inputFactory.setProperty("reuse-instance", Boolean.FALSE);
     } catch (IllegalArgumentException ex) {
       // Other implementations will likely throw this exception since "reuse-instance"
-      // isimplementation specific.
+      // is implementation specific.
       log.debug("Unable to set the 'reuse-instance' property for the input factory: " + inputFactory);
     }
-    inputFactory.setXMLReporter(xmllog);
   }
 
   /**
@@ -119,21 +122,6 @@ public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
   @Override
   public String getDescription() {
     return "Provides a breakdown of the analysis process of provided documents";
-  }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 
 
@@ -207,11 +195,11 @@ public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
   NamedList<Object> handleAnalysisRequest(DocumentAnalysisRequest request, IndexSchema schema) {
 
     SchemaField uniqueKeyField = schema.getUniqueKeyField();
-    NamedList<Object> result = new SimpleOrderedMap<Object>();
+    NamedList<Object> result = new SimpleOrderedMap<>();
 
     for (SolrInputDocument document : request.getDocuments()) {
 
-      NamedList<NamedList> theTokens = new SimpleOrderedMap<NamedList>();
+      NamedList<NamedList> theTokens = new SimpleOrderedMap<>();
       result.add(document.getFieldValue(uniqueKeyField.getName()).toString(), theTokens);
       for (String name : document.getFieldNames()) {
 
@@ -221,39 +209,39 @@ public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
           continue;
         }
 
-        NamedList<Object> fieldTokens = new SimpleOrderedMap<Object>();
+        NamedList<Object> fieldTokens = new SimpleOrderedMap<>();
         theTokens.add(name, fieldTokens);
 
         FieldType fieldType = schema.getFieldType(name);
 
         final String queryValue = request.getQuery();
-        Set<String> termsToMatch;
+        Set<BytesRef> termsToMatch;
         try {
           termsToMatch = (queryValue != null && request.isShowMatch())
             ? getQueryTokenSet(queryValue, fieldType.getQueryAnalyzer())
-            : Collections.<String>emptySet();
+            : EMPTY_BYTES_SET;
         } catch (Exception e) {
           // ignore analysis exceptions since we are applying arbitrary text to all fields
-          termsToMatch = Collections.<String>emptySet();
+          termsToMatch = EMPTY_BYTES_SET;
         }
 
         if (request.getQuery() != null) {
           try {
-            AnalysisContext analysisContext = new AnalysisContext(fieldType, fieldType.getQueryAnalyzer(), Collections.<String>emptySet());
-            NamedList<List<NamedList>> tokens = analyzeValue(request.getQuery(), analysisContext);
-            fieldTokens.add("query", tokens);
+            AnalysisContext analysisContext = new AnalysisContext(fieldType, fieldType.getQueryAnalyzer(), EMPTY_BYTES_SET);
+            fieldTokens.add("query", analyzeValue(request.getQuery(), analysisContext));
           } catch (Exception e) {
             // ignore analysis exceptions since we are applying arbitrary text to all fields
           }
         }
 
-        Analyzer analyzer = fieldType.getAnalyzer();
+        Analyzer analyzer = fieldType.getIndexAnalyzer();
         AnalysisContext analysisContext = new AnalysisContext(fieldType, analyzer, termsToMatch);
         Collection<Object> fieldValues = document.getFieldValues(name);
-        NamedList<NamedList<List<NamedList>>> indexTokens = new SimpleOrderedMap<NamedList<List<NamedList>>>();
+        NamedList<NamedList<? extends Object>> indexTokens 
+          = new SimpleOrderedMap<>();
         for (Object fieldValue : fieldValues) {
-          NamedList<List<NamedList>> tokens = analyzeValue(fieldValue.toString(), analysisContext);
-          indexTokens.add(String.valueOf(fieldValue), tokens);
+          indexTokens.add(String.valueOf(fieldValue), 
+                          analyzeValue(fieldValue.toString(), analysisContext));
         }
         fieldTokens.add("index", indexTokens);
       }
@@ -327,7 +315,7 @@ public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
 
           for (int i = 0; i < reader.getAttributeCount(); i++) {
             String attrName = reader.getAttributeLocalName(i);
-            if ("name".equals(attrName)) {
+            if (NAME.equals(attrName)) {
               fieldName = reader.getAttributeValue(i);
             }
           }
@@ -346,19 +334,17 @@ public class DocumentAnalysisRequestHandler extends AnalysisRequestHandlerBase {
    */
   private ContentStream extractSingleContentStream(SolrQueryRequest req) {
     Iterable<ContentStream> streams = req.getContentStreams();
+    String exceptionMsg = "DocumentAnalysisRequestHandler expects a single content stream with documents to analyze";
     if (streams == null) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
-              "DocumentAnlysisRequestHandler expects a single content stream with documents to analyze");
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, exceptionMsg);
     }
     Iterator<ContentStream> iter = streams.iterator();
     if (!iter.hasNext()) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
-              "DocumentAnlysisRequestHandler expects a single content stream with documents to analyze");
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, exceptionMsg);
     }
     ContentStream stream = iter.next();
     if (iter.hasNext()) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
-              "DocumentAnlysisRequestHandler expects a single content stream with documents to analyze");
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, exceptionMsg);
     }
     return stream;
   }

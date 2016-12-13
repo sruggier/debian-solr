@@ -1,5 +1,4 @@
-package org.apache.solr.spelling;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,18 +14,28 @@ package org.apache.solr.spelling;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.spelling;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.Token;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.analysis.WhitespaceAnalyzer;
+import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
+import org.apache.lucene.search.spell.LevensteinDistance;
+import org.apache.lucene.search.spell.StringDistance;
+import org.apache.lucene.search.spell.SuggestWord;
+import org.apache.lucene.search.spell.SuggestWordQueue;
+import org.apache.solr.client.solrj.response.SpellCheckResponse;
+import org.apache.solr.common.params.SpellingParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
+import org.apache.solr.handler.component.SpellCheckMergeData;
 import org.apache.solr.schema.FieldType;
+import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.search.SolrIndexSearcher;
 
 import java.io.IOException;
-import java.util.Collection;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 
 
 /**
@@ -54,18 +63,88 @@ public abstract class SolrSpellChecker {
       name = DEFAULT_DICTIONARY_NAME;
     }
     field = (String)config.get(FIELD);
-    if (field != null && core.getSchema().getFieldTypeNoEx(field) != null)  {
-      analyzer = core.getSchema().getFieldType(field).getQueryAnalyzer();
+    IndexSchema schema = core.getLatestSchema();
+    if (field != null && schema.getFieldTypeNoEx(field) != null)  {
+      analyzer = schema.getFieldType(field).getQueryAnalyzer();
     }
     fieldTypeName = (String) config.get(FIELD_TYPE);
-    if (core.getSchema().getFieldTypes().containsKey(fieldTypeName))  {
-      FieldType fieldType = core.getSchema().getFieldTypes().get(fieldTypeName);
+    if (schema.getFieldTypes().containsKey(fieldTypeName))  {
+      FieldType fieldType = schema.getFieldTypes().get(fieldTypeName);
       analyzer = fieldType.getQueryAnalyzer();
     }
     if (analyzer == null)   {
-      analyzer = new WhitespaceAnalyzer(core.getSolrConfig().luceneMatchVersion);
+      analyzer = new WhitespaceAnalyzer();
     }
     return name;
+  }
+  /**
+   * Integrate spelling suggestions from the various shards in a distributed environment.
+   */
+  public SpellingResult mergeSuggestions(SpellCheckMergeData mergeData, int numSug, int count, boolean extendedResults) {
+    float min = 0.5f;
+    try {
+      min = getAccuracy();
+    } catch(UnsupportedOperationException uoe) {
+      //just use .5 as a default
+    }
+    
+    StringDistance sd = null;
+    try {
+      sd = getStringDistance() == null ? new LevensteinDistance() : getStringDistance();    
+    } catch(UnsupportedOperationException uoe) {
+      sd = new LevensteinDistance();
+    }
+    
+    SpellingResult result = new SpellingResult();
+    for (Map.Entry<String, HashSet<String>> entry : mergeData.origVsSuggested.entrySet()) {
+      String original = entry.getKey();
+      
+      //Only use this suggestion if all shards reported it as misspelled, 
+      //unless it was not a term original to the user's query
+      //(WordBreakSolrSpellChecker can add new terms to the response, and we want to keep these)
+      Integer numShards = mergeData.origVsShards.get(original);
+      if(numShards<mergeData.totalNumberShardResponses && mergeData.isOriginalToQuery(original)) {
+        continue;
+      }
+      
+      HashSet<String> suggested = entry.getValue();
+      SuggestWordQueue sugQueue = new SuggestWordQueue(numSug);
+      for (String suggestion : suggested) {
+        SuggestWord sug = mergeData.suggestedVsWord.get(suggestion);
+        sug.score = sd.getDistance(original, sug.string);
+        if (sug.score < min) continue;
+        sugQueue.insertWithOverflow(sug);
+        if (sugQueue.size() == numSug) {
+          // if queue full, maintain the minScore score
+          min = sugQueue.top().score;
+        }
+      }
+
+      // create token
+      SpellCheckResponse.Suggestion suggestion = mergeData.origVsSuggestion.get(original);
+      Token token = new Token(original, suggestion.getStartOffset(), suggestion.getEndOffset());
+
+      // get top 'count' suggestions out of 'sugQueue.size()' candidates
+      SuggestWord[] suggestions = new SuggestWord[Math.min(count, sugQueue.size())];
+      // skip the first sugQueue.size() - count elements
+      for (int k=0; k < sugQueue.size() - count; k++) sugQueue.pop();
+      // now collect the top 'count' responses
+      for (int k = Math.min(count, sugQueue.size()) - 1; k >= 0; k--)  {
+        suggestions[k] = sugQueue.pop();
+      }
+
+      if (extendedResults) {
+        Integer o = mergeData.origVsFreq.get(original);
+        if (o != null) result.addFrequency(token, o);
+        for (SuggestWord word : suggestions)
+          result.add(token, word.string, word.freq);
+      } else {
+        List<String> words = new ArrayList<>(sugQueue.size());
+        for (SuggestWord word : suggestions) words.add(word.string);
+        result.add(token, words);
+      }
+    }
+    return result;
   }
   
   public Analyzer getQueryAnalyzer() {
@@ -79,84 +158,42 @@ public abstract class SolrSpellChecker {
   /**
    * Reloads the index.  Useful if an external process is responsible for building the spell checker.
    *
-   * @throws java.io.IOException
+   * @throws IOException If there is a low-level I/O error.
    */
   public abstract void reload(SolrCore core, SolrIndexSearcher searcher) throws IOException;
 
   /**
    * (re)Builds the spelling index.  May be a NOOP if the implementation doesn't require building, or can't be rebuilt.
    */
-  public abstract void build(SolrCore core, SolrIndexSearcher searcher);
-
+  public abstract void build(SolrCore core, SolrIndexSearcher searcher) throws IOException;
+  
   /**
-   * Assumes count = 1, onlyMorePopular = false, extendedResults = false
-   *
-   * @see #getSuggestions(Collection, org.apache.lucene.index.IndexReader, int, boolean, boolean)
-   *
-   * @deprecated This method will be removed in 4.x in favor of {@link #getSuggestions(org.apache.solr.spelling.SpellingOptions)}
+   * Get the value of {@link SpellingParams#SPELLCHECK_ACCURACY} if supported.  
+   * Otherwise throws UnsupportedOperationException.
    */
-  @Deprecated
-  public SpellingResult getSuggestions(Collection<Token> tokens, IndexReader reader) throws IOException {
-    return getSuggestions(tokens, reader, 1, false, false);
+  protected float getAccuracy() {
+    throw new UnsupportedOperationException();
+  }
+  
+  /**
+   * Get the distance implementation used by this spellchecker, or NULL if not applicable.
+   */
+  protected StringDistance getStringDistance()  {
+    throw new UnsupportedOperationException();
   }
 
-  /**
-   * Assumes onlyMorePopular = false, extendedResults = false
-   *
-   * @see #getSuggestions(Collection, org.apache.lucene.index.IndexReader, int, boolean, boolean)
-   *
-   * @deprecated This method will be removed in 4.x in favor of {@link #getSuggestions(org.apache.solr.spelling.SpellingOptions)}
-   */
-  @Deprecated
-  public SpellingResult getSuggestions(Collection<Token> tokens, IndexReader reader, int count) throws IOException {
-    return getSuggestions(tokens, reader, count, false, false);
-  }
-
-
-  /**
-   * Assumes count = 1.
-   *
-   * @see #getSuggestions(Collection, org.apache.lucene.index.IndexReader, int, boolean, boolean)
-   *
-   * @deprecated This method will be removed in 4.x in favor of {@link #getSuggestions(org.apache.solr.spelling.SpellingOptions)}
-   */
-  @Deprecated
-  public SpellingResult getSuggestions(Collection<Token> tokens, IndexReader reader, boolean onlyMorePopular, boolean extendedResults) throws IOException {
-    return getSuggestions(tokens, reader, 1, onlyMorePopular, extendedResults);
-  }
 
   /**
    * Get suggestions for the given query.  Tokenizes the query using a field appropriate Analyzer.
    * The {@link SpellingResult#getSuggestions()} suggestions must be ordered by best suggestion first.
-   *
-   * @param tokens          The Tokens to be spell checked.
-   * @param reader          The (optional) IndexReader.  If there is not IndexReader, than extendedResults are not possible
-   * @param count The maximum number of suggestions to return
-   * @param onlyMorePopular  TODO
-   * @param extendedResults  TODO
-   * @throws IOException
-   *
-   * @deprecated This method will be removed in 4.x in favor of {@link #getSuggestions(org.apache.solr.spelling.SpellingOptions)}
-   */
-  @Deprecated
-  public abstract SpellingResult getSuggestions(Collection<Token> tokens, IndexReader reader, int count,
-                                                boolean onlyMorePopular, boolean extendedResults)
-          throws IOException;
-
-   /**
-   * Get suggestions for the given query.  Tokenizes the query using a field appropriate Analyzer.
-   * The {@link SpellingResult#getSuggestions()} suggestions must be ordered by best suggestion first.
-   * <p/>
-    * Note: This method is abstract in Solr 4.0 and beyond and is the recommended way of implementing the spell checker.  For now,
-    * it calls {@link #getSuggestions(java.util.Collection, org.apache.lucene.index.IndexReader, boolean, boolean)}.
-    *
    *
    * @param options The {@link SpellingOptions} to use
    * @return The {@link SpellingResult} suggestions
    * @throws IOException if there is an error producing suggestions
    */
-  public SpellingResult getSuggestions(SpellingOptions options) throws IOException{
-     return getSuggestions(options.tokens, options.reader, options.count, options.onlyMorePopular, options.extendedResults);
-   }
-
+  public abstract SpellingResult getSuggestions(SpellingOptions options) throws IOException;
+  
+  public boolean isSuggestionsMayOverlap() {
+    return false;
+  }
 }

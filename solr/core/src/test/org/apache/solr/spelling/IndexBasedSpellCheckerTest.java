@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,38 +16,42 @@
  */
 package org.apache.solr.spelling;
 
-import org.apache.lucene.analysis.Token;
-import org.apache.lucene.analysis.WhitespaceAnalyzer;
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.search.spell.JaroWinklerDistance;
-import org.apache.lucene.search.spell.SpellChecker;
-import org.apache.lucene.search.spell.StringDistance;
-import org.apache.lucene.search.spell.SuggestWord;
-import org.apache.lucene.search.spell.SuggestWordFrequencyComparator;
-import org.apache.lucene.store.Directory;
-import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.core.SolrCore;
-import org.apache.solr.handler.component.SpellCheckComponent;
-import org.apache.solr.util.RefCounted;
-import org.apache.solr.search.SolrIndexSearcher;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
 import java.io.File;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.Map;
 
+import org.apache.lucene.analysis.Token;
+import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.document.TextField;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.search.spell.JaroWinklerDistance;
+import org.apache.lucene.search.spell.SpellChecker;
+import org.apache.lucene.search.spell.StringDistance;
+import org.apache.lucene.search.spell.SuggestMode;
+import org.apache.lucene.search.spell.SuggestWord;
+import org.apache.lucene.search.spell.SuggestWordFrequencyComparator;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.LuceneTestCase.SuppressTempFileChecks;
+import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.common.util.NamedList;
+import org.apache.solr.core.SolrCore;
+import org.apache.solr.handler.component.SpellCheckComponent;
+import org.apache.solr.search.SolrIndexSearcher;
+import org.apache.solr.util.RefCounted;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
 /**
  * @since solr 1.3
  */
+@SuppressTempFileChecks(bugUrl = "https://issues.apache.org/jira/browse/SOLR-1877 Spellcheck IndexReader leak bug?")
 public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
   protected static SpellingQueryConverter queryConverter;
 
@@ -74,7 +78,7 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
   }
   
   @AfterClass
-  public static void afterClass() throws Exception {
+  public static void afterClass() {
     queryConverter = null;
   }
 
@@ -106,8 +110,8 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     NamedList spellchecker = new NamedList();
     spellchecker.add("classname", IndexBasedSpellChecker.class.getName());
 
-    File indexDir = new File(TEMP_DIR, "spellingIdx" + new Date().getTime());
-    indexDir.mkdirs();
+    File indexDir = createTempDir().toFile();
+
     spellchecker.add(AbstractLuceneSpellChecker.INDEX_DIR, indexDir.getAbsolutePath());
     spellchecker.add(AbstractLuceneSpellChecker.FIELD, "title");
     spellchecker.add(AbstractLuceneSpellChecker.SPELLCHECKER_ARG_NAME, spellchecker);
@@ -121,7 +125,7 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     try {
     checker.build(core, searcher);
 
-    IndexReader reader = searcher.getReader();
+    IndexReader reader = searcher.getIndexReader();
     Collection<Token> tokens = queryConverter.convert("documemt");
     SpellingOptions spellOpts = new SpellingOptions(tokens, reader);
     SpellingResult result = checker.getSuggestions(spellOpts);
@@ -139,7 +143,7 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     result = checker.getSuggestions(spellOpts);
     assertTrue("result is null and it shouldn't be", result != null);
     suggestions = result.get(spellOpts.tokens.iterator().next());
-    assertTrue("suggestions is not null and it should be", suggestions == null);
+    assertTrue("suggestions size should be 0", suggestions.size()==0);
 
     //test something that is spelled correctly
     spellOpts.tokens = queryConverter.convert("document");
@@ -182,7 +186,7 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     NamedList spellchecker = new NamedList();
     spellchecker.add("classname", IndexBasedSpellChecker.class.getName());
 
-    File indexDir = new File(TEMP_DIR, "spellingIdx" + new Date().getTime());
+    File indexDir = createTempDir().toFile();
     indexDir.mkdirs();
     spellchecker.add(AbstractLuceneSpellChecker.INDEX_DIR, indexDir.getAbsolutePath());
     spellchecker.add(AbstractLuceneSpellChecker.FIELD, "title");
@@ -196,9 +200,9 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     try {
     checker.build(core, searcher);
 
-    IndexReader reader = searcher.getReader();
+    IndexReader reader = searcher.getIndexReader();
     Collection<Token> tokens = queryConverter.convert("documemt");
-    SpellingOptions spellOpts = new SpellingOptions(tokens, reader, 1, false, true, 0.5f, null);
+    SpellingOptions spellOpts = new SpellingOptions(tokens, reader, 1, SuggestMode.SUGGEST_WHEN_NOT_IN_INDEX, true, 0.5f, null);
     SpellingResult result = checker.getSuggestions(spellOpts);
     assertTrue("result is null and it shouldn't be", result != null);
     //should be lowercased, b/c we are using a lowercasing analyzer
@@ -214,7 +218,7 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     result = checker.getSuggestions(spellOpts);
     assertTrue("result is null and it shouldn't be", result != null);
     suggestions = result.get(spellOpts.tokens.iterator().next());
-    assertTrue("suggestions is not null and it should be", suggestions == null);
+    assertTrue("suggestions size should be 0", suggestions.size()==0);
 
     spellOpts.tokens = queryConverter.convert("document");
     result = checker.getSuggestions(spellOpts);
@@ -239,8 +243,7 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     NamedList spellchecker = new NamedList();
     spellchecker.add("classname", IndexBasedSpellChecker.class.getName());
 
-    File indexDir = new File(TEMP_DIR, "spellingIdx" + new Date().getTime());
-    indexDir.mkdirs();
+    File indexDir = createTempDir().toFile();
     spellchecker.add(AbstractLuceneSpellChecker.INDEX_DIR, indexDir.getAbsolutePath());
     spellchecker.add(AbstractLuceneSpellChecker.FIELD, "title");
     spellchecker.add(AbstractLuceneSpellChecker.SPELLCHECKER_ARG_NAME, spellchecker);
@@ -278,17 +281,19 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     IndexBasedSpellChecker checker = new IndexBasedSpellChecker();
     NamedList spellchecker = new NamedList();
     spellchecker.add("classname", IndexBasedSpellChecker.class.getName());
-
-    File indexDir = new File(TEMP_DIR, "spellingIdx" + new Date().getTime());
+    
+    File tmpDir = createTempDir().toFile();
+    File indexDir = new File(tmpDir, "spellingIdx");
     //create a standalone index
-    File altIndexDir = new File(TEMP_DIR, "alternateIdx" + new Date().getTime());
-    Directory dir = newFSDirectory(altIndexDir);
+    File altIndexDir = new File(tmpDir, "alternateIdx" + new Date().getTime());
+    Directory dir = newFSDirectory(altIndexDir.toPath());
     IndexWriter iw = new IndexWriter(
         dir,
-        new IndexWriterConfig(TEST_VERSION_CURRENT, new WhitespaceAnalyzer(TEST_VERSION_CURRENT)));
+        new IndexWriterConfig(new WhitespaceAnalyzer())
+    );
     for (int i = 0; i < ALT_DOCS.length; i++) {
       Document doc = new Document();
-      doc.add(new Field("title", ALT_DOCS[i], Field.Store.YES, Field.Index.ANALYZED));
+      doc.add(new TextField("title", ALT_DOCS[i], Field.Store.YES));
       iw.addDocument(doc);
     }
     iw.forceMerge(1);
@@ -308,9 +313,9 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     try {
     checker.build(core, searcher);
 
-    IndexReader reader = searcher.getReader();
+    IndexReader reader = searcher.getIndexReader();
     Collection<Token> tokens = queryConverter.convert("flesh");
-    SpellingOptions spellOpts = new SpellingOptions(tokens, reader, 1, false, true, 0.5f, null);
+    SpellingOptions spellOpts = new SpellingOptions(tokens, reader, 1, SuggestMode.SUGGEST_WHEN_NOT_IN_INDEX, true, 0.5f, null);
     SpellingResult result = checker.getSuggestions(spellOpts);
     assertTrue("result is null and it shouldn't be", result != null);
     //should be lowercased, b/c we are using a lowercasing analyzer
@@ -326,7 +331,7 @@ public class IndexBasedSpellCheckerTest extends SolrTestCaseJ4 {
     result = checker.getSuggestions(spellOpts);
     assertTrue("result is null and it shouldn't be", result != null);
     suggestions = result.get(spellOpts.tokens.iterator().next());
-    assertTrue("suggestions is not null and it should be", suggestions == null);
+    assertTrue("suggestions size should be 0", suggestions.size()==0);
 
     spellOpts.tokens = queryConverter.convert("Caroline");
     result = checker.getSuggestions(spellOpts);
