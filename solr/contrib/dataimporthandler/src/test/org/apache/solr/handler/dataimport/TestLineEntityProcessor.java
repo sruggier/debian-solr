@@ -1,5 +1,4 @@
-package org.apache.solr.handler.dataimport;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.handler.dataimport;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -27,7 +26,7 @@ import java.util.*;
 /**
  * <p> Test for TestLineEntityProcessor </p>
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
@@ -51,7 +50,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
 
     Context c = getContext(
             null,                          //parentEntity
-            new VariableResolverImpl(),  //resolver
+            new VariableResolver(),  //resolver
             getDataSource(filecontents),   //parentDataSource
             Context.FULL_DUMP,                             //currProcess
             Collections.EMPTY_LIST,        //entityFields
@@ -62,7 +61,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
 
     /// call the entity processor to the list of lines
     if (VERBOSE) System.out.print("\n");
-    List<String> fList = new ArrayList<String>();
+    List<String> fList = new ArrayList<>();
     while (true) {
       Map<String, Object> f = ep.nextRow();
       if (f == null) break;
@@ -91,7 +90,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
 
     Context c = getContext(
             null,                          //parentEntity
-            new VariableResolverImpl(),  //resolver
+            new VariableResolver(),  //resolver
             getDataSource(filecontents),   //parentDataSource
             Context.FULL_DUMP,                             //currProcess
             Collections.EMPTY_LIST,        //entityFields
@@ -101,7 +100,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
     ep.init(c);
 
     /// call the entity processor to the list of lines
-    List<String> fList = new ArrayList<String>();
+    List<String> fList = new ArrayList<>();
     while (true) {
       Map<String, Object> f = ep.nextRow();
       if (f == null) break;
@@ -129,7 +128,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
 
     Context c = getContext(
             null,                          //parentEntity
-            new VariableResolverImpl(),  //resolver
+            new VariableResolver(),  //resolver
             getDataSource(filecontents),   //parentDataSource
             Context.FULL_DUMP,                             //currProcess
             Collections.EMPTY_LIST,        //entityFields
@@ -139,7 +138,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
     ep.init(c);
 
     /// call the entity processor to walk the directory
-    List<String> fList = new ArrayList<String>();
+    List<String> fList = new ArrayList<>();
     while (true) {
       Map<String, Object> f = ep.nextRow();
       if (f == null) break;
@@ -165,7 +164,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
 
     Context c = getContext(
             null,                          //parentEntity
-            new VariableResolverImpl(),  //resolver
+            new VariableResolver(),  //resolver
             getDataSource(filecontents),   //parentDataSource
             Context.FULL_DUMP,                             //currProcess
             Collections.EMPTY_LIST,        //entityFields
@@ -175,7 +174,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
     ep.init(c);
 
     /// call the entity processor to walk the directory
-    List<String> fList = new ArrayList<String>();
+    List<String> fList = new ArrayList<>();
     while (true) {
       Map<String, Object> f = ep.nextRow();
       if (f == null) break;
@@ -195,7 +194,7 @@ public class TestLineEntityProcessor extends AbstractDataImportHandlerTestCase {
           String rw,  // DIH regex attribute 'replaceWith'
           String gn    // DIH regex attribute 'groupNames'
   ) {
-    HashMap<String, String> vals = new HashMap<String, String>();
+    HashMap<String, String> vals = new HashMap<>();
     vals.put("column", col);
     vals.put("type", type);
     vals.put("sourceColName", srcCol);

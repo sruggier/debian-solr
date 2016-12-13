@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.lucene.util;
 
 import java.util.Iterator;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -30,7 +28,7 @@ public class TestWeakIdentityMap extends LuceneTestCase {
 
   public void testSimpleHashMap() {
     final WeakIdentityMap<String,String> map =
-      WeakIdentityMap.newHashMap();
+      WeakIdentityMap.newHashMap(random().nextBoolean());
     // we keep strong references to the keys,
     // so WeakIdentityMap will not forget about them:
     String key1 = new String("foo");
@@ -122,15 +120,19 @@ public class TestWeakIdentityMap extends LuceneTestCase {
     for (int i = 0; size > 0 && i < 10; i++) try {
       System.runFinalization();
       System.gc();
+      int newSize = map.size();
+      assertTrue("previousSize("+size+")>=newSize("+newSize+")", size >= newSize);
+      size = newSize;
       Thread.sleep(100L);
       c = 0;
       for (Iterator<String> it = map.keyIterator(); it.hasNext();) {
         assertNotNull(it.next());
         c++;
       }
-      assertTrue(size >= c);
-      assertTrue(c >= map.size());
-      size = map.size();
+      newSize = map.size();
+      assertTrue("previousSize("+size+")>=iteratorSize("+c+")", size >= c);
+      assertTrue("iteratorSize("+c+")>=newSize("+newSize+")", c >= newSize);
+      size = newSize;
     } catch (InterruptedException ie) {}
 
     map.clear();
@@ -139,11 +141,9 @@ public class TestWeakIdentityMap extends LuceneTestCase {
     
     Iterator<String> it = map.keyIterator();
     assertFalse(it.hasNext());
-    try {
+    expectThrows(NoSuchElementException.class, () -> {
       it.next();
-      fail("Should throw NoSuchElementException");
-    } catch (NoSuchElementException nse) {
-    }
+    });
     
     key1 = new String("foo");
     key2 = new String("foo");
@@ -159,20 +159,21 @@ public class TestWeakIdentityMap extends LuceneTestCase {
   public void testConcurrentHashMap() throws Exception {
     // don't make threadCount and keyCount random, otherwise easily OOMs or fails otherwise:
     final int threadCount = 8, keyCount = 1024;
-    final ExecutorService exec = Executors.newFixedThreadPool(threadCount);
+    final ExecutorService exec = Executors.newFixedThreadPool(threadCount, new NamedThreadFactory("testConcurrentHashMap"));
     final WeakIdentityMap<Object,Integer> map =
-      WeakIdentityMap.newConcurrentHashMap();
+      WeakIdentityMap.newConcurrentHashMap(random().nextBoolean());
     // we keep strong references to the keys,
     // so WeakIdentityMap will not forget about them:
-    final AtomicReferenceArray<Object> keys = new AtomicReferenceArray<Object>(keyCount);
+    final AtomicReferenceArray<Object> keys = new AtomicReferenceArray<>(keyCount);
     for (int j = 0; j < keyCount; j++) {
       keys.set(j, new Object());
     }
     
     try {
       for (int t = 0; t < threadCount; t++) {
-        final Random rnd = new Random(random.nextLong());
+        final Random rnd = new Random(random().nextLong());
         exec.execute(new Runnable() {
+          @Override
           public void run() {
             final int count = atLeast(rnd, 10000);
             for (int i = 0; i < count; i++) {
@@ -222,15 +223,19 @@ public class TestWeakIdentityMap extends LuceneTestCase {
     for (int i = 0; size > 0 && i < 10; i++) try {
       System.runFinalization();
       System.gc();
+      int newSize = map.size();
+      assertTrue("previousSize("+size+")>=newSize("+newSize+")", size >= newSize);
+      size = newSize;
       Thread.sleep(100L);
       int c = 0;
       for (Iterator<Object> it = map.keyIterator(); it.hasNext();) {
         assertNotNull(it.next());
         c++;
       }
-      assertTrue(size >= c);
-      assertTrue(c >= map.size());
-      size = map.size();
+      newSize = map.size();
+      assertTrue("previousSize("+size+")>=iteratorSize("+c+")", size >= c);
+      assertTrue("iteratorSize("+c+")>=newSize("+newSize+")", c >= newSize);
+      size = newSize;
     } catch (InterruptedException ie) {}
   }
 

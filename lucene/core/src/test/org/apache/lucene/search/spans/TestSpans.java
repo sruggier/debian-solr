@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,28 +14,44 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
+
 
 import java.io.IOException;
+import java.util.List;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.CheckHits;
-import org.apache.lucene.search.DefaultSimilarity;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.FuzzyQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Scorer;
-import org.apache.lucene.search.Searcher;
-import org.apache.lucene.search.Similarity;
 import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.similarities.ClassicSimilarity;
+import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
+
+import static org.apache.lucene.search.spans.SpanTestUtil.assertFinished;
+import static org.apache.lucene.search.spans.SpanTestUtil.assertNext;
+import static org.apache.lucene.search.spans.SpanTestUtil.spanNearOrderedQuery;
+import static org.apache.lucene.search.spans.SpanTestUtil.spanNearUnorderedQuery;
+import static org.apache.lucene.search.spans.SpanTestUtil.spanNotQuery;
+import static org.apache.lucene.search.spans.SpanTestUtil.spanOrQuery;
+import static org.apache.lucene.search.spans.SpanTestUtil.spanTermQuery;
 
 public class TestSpans extends LuceneTestCase {
   private IndexSearcher searcher;
@@ -50,20 +64,20 @@ public class TestSpans extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     directory = newDirectory();
-    RandomIndexWriter writer= new RandomIndexWriter(random, directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
     for (int i = 0; i < docFields.length; i++) {
       Document doc = new Document();
-      doc.add(newField(field, docFields[i], Field.Store.YES, Field.Index.ANALYZED));
+      doc.add(newTextField(field, docFields[i], Field.Store.YES));
       writer.addDocument(doc);
     }
+    writer.forceMerge(1);
     reader = writer.getReader();
     writer.close();
-    searcher = newSearcher(reader);
+    searcher = newSearcher(getOnlyLeafReader(reader));
   }
   
   @Override
   public void tearDown() throws Exception {
-    searcher.close();
     reader.close();
     directory.close();
     super.tearDown();
@@ -81,15 +95,15 @@ public class TestSpans extends LuceneTestCase {
     "u2 xx u1 u2",
     "u2 u1 xx u2",
     "u1 u2 xx u2",
-    "t1 t2 t1 t3 t2 t3"
-  };
+    "t1 t2 t1 t3 t2 t3",
+    "s2 s1 s1 xx xx s2 xx s2 xx s1 xx xx xx xx xx s2 xx",
+    "r1 s11",
+    "r1 s21"
 
-  public SpanTermQuery makeSpanTermQuery(String text) {
-    return new SpanTermQuery(new Term(field, text));
-  }
+  };
   
   private void checkHits(Query query, int[] results) throws IOException {
-    CheckHits.checkHits(random, query, field, searcher, results);
+    CheckHits.checkHits(random(), query, field, searcher, results);
   }
   
   private void orderedSlopTest3SQ(
@@ -98,34 +112,33 @@ public class TestSpans extends LuceneTestCase {
         SpanQuery q3,
         int slop,
         int[] expectedDocs) throws IOException {
-    boolean ordered = true;
-    SpanNearQuery snq = new SpanNearQuery( new SpanQuery[]{q1,q2,q3}, slop, ordered);
-    checkHits(snq, expectedDocs);
+    SpanQuery query = spanNearOrderedQuery(slop, q1, q2, q3);
+    checkHits(query, expectedDocs);
   }
   
   public void orderedSlopTest3(int slop, int[] expectedDocs) throws IOException {
     orderedSlopTest3SQ(
-       makeSpanTermQuery("w1"),
-       makeSpanTermQuery("w2"),
-       makeSpanTermQuery("w3"),
+       spanTermQuery(field, "w1"),
+       spanTermQuery(field, "w2"),
+       spanTermQuery(field, "w3"),
        slop,
        expectedDocs);
   }
   
   public void orderedSlopTest3Equal(int slop, int[] expectedDocs) throws IOException {
     orderedSlopTest3SQ(
-       makeSpanTermQuery("w1"),
-       makeSpanTermQuery("w3"),
-       makeSpanTermQuery("w3"),
+       spanTermQuery(field, "w1"),
+       spanTermQuery(field, "w3"),
+       spanTermQuery(field, "w3"),
        slop,
        expectedDocs);
   }
   
   public void orderedSlopTest1Equal(int slop, int[] expectedDocs) throws IOException {
     orderedSlopTest3SQ(
-       makeSpanTermQuery("u2"),
-       makeSpanTermQuery("u2"),
-       makeSpanTermQuery("u1"),
+       spanTermQuery(field, "u2"),
+       spanTermQuery(field, "u2"),
+       spanTermQuery(field, "u1"),
        slop,
        expectedDocs);
   }
@@ -187,270 +200,156 @@ public class TestSpans extends LuceneTestCase {
   }
 
   public void testSpanNearOrderedOverlap() throws Exception {
-    boolean ordered = true;
-    int slop = 1;
-    SpanNearQuery snq = new SpanNearQuery(
-                              new SpanQuery[] {
-                                makeSpanTermQuery("t1"),
-                                makeSpanTermQuery("t2"),
-                                makeSpanTermQuery("t3") },
-                              slop,
-                              ordered);
-    Spans spans = snq.getSpans(searcher.getIndexReader());
+    final SpanQuery query = spanNearOrderedQuery(field, 1, "t1", "t2", "t3");
+    
+    Spans spans = query.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
 
-    assertTrue("first range", spans.next());
-    assertEquals("first doc", 11, spans.doc());
-    assertEquals("first start", 0, spans.start());
-    assertEquals("first end", 4, spans.end());
+    assertEquals("first doc", 11, spans.nextDoc());
+    assertEquals("first start", 0, spans.nextStartPosition());
+    assertEquals("first end", 4, spans.endPosition());
 
-    assertTrue("second range", spans.next());
-    assertEquals("second doc", 11, spans.doc());
-    assertEquals("second start", 2, spans.start());
-    assertEquals("second end", 6, spans.end());
+    assertEquals("second start", 2, spans.nextStartPosition());
+    assertEquals("second end", 6, spans.endPosition());
 
-    assertFalse("third range", spans.next());
+    assertFinished(spans);  
   }
-
 
   public void testSpanNearUnOrdered() throws Exception {
-
     //See http://www.gossamer-threads.com/lists/lucene/java-dev/52270 for discussion about this test
-    SpanNearQuery snq;
-    snq = new SpanNearQuery(
-                              new SpanQuery[] {
-                                makeSpanTermQuery("u1"),
-                                makeSpanTermQuery("u2") },
-                              0,
-                              false);
-    Spans spans = snq.getSpans(searcher.getIndexReader());
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 4, spans.doc());
-    assertEquals("start", 1, spans.start());
-    assertEquals("end", 3, spans.end());
+    SpanQuery senq = spanNearUnorderedQuery(field, 0, "u1", "u2");
+    Spans spans = senq.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans, 4, 1, 3);
+    assertNext(spans, 5, 2, 4);
+    assertNext(spans, 8, 2, 4);
+    assertNext(spans, 9, 0, 2);
+    assertNext(spans, 10, 0, 2);
+    assertFinished(spans);
 
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 5, spans.doc());
-    assertEquals("start", 2, spans.start());
-    assertEquals("end", 4, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 8, spans.doc());
-    assertEquals("start", 2, spans.start());
-    assertEquals("end", 4, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 9, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 2, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 10, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 2, spans.end());
-    assertTrue("Has next and it shouldn't: " + spans.doc(), spans.next() == false);
-
-    SpanNearQuery u1u2 = new SpanNearQuery(new SpanQuery[]{makeSpanTermQuery("u1"),
-                                makeSpanTermQuery("u2")}, 0, false);
-    snq = new SpanNearQuery(
-                              new SpanQuery[] {
-                                u1u2,
-                                makeSpanTermQuery("u2")
-                              },
-                              1,
-                              false);
-    spans = snq.getSpans(searcher.getIndexReader());
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 4, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 3, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    //unordered spans can be subsets
-    assertEquals("doc", 4, spans.doc());
-    assertEquals("start", 1, spans.start());
-    assertEquals("end", 3, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 5, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 4, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 5, spans.doc());
-    assertEquals("start", 2, spans.start());
-    assertEquals("end", 4, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 8, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 4, spans.end());
-
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 8, spans.doc());
-    assertEquals("start", 2, spans.start());
-    assertEquals("end", 4, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 9, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 2, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 9, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 4, spans.end());
-
-    assertTrue("Does not have next and it should", spans.next());
-    assertEquals("doc", 10, spans.doc());
-    assertEquals("start", 0, spans.start());
-    assertEquals("end", 2, spans.end());
-
-    assertTrue("Has next and it shouldn't", spans.next() == false);
+    senq = spanNearUnorderedQuery(1, senq, spanTermQuery(field, "u2")); 
+    spans = senq.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans, 4, 0, 3);
+    assertNext(spans, 4, 1, 3); // unordered spans can be subsets
+    assertNext(spans, 5, 0, 4);
+    assertNext(spans, 5, 2, 4);
+    assertNext(spans, 8, 0, 4);
+    assertNext(spans, 8, 2, 4);
+    assertNext(spans, 9, 0, 2);
+    assertNext(spans, 9, 0, 4);
+    assertNext(spans, 10, 0, 2);
+    assertFinished(spans);
   }
-
-
 
   private Spans orSpans(String[] terms) throws Exception {
-    SpanQuery[] sqa = new SpanQuery[terms.length];
-    for (int i = 0; i < terms.length; i++) {
-      sqa[i] = makeSpanTermQuery(terms[i]);
-    }
-    return (new SpanOrQuery(sqa)).getSpans(searcher.getIndexReader());
-  }
-
-  private void tstNextSpans(Spans spans, int doc, int start, int end)
-  throws Exception {
-    assertTrue("next", spans.next());
-    assertEquals("doc", doc, spans.doc());
-    assertEquals("start", start, spans.start());
-    assertEquals("end", end, spans.end());
+    return spanOrQuery(field, terms).createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
   }
 
   public void testSpanOrEmpty() throws Exception {
     Spans spans = orSpans(new String[0]);
-    assertFalse("empty next", spans.next());
-
-    SpanOrQuery a = new SpanOrQuery( new SpanQuery[0] );
-    SpanOrQuery b = new SpanOrQuery( new SpanQuery[0] );
-    assertTrue("empty should equal", a.equals(b));
+    assertFinished(spans);
   }
 
   public void testSpanOrSingle() throws Exception {
     Spans spans = orSpans(new String[] {"w5"});
-    tstNextSpans(spans, 0, 4, 5);
-    assertFalse("final next", spans.next());
-  }
-  
-  public void testSpanOrMovesForward() throws Exception {
-    Spans spans = orSpans(new String[] {"w1", "xx"});
-
-    spans.next();
-    int doc = spans.doc();
-    assertEquals(0, doc);
-    
-    spans.skipTo(0);
-    doc = spans.doc();
-    
-    // LUCENE-1583:
-    // according to Spans, a skipTo to the same doc or less
-    // should still call next() on the underlying Spans
-    assertEquals(1, doc);
-
+    assertNext(spans, 0, 4, 5);
+    assertFinished(spans);
   }
   
   public void testSpanOrDouble() throws Exception {
     Spans spans = orSpans(new String[] {"w5", "yy"});
-    tstNextSpans(spans, 0, 4, 5);
-    tstNextSpans(spans, 2, 3, 4);
-    tstNextSpans(spans, 3, 4, 5);
-    tstNextSpans(spans, 7, 3, 4);
-    assertFalse("final next", spans.next());
+    assertNext(spans, 0, 4, 5);
+    assertNext(spans, 2, 3, 4);
+    assertNext(spans, 3, 4, 5);
+    assertNext(spans, 7, 3, 4);
+    assertFinished(spans);
   }
 
-  public void testSpanOrDoubleSkip() throws Exception {
+  public void testSpanOrDoubleAdvance() throws Exception {
     Spans spans = orSpans(new String[] {"w5", "yy"});
-    assertTrue("initial skipTo", spans.skipTo(3));
-    assertEquals("doc", 3, spans.doc());
-    assertEquals("start", 4, spans.start());
-    assertEquals("end", 5, spans.end());
-    tstNextSpans(spans, 7, 3, 4);
-    assertFalse("final next", spans.next());
+    assertEquals("initial advance", 3, spans.advance(3));
+    assertNext(spans, 3, 4, 5);
+    assertNext(spans, 7, 3, 4);
+    assertFinished(spans);
   }
 
   public void testSpanOrUnused() throws Exception {
     Spans spans = orSpans(new String[] {"w5", "unusedTerm", "yy"});
-    tstNextSpans(spans, 0, 4, 5);
-    tstNextSpans(spans, 2, 3, 4);
-    tstNextSpans(spans, 3, 4, 5);
-    tstNextSpans(spans, 7, 3, 4);
-    assertFalse("final next", spans.next());
+    assertNext(spans, 0, 4, 5);
+    assertNext(spans, 2, 3, 4);
+    assertNext(spans, 3, 4, 5);
+    assertNext(spans, 7, 3, 4);
+    assertFinished(spans);
   }
 
   public void testSpanOrTripleSameDoc() throws Exception {
     Spans spans = orSpans(new String[] {"t1", "t2", "t3"});
-    tstNextSpans(spans, 11, 0, 1);
-    tstNextSpans(spans, 11, 1, 2);
-    tstNextSpans(spans, 11, 2, 3);
-    tstNextSpans(spans, 11, 3, 4);
-    tstNextSpans(spans, 11, 4, 5);
-    tstNextSpans(spans, 11, 5, 6);
-    assertFalse("final next", spans.next());
+    assertNext(spans, 11, 0, 1);
+    assertNext(spans, 11, 1, 2);
+    assertNext(spans, 11, 2, 3);
+    assertNext(spans, 11, 3, 4);
+    assertNext(spans, 11, 4, 5);
+    assertNext(spans, 11, 5, 6);
+    assertFinished(spans);
   }
 
   public void testSpanScorerZeroSloppyFreq() throws Exception {
-    boolean ordered = true;
-    int slop = 1;
-
-    final Similarity sim = new DefaultSimilarity() {
-      @Override
-      public float sloppyFreq(int distance) {
-        return 0.0f;
-      }
-    };
-
-    SpanNearQuery snq = new SpanNearQuery(
-                              new SpanQuery[] {
-                                makeSpanTermQuery("t1"),
-                                makeSpanTermQuery("t2") },
-                              slop,
-                              ordered) {
-      @Override
-      public Similarity getSimilarity(Searcher s) {
-        return sim;
-      }
+    IndexReaderContext topReaderContext = searcher.getTopReaderContext();
+    List<LeafReaderContext> leaves = topReaderContext.leaves();
+    int subIndex = ReaderUtil.subIndex(11, leaves);
+    for (int i = 0, c = leaves.size(); i < c; i++) {
+      final LeafReaderContext ctx = leaves.get(i);
+     
+      final Similarity sim = new ClassicSimilarity() {
+        @Override
+        public float sloppyFreq(int distance) {
+          return 0.0f;
+        }
       };
-
-    Scorer spanScorer = searcher.createNormalizedWeight(snq).scorer(searcher.getIndexReader(), true, false);
-
-    assertTrue("first doc", spanScorer.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
-    assertEquals("first doc number", spanScorer.docID(), 11);
-    float score = spanScorer.score();
-    assertTrue("first doc score should be zero, " + score, score == 0.0f);
-    assertTrue("no second doc", spanScorer.nextDoc() == DocIdSetIterator.NO_MORE_DOCS);
+  
+      final Similarity oldSim = searcher.getSimilarity(true);
+      Scorer spanScorer;
+      try {
+        searcher.setSimilarity(sim);
+        SpanQuery snq = spanNearOrderedQuery(field, 1, "t1", "t2");
+        spanScorer = searcher.createNormalizedWeight(snq, true).scorer(ctx);
+      } finally {
+        searcher.setSimilarity(oldSim);
+      }
+      if (i == subIndex) {
+        assertTrue("first doc", spanScorer.iterator().nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
+        assertEquals("first doc number", spanScorer.docID() + ctx.docBase, 11);
+        float score = spanScorer.score();
+        assertTrue("first doc score should be zero, " + score, score == 0.0f);
+      } else {
+        assertTrue("no second doc", spanScorer == null || spanScorer.iterator().nextDoc() == DocIdSetIterator.NO_MORE_DOCS);
+      }
+    }
   }
 
   // LUCENE-1404
   private void addDoc(IndexWriter writer, String id, String text) throws IOException {
     final Document doc = new Document();
-    doc.add( newField("id", id, Field.Store.YES, Field.Index.NOT_ANALYZED) );
-    doc.add( newField("text", text, Field.Store.YES, Field.Index.ANALYZED) );
+    doc.add( newStringField("id", id, Field.Store.YES) );
+    doc.add( newTextField("text", text, Field.Store.YES) );
     writer.addDocument(doc);
   }
 
   // LUCENE-1404
-  private int hitCount(Searcher searcher, String word) throws Throwable {
+  private int hitCount(IndexSearcher searcher, String word) throws Throwable {
     return searcher.search(new TermQuery(new Term("text", word)), 10).totalHits;
   }
 
   // LUCENE-1404
   private SpanQuery createSpan(String value) {
-    return new SpanTermQuery(new Term("text", value));
+    return spanTermQuery("text", value);
   }                     
   
   // LUCENE-1404
   private SpanQuery createSpan(int slop, boolean ordered, SpanQuery[] clauses) {
-    return new SpanNearQuery(clauses, slop, ordered);
+    if (ordered) {
+      return spanNearOrderedQuery(slop, clauses);
+    } else {
+      return spanNearUnorderedQuery(slop, clauses);
+    }
   }
 
   // LUCENE-1404
@@ -461,8 +360,7 @@ public class TestSpans extends LuceneTestCase {
   // LUCENE-1404
   public void testNPESpanQuery() throws Throwable {
     final Directory dir = newDirectory();
-    final IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    final IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new MockAnalyzer(random())));
 
     // Add documents
     addDoc(writer, "1", "the big dogs went running to the market");
@@ -472,7 +370,7 @@ public class TestSpans extends LuceneTestCase {
     writer.close();
 
     // Get searcher
-    final IndexReader reader = IndexReader.open(dir, true);
+    final IndexReader reader = DirectoryReader.open(dir);
     final IndexSearcher searcher = newSearcher(reader);
 
     // Control (make sure docs indexed)
@@ -486,8 +384,77 @@ public class TestSpans extends LuceneTestCase {
                  searcher.search(createSpan(0, true,                                 
                                             new SpanQuery[] {createSpan(4, false, "chased", "cat"),
                                                              createSpan("ate")}), 10).totalHits);
-    searcher.close();
     reader.close();
     dir.close();
   }
+
+  public void testSpanNotWithMultiterm() throws Exception {
+    SpanQuery q = spanNotQuery(
+        spanTermQuery(field, "r1"),
+        new SpanMultiTermQueryWrapper<>(new PrefixQuery(new Term(field, "s1"))),3,3);
+    checkHits(q,  new int[] {14});
+
+    q = spanNotQuery(
+        spanTermQuery(field, "r1"),
+        new SpanMultiTermQueryWrapper<>(new FuzzyQuery(new Term(field, "s12"), 1, 2)),3,3);
+    checkHits(q,  new int[] {14});
+
+    q = spanNotQuery(
+        new SpanMultiTermQueryWrapper<>(new PrefixQuery(new Term(field, "r"))),
+        spanTermQuery(field, "s21"),3,3);
+    checkHits(q,  new int[] {13});
+
+
+  }
+  
+  public void testSpanNots() throws Throwable{
+     assertEquals("SpanNotIncludeExcludeSame1", 0, spanCount("s2", "s2", 0, 0), 0);
+     assertEquals("SpanNotIncludeExcludeSame2", 0, spanCount("s2", "s2", 10, 10), 0);
+     
+     //focus on behind
+     assertEquals("SpanNotS2NotS1_6_0", 1, spanCount("s2", "s1", 6, 0));
+     assertEquals("SpanNotS2NotS1_5_0", 2, spanCount("s2", "s1", 5, 0));
+     assertEquals("SpanNotS2NotS1_3_0", 3, spanCount("s2", "s1", 3, 0));
+     assertEquals("SpanNotS2NotS1_2_0", 4, spanCount("s2", "s1", 2, 0));
+     assertEquals("SpanNotS2NotS1_0_0", 4, spanCount("s2", "s1", 0, 0));
+     
+     //focus on both
+     assertEquals("SpanNotS2NotS1_3_1", 2, spanCount("s2", "s1", 3, 1));
+     assertEquals("SpanNotS2NotS1_2_1", 3, spanCount("s2", "s1", 2, 1));
+     assertEquals("SpanNotS2NotS1_1_1", 3, spanCount("s2", "s1", 1, 1));
+     assertEquals("SpanNotS2NotS1_10_10", 0, spanCount("s2", "s1", 10, 10));
+     
+     //focus on ahead
+     assertEquals("SpanNotS1NotS2_10_10", 0, spanCount("s1", "s2", 10, 10));  
+     assertEquals("SpanNotS1NotS2_0_1", 3, spanCount("s1", "s2", 0, 1));  
+     assertEquals("SpanNotS1NotS2_0_2", 3, spanCount("s1", "s2", 0, 2));  
+     assertEquals("SpanNotS1NotS2_0_3", 2, spanCount("s1", "s2", 0, 3));  
+     assertEquals("SpanNotS1NotS2_0_4", 1, spanCount("s1", "s2", 0, 4));
+     assertEquals("SpanNotS1NotS2_0_8", 0, spanCount("s1", "s2", 0, 8));
+     
+     //exclude doesn't exist
+     assertEquals("SpanNotS1NotS3_8_8", 3, spanCount("s1", "s3", 8, 8));
+
+     //include doesn't exist
+     assertEquals("SpanNotS3NotS1_8_8", 0, spanCount("s3", "s1", 8, 8));
+
+  }
+  
+  private int spanCount(String include, String exclude, int pre, int post) throws IOException{
+     SpanQuery iq = spanTermQuery(field, include);
+     SpanQuery eq = spanTermQuery(field, exclude);
+     SpanQuery snq = spanNotQuery(iq, eq, pre, post);
+     Spans spans = snq.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+
+     int i = 0;
+     if (spans != null) {
+       while (spans.nextDoc() != Spans.NO_MORE_DOCS){
+         while (spans.nextStartPosition() != Spans.NO_MORE_POSITIONS) {
+           i++;
+         }
+       }
+     }
+     return i;
+  }
+  
 }

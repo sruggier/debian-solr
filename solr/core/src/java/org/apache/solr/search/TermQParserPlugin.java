@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,11 +17,10 @@
 package org.apache.solr.search;
 
 import org.apache.lucene.index.Term;
-import org.apache.lucene.queryParser.ParseException;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.schema.FieldType;
 
@@ -41,20 +40,23 @@ import org.apache.solr.schema.FieldType;
  * <br>Example: <code>{!term f=weight}1.5</code>
  */
 public class TermQParserPlugin extends QParserPlugin {
-  public static String NAME = "term";
+  public static final String NAME = "term";
 
-  public void init(NamedList args) {
-  }
-
+  @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
     return new QParser(qstr, localParams, params, req) {
-      public Query parse() throws ParseException {
+      @Override
+      public Query parse() {
         String fname = localParams.get(QueryParsing.F);
         FieldType ft = req.getSchema().getFieldTypeNoEx(fname);
         String val = localParams.get(QueryParsing.V);
-
-        return new TermQuery(new Term(fname, 
-                                      null == ft ? val : ft.readableToIndexed(val)));
+        BytesRefBuilder term = new BytesRefBuilder();
+        if (ft != null) {
+          ft.readableToIndexed(val, term);
+        } else {
+          term.copyChars(val);
+        }
+        return new TermQuery(new Term(fname, term.get()));
       }
     };
   }

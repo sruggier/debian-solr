@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,30 +14,28 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
 
 /**
  * Sneaky: rethrowing checked exceptions as unchecked
  * ones. Eh, it is sometimes useful...
  *
- * <p>Pulled from http://www.javapuzzlers.com (I
- * think?).</p>
+ * <p>Pulled from <a href="http://www.javapuzzlers.com">Java Puzzlers</a>.</p>
+ * @see <a href="http://www.amazon.com/Java-Puzzlers-Traps-Pitfalls-Corner/dp/032133678X">http://www.amazon.com/Java-Puzzlers-Traps-Pitfalls-Corner/dp/032133678X</a>
  */
-@SuppressWarnings({"unchecked","rawtypes"})
 public final class Rethrow {
-  /**
-   * Classy puzzler to rethrow any checked exception as an unchecked one.
-   */
-  private static class Rethrower<T extends Throwable> {
-    private void rethrow(Throwable t) throws T {
-      throw (T) t;
-    }
-  }
-  
+  private Rethrow() {}
+
   /**
    * Rethrows <code>t</code> (identical object).
    */
   public static void rethrow(Throwable t) {
-    new Rethrower<Error>().rethrow(t);
+    Rethrow.<Error>rethrow0(t);
+  }
+  
+  @SuppressWarnings("unchecked")
+  private static <T extends Throwable> void rethrow0(Throwable t) throws T {
+    throw (T) t;
   }
 }
 

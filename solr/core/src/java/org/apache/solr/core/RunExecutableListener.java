@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,21 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.search.SolrIndexSearcher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.List;
 import java.util.ArrayList;
 
 /**
  */
 class RunExecutableListener extends AbstractSolrEventListener {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  
   public RunExecutableListener(SolrCore core) {
     super(core);
   }
@@ -78,7 +82,18 @@ class RunExecutableListener extends AbstractSolrEventListener {
       if (doLog) {
         log.debug("About to exec " + cmd[0]);
       }
-      Process proc = Runtime.getRuntime().exec(cmd, envp ,dir);
+      final Process proc;
+      try {
+        proc = Runtime.getRuntime().exec(cmd, envp ,dir);
+      } catch (Error err) {
+        // Create better error message
+        if (err.getMessage() != null && (err.getMessage().contains("posix_spawn") || err.getMessage().contains("UNIXProcess"))) {
+          Error newErr = new Error("Error forking command due to JVM locale bug (see https://issues.apache.org/jira/browse/SOLR-6387): " + err.getMessage());
+          newErr.setStackTrace(err.getStackTrace());
+          err = newErr;
+        }
+        throw err;
+      }
 
       if (wait) {
         try {

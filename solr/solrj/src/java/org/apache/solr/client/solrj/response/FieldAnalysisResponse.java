@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.response;
 
 import org.apache.solr.common.util.NamedList;
@@ -27,13 +26,13 @@ import java.util.Map;
  * A response that is returned by processing the {@link org.apache.solr.client.solrj.request.FieldAnalysisRequest}.
  * Holds a map of {@link Analysis} objects per field name as well as a map of {@link Analysis} objects per field type.
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class FieldAnalysisResponse extends AnalysisResponseBase {
 
-  private Map<String, Analysis> analysisByFieldTypeName = new HashMap<String, Analysis>();
-  private Map<String, Analysis> analysisByFieldName = new HashMap<String, Analysis>();
+  private Map<String, Analysis> analysisByFieldTypeName = new HashMap<>();
+  private Map<String, Analysis> analysisByFieldName = new HashMap<>();
 
   /**
    * {@inheritDoc}
@@ -42,35 +41,35 @@ public class FieldAnalysisResponse extends AnalysisResponseBase {
   public void setResponse(NamedList<Object> response) {
     super.setResponse(response);
 
-    NamedList analysisNL = (NamedList) response.get("analysis");
+    @SuppressWarnings("unchecked")
+    NamedList<NamedList<NamedList<NamedList<List<NamedList<Object>>>>>> analysisNL 
+      = (NamedList<NamedList<NamedList<NamedList<List<NamedList<Object>>>>>>) response.get("analysis");
 
-    NamedList<Object> fieldTypesNL = (NamedList<Object>) analysisNL.get("field_types");
-    for (Map.Entry<String, Object> entry : fieldTypesNL) {
-      Analysis analysis = new Analysis();
-      NamedList fieldTypeNL = (NamedList) entry.getValue();
-      NamedList<Object> queryNL = (NamedList<Object>) fieldTypeNL.get("query");
-      List<AnalysisPhase> phases = (queryNL == null) ? null : buildPhases(queryNL);
-      analysis.setQueryPhases(phases);
-      NamedList<Object> indexNL = (NamedList<Object>) fieldTypeNL.get("index");
-      phases = buildPhases(indexNL);
-      analysis.setIndexPhases(phases);
-      String fieldTypeName = entry.getKey();
-      analysisByFieldTypeName.put(fieldTypeName, analysis);
+    for (Map.Entry<String, NamedList<NamedList<List<NamedList<Object>>>>> entry 
+           : analysisNL.get("field_types")) {
+
+      analysisByFieldTypeName.put(entry.getKey(), buildAnalysis(entry.getValue()));
     }
 
-    NamedList<Object> fieldNamesNL = (NamedList<Object>) analysisNL.get("field_names");
-    for (Map.Entry<String, Object> entry : fieldNamesNL) {
+    for (Map.Entry<String, NamedList<NamedList<List<NamedList<Object>>>>> entry 
+           : analysisNL.get("field_names")) {
+
+      analysisByFieldName.put(entry.getKey(), buildAnalysis(entry.getValue()));
+    }
+  }
+
+  private Analysis buildAnalysis(NamedList<NamedList<List<NamedList<Object>>>> value) {
       Analysis analysis = new Analysis();
-      NamedList fieldNameNL = (NamedList) entry.getValue();
-      NamedList<Object> queryNL = (NamedList<Object>) fieldNameNL.get("query");
+      
+      NamedList<List<NamedList<Object>>> queryNL = value.get("query");
       List<AnalysisPhase> phases = (queryNL == null) ? null : buildPhases(queryNL);
       analysis.setQueryPhases(phases);
-      NamedList<Object> indexNL = (NamedList<Object>) fieldNameNL.get("index");
+
+      NamedList<List<NamedList<Object>>> indexNL = value.get("index");
       phases = buildPhases(indexNL);
       analysis.setIndexPhases(phases);
-      String fieldName = entry.getKey();
-      analysisByFieldName.put(fieldName, analysis);
-    }
+      
+      return analysis;
   }
 
   /**

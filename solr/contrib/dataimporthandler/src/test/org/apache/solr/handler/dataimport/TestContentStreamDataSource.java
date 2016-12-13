@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -18,28 +18,31 @@ package org.apache.solr.handler.dataimport;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.solr.client.solrj.embedded.JettySolrRunner;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
+import org.apache.solr.client.solrj.impl.HttpSolrClient;
 import org.apache.solr.client.solrj.request.DirectXmlRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.params.ModifiableSolrParams;
-
+import org.apache.solr.common.params.UpdateParams;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.util.List;
+import java.util.Properties;
 
 /**
  * Test for ContentStreamDataSource
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class TestContentStreamDataSource extends AbstractDataImportHandlerTestCase {
-  private static final String CONF_DIR = "dih/solr/conf/";
+  private static final String CONF_DIR = "dih/solr/collection1/conf/";
+  private static final String ROOT_DIR = "dih/solr/";
   SolrInstance instance = null;
   JettySolrRunner jetty;
 
@@ -56,7 +59,6 @@ public class TestContentStreamDataSource extends AbstractDataImportHandlerTestCa
   @After
   public void tearDown() throws Exception {
     jetty.stop();
-    instance.tearDown();
     super.tearDown();
   }
 
@@ -67,19 +69,46 @@ public class TestContentStreamDataSource extends AbstractDataImportHandlerTestCa
     params.set("command", "full-import");
     params.set("clean", "false");
     req.setParams(params);
-    String url = "http://localhost:" + jetty.getLocalPort() + "/solr";
-    CommonsHttpSolrServer solrServer = new CommonsHttpSolrServer(url);
-    solrServer.request(req);
-    ModifiableSolrParams qparams = new ModifiableSolrParams();
-    qparams.add("q", "*:*");
-    QueryResponse qres = solrServer.query(qparams);
-    SolrDocumentList results = qres.getResults();
-    assertEquals(2, results.getNumFound());
-    SolrDocument doc = results.get(0);
-    assertEquals("1", doc.getFieldValue("id"));
-    assertEquals("Hello C1", ((List)doc.getFieldValue("desc")).get(0));
+    try (HttpSolrClient solrClient = getHttpSolrClient(buildUrl(jetty.getLocalPort(), "/solr/collection1"))) {
+      solrClient.request(req);
+      ModifiableSolrParams qparams = new ModifiableSolrParams();
+      qparams.add("q", "*:*");
+      QueryResponse qres = solrClient.query(qparams);
+      SolrDocumentList results = qres.getResults();
+      assertEquals(2, results.getNumFound());
+      SolrDocument doc = results.get(0);
+      assertEquals("1", doc.getFieldValue("id"));
+      assertEquals("Hello C1", ((List) doc.getFieldValue("desc")).get(0));
+    }
   }
 
+  @Test
+  public void testCommitWithin() throws Exception {
+    DirectXmlRequest req = new DirectXmlRequest("/dataimport", xml);
+    ModifiableSolrParams params = params("command", "full-import", 
+        "clean", "false", UpdateParams.COMMIT, "false", 
+        UpdateParams.COMMIT_WITHIN, "1000");
+    req.setParams(params);
+    try (HttpSolrClient solrServer = getHttpSolrClient(buildUrl(jetty.getLocalPort(), "/solr/collection1"))) {
+      solrServer.request(req);
+      Thread.sleep(100);
+      ModifiableSolrParams queryAll = params("q", "*");
+      QueryResponse qres = solrServer.query(queryAll);
+      SolrDocumentList results = qres.getResults();
+      assertEquals(0, results.getNumFound());
+      Thread.sleep(1000);
+      for (int i = 0; i < 10; i++) {
+        qres = solrServer.query(queryAll);
+        results = qres.getResults();
+        if (2 == results.getNumFound()) {
+          return;
+        }
+        Thread.sleep(500);
+      }
+    }
+    fail("Commit should have occured but it did not");
+  }
+  
   private class SolrInstance {
     String name;
     Integer port;
@@ -116,20 +145,21 @@ public class TestContentStreamDataSource extends AbstractDataImportHandlerTestCa
       return CONF_DIR + "contentstream-solrconfig.xml";
     }
 
+    public String getSolrXmlFile() {
+      return ROOT_DIR + "solr.xml";
+    }
+
+
     public void setUp() throws Exception {
-
-      File home = new File(TEMP_DIR,
-              getClass().getName() + "-" + System.currentTimeMillis());
-
-
-      homeDir = new File(home, "inst");
-      dataDir = new File(homeDir, "data");
-      confDir = new File(homeDir, "conf");
+      homeDir = createTempDir("inst").toFile();
+      dataDir = new File(homeDir + "/collection1", "data");
+      confDir = new File(homeDir + "/collection1", "conf");
 
       homeDir.mkdirs();
       dataDir.mkdirs();
       confDir.mkdirs();
 
+      FileUtils.copyFile(getFile(getSolrXmlFile()), new File(homeDir, "solr.xml"));
       File f = new File(confDir, "solrconfig.xml");
       FileUtils.copyFile(getFile(getSolrConfigFile()), f);
       f = new File(confDir, "schema.xml");
@@ -137,17 +167,16 @@ public class TestContentStreamDataSource extends AbstractDataImportHandlerTestCa
       FileUtils.copyFile(getFile(getSchemaFile()), f);
       f = new File(confDir, "data-config.xml");
       FileUtils.copyFile(getFile(CONF_DIR + "dataconfig-contentstream.xml"), f);
+
+      Files.createFile(homeDir.toPath().resolve("collection1/core.properties"));
     }
 
-    public void tearDown() throws Exception {
-      recurseDelete(homeDir);
-    }
   }
 
   private JettySolrRunner createJetty(SolrInstance instance) throws Exception {
-    System.setProperty("solr.solr.home", instance.getHomeDir());
-    System.setProperty("solr.data.dir", instance.getDataDir());
-    JettySolrRunner jetty = new JettySolrRunner("/solr", 0);
+    Properties nodeProperties = new Properties();
+    nodeProperties.setProperty("solr.data.dir", instance.getDataDir());
+    JettySolrRunner jetty = new JettySolrRunner(instance.getHomeDir(), nodeProperties, buildJettyConfig("/solr"));
     jetty.start();
     return jetty;
   }

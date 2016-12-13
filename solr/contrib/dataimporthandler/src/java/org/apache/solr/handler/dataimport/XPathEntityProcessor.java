@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -19,14 +19,13 @@ package org.apache.solr.handler.dataimport;
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVERE;
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrapAndThrow;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.common.ResourceLoader;
-import org.apache.solr.common.util.SystemIdResolver;
+import org.apache.lucene.analysis.util.ResourceLoader;
+import org.apache.solr.util.SystemIdResolver;
 import org.apache.solr.common.util.XMLErrorLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.commons.io.IOUtils;
 
-import javax.xml.transform.Source;
 import javax.xml.transform.TransformerException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.stream.StreamResult;
@@ -34,6 +33,7 @@ import javax.xml.transform.stream.StreamSource;
 import java.io.CharArrayReader;
 import java.io.CharArrayWriter;
 import java.io.Reader;
+import java.lang.invoke.MethodHandles;
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -43,21 +43,21 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * <p> An implementation of {@link EntityProcessor} which uses a streaming xpath parser to extract values out of XML documents.
- * It is typically used in conjunction with {@link URLDataSource} or {@link FileDataSource}. </p> <p/> <p> Refer to <a
+ * It is typically used in conjunction with {@link URLDataSource} or {@link FileDataSource}. </p> <p> Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a> for more
  * details. </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
+ *
  * @see XPathRecordReader
  * @since solr 1.3
  */
 public class XPathEntityProcessor extends EntityProcessorBase {
-  private static final Logger LOG = LoggerFactory.getLogger(XPathEntityProcessor.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final XMLErrorLogger xmllog = new XMLErrorLogger(LOG);
 
-  private static final Map<String, Object> END_MARKER = new HashMap<String, Object>();
+  private static final Map<String, Object> END_MARKER = new HashMap<>();
   
   protected List<String> placeHolderVariables;
 
@@ -85,20 +85,23 @@ public class XPathEntityProcessor extends EntityProcessorBase {
   protected int blockingQueueSize = 1000;
 
   protected Thread publisherThread;
+
+  protected boolean reinitXPathReader = true;
   
   @Override
   @SuppressWarnings("unchecked")
   public void init(Context context) {
     super.init(context);
-    if (xpathReader == null)
-      initXpathReader();
+    if (reinitXPathReader)
+      initXpathReader(context.getVariableResolver());
     pk = context.getEntityAttribute("pk");
     dataSource = context.getDataSource();
     rowIterator = null;
 
   }
 
-  private void initXpathReader() {
+  private void initXpathReader(VariableResolver resolver) {
+    reinitXPathReader = false;
     useSolrAddXml = Boolean.parseBoolean(context
             .getEntityAttribute(USE_SOLR_ADD_SCHEMA));
     streamRows = Boolean.parseBoolean(context
@@ -147,11 +150,12 @@ public class XPathEntityProcessor extends EntityProcessorBase {
       xpathReader.addField("name", "/add/doc/field/@name", true);
       xpathReader.addField("value", "/add/doc/field", true);
     } else {
-      String forEachXpath = context.getEntityAttribute(FOR_EACH);
+      String forEachXpath = context.getResolvedEntityAttribute(FOR_EACH);
       if (forEachXpath == null)
         throw new DataImportHandlerException(SEVERE,
                 "Entity : " + context.getEntityAttribute("name")
                         + " must have a 'forEach' attribute");
+      if (forEachXpath.equals(context.getEntityAttribute(FOR_EACH))) reinitXPathReader = true;
 
       try {
         xpathReader = new XPathRecordReader(forEachXpath);
@@ -164,6 +168,10 @@ public class XPathEntityProcessor extends EntityProcessorBase {
           }
           String xpath = field.get(XPATH);
           xpath = context.replaceTokens(xpath);
+          //!xpath.equals(field.get(XPATH) means the field xpath has a template
+          //in that case ensure that the XPathRecordReader is reinitialized
+          //for each xml
+          if (!xpath.equals(field.get(XPATH)) && !context.isRootEntity()) reinitXPathReader = true;
           xpathReader.addField(field.get(DataImporter.COLUMN),
                   xpath,
                   Boolean.parseBoolean(field.get(DataImporter.MULTI_VALUED)),
@@ -175,18 +183,18 @@ public class XPathEntityProcessor extends EntityProcessorBase {
       }
     }
     String url = context.getEntityAttribute(URL);
-    List<String> l = url == null ? Collections.EMPTY_LIST : TemplateString.getVariables(url);
+    List<String> l = url == null ? Collections.EMPTY_LIST : resolver.getVariables(url);
     for (String s : l) {
       if (s.startsWith(entityName + ".")) {
         if (placeHolderVariables == null)
-          placeHolderVariables = new ArrayList<String>();
+          placeHolderVariables = new ArrayList<>();
         placeHolderVariables.add(s.substring(entityName.length() + 1));
       }
     }
     for (Map<String, String> fld : context.getAllEntityFields()) {
       if (fld.get(COMMON_FIELD) != null && "true".equals(fld.get(COMMON_FIELD))) {
         if (commonFields == null)
-          commonFields = new ArrayList<String>();
+          commonFields = new ArrayList<>();
         commonFields.add(fld.get(DataImporter.COLUMN));
       }
     }
@@ -203,11 +211,9 @@ public class XPathEntityProcessor extends EntityProcessorBase {
     while (true) {
       result = fetchNextRow();
 
-      if (result == null){
-        rowIterator = null;
+      if (result == null)
         return null;
-      }
-      
+
       if (pk == null || result.get(pk) != null)
         return result;
     }
@@ -251,8 +257,8 @@ public class XPathEntityProcessor extends EntityProcessorBase {
   }
 
   private void addNamespace() {
-    Map<String, Object> namespace = new HashMap<String, Object>();
-    Set<String> allNames = new HashSet<String>();
+    Map<String, Object> namespace = new HashMap<>();
+    Set<String> allNames = new HashSet<>();
     if (commonFields != null) allNames.addAll(commonFields);
     if (placeHolderVariables != null) allNames.addAll(placeHolderVariables);
     if(allNames.isEmpty()) return;
@@ -261,7 +267,7 @@ public class XPathEntityProcessor extends EntityProcessorBase {
       Object val = context.getSessionAttribute(name, Context.SCOPE_ENTITY);
       if (val != null) namespace.put(name, val);
     }
-    ((VariableResolverImpl)context.getVariableResolver()).addNamespace(entityName, namespace);
+    ((VariableResolver)context.getVariableResolver()).addNamespace(entityName, namespace);
   }
 
   private void addCommonFields(Map<String, Object> r) {
@@ -280,7 +286,7 @@ public class XPathEntityProcessor extends EntityProcessorBase {
   private void initQuery(String s) {
     Reader data = null;
     try {
-      final List<Map<String, Object>> rows = new ArrayList<Map<String, Object>>();
+      final List<Map<String, Object>> rows = new ArrayList<>();
       try {
         data = dataSource.getData(s);
       } catch (Exception e) {
@@ -303,7 +309,7 @@ public class XPathEntityProcessor extends EntityProcessorBase {
           data = caw.getReader();
         } catch (TransformerException e) {
           if (ABORT.equals(onError)) {
-            wrapAndThrow(SEVERE, e, "Exception in applying XSL Transformeation");
+            wrapAndThrow(SEVERE, e, "Exception in applying XSL Transformation");
           } else if (SKIP.equals(onError)) {
             wrapAndThrow(DataImportHandlerException.SKIP, e);
           } else {
@@ -317,12 +323,7 @@ public class XPathEntityProcessor extends EntityProcessorBase {
         rowIterator = getRowIterator(data, s);
       } else {
         try {
-          xpathReader.streamRecords(data, new XPathRecordReader.Handler() {
-            @SuppressWarnings("unchecked")
-            public void handle(Map<String, Object> record, String xpath) {
-              rows.add(readRow(record, xpath));
-            }
-          });
+          xpathReader.streamRecords(data, (record, xpath) -> rows.add(readRow(record, xpath)));
         } catch (Exception e) {
           String msg = "Parsing failed for xml, url:" + s + " rows processed:" + rows.size();
           if (rows.size() > 0) msg += " last row: " + rows.get(rows.size() - 1);
@@ -330,8 +331,8 @@ public class XPathEntityProcessor extends EntityProcessorBase {
             wrapAndThrow(SEVERE, e, msg);
           } else if (SKIP.equals(onError)) {
             LOG.warn(msg, e);
-            Map<String, Object> map = new HashMap<String, Object>();
-            map.put(SKIP_DOC, Boolean.TRUE);
+            Map<String, Object> map = new HashMap<>();
+            map.put(DocBuilder.SKIP_DOC, Boolean.TRUE);
             rows.add(map);
           } else if (CONTINUE.equals(onError)) {
             LOG.warn(msg, e);
@@ -358,7 +359,7 @@ public class XPathEntityProcessor extends EntityProcessorBase {
     if (useSolrAddXml) {
       List<String> names = (List<String>) record.get("name");
       List<String> values = (List<String>) record.get("value");
-      Map<String, Object> row = new HashMap<String, Object>();
+      Map<String, Object> row = new HashMap<>();
       for (int i = 0; i < names.size() && i < values.size(); i++) {
         if (row.containsKey(names.get(i))) {
           Object existing = row.get(names.get(i));
@@ -418,32 +419,29 @@ public class XPathEntityProcessor extends EntityProcessorBase {
 
   private Iterator<Map<String, Object>> getRowIterator(final Reader data, final String s) {
     //nothing atomic about it. I just needed a StongReference
-    final AtomicReference<Exception> exp = new AtomicReference<Exception>();
-    final BlockingQueue<Map<String, Object>> blockingQueue = new ArrayBlockingQueue<Map<String, Object>>(blockingQueueSize);
+    final AtomicReference<Exception> exp = new AtomicReference<>();
+    final BlockingQueue<Map<String, Object>> blockingQueue = new ArrayBlockingQueue<>(blockingQueueSize);
     final AtomicBoolean isEnd = new AtomicBoolean(false);
     final AtomicBoolean throwExp = new AtomicBoolean(true);
     publisherThread = new Thread() {
       @Override
       public void run() {
         try {
-          xpathReader.streamRecords(data, new XPathRecordReader.Handler() {
-            @SuppressWarnings("unchecked")
-            public void handle(Map<String, Object> record, String xpath) {
-              if (isEnd.get()) {
-                throwExp.set(false);
-                //To end the streaming . otherwise the parsing will go on forever
-                //though consumer has gone away
-                throw new RuntimeException("BREAK");
-              }
-              Map<String, Object> row;
-              try {
-                row = readRow(record, xpath);
-              } catch (Exception e) {
-                isEnd.set(true);
-                return;
-              }
-              offer(row);
+          xpathReader.streamRecords(data, (record, xpath) -> {
+            if (isEnd.get()) {
+              throwExp.set(false);
+              //To end the streaming . otherwise the parsing will go on forever
+              //though consumer has gone away
+              throw new RuntimeException("BREAK");
             }
+            Map<String, Object> row;
+            try {
+              row = readRow(record, xpath);
+            } catch (Exception e) {
+              isEnd.set(true);
+              return;
+            }
+            offer(row);
           });
         } catch (Exception e) {
           if(throwExp.get()) exp.set(e);
@@ -477,10 +475,12 @@ public class XPathEntityProcessor extends EntityProcessorBase {
       private Map<String, Object> lastRow;
       int count = 0;
 
+      @Override
       public boolean hasNext() {
         return !isEnd.get();
       }
 
+      @Override
       public Map<String, Object> next() {
         Map<String, Object> row;
         
@@ -516,6 +516,7 @@ public class XPathEntityProcessor extends EntityProcessorBase {
         return lastRow = row;
       }
 
+      @Override
       public void remove() {
         /*no op*/
       }

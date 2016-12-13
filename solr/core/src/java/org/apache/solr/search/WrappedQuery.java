@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,21 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.Searcher;
 import org.apache.lucene.search.Weight;
 
 import java.io.IOException;
-import java.util.Set;
 
 /** A simple query that wraps another query and implements ExtendedQuery. */
-public class WrappedQuery extends ExtendedQueryBase {
+public final class WrappedQuery extends ExtendedQueryBase {
   private Query q;
 
   public WrappedQuery(Query q) {
@@ -44,36 +40,14 @@ public class WrappedQuery extends ExtendedQueryBase {
   }
 
   @Override
-  public void setBoost(float b) {
-    q.setBoost(b);
-  }
-
-  @Override
-  public float getBoost() {
-    return q.getBoost();
-  }
-
-  @Override
-  public Weight createWeight(Searcher searcher) throws IOException {
-    return q.createWeight(searcher);
+  public Weight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
+    return q.createWeight(searcher, needsScores);
   }
 
   @Override
   public Query rewrite(IndexReader reader) throws IOException {
     // currently no need to continue wrapping at this point.
     return q.rewrite(reader);
-  }
-
-  @Override
-  public void extractTerms(Set<Term> terms) {
-    q.extractTerms(terms);
-  }
-
-  @Override
-  public Object clone() {
-    WrappedQuery newQ = (WrappedQuery)super.clone();
-    newQ.q = (Query) q.clone();
-    return newQ;
   }
 
   @Override

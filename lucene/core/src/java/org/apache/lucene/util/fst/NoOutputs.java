@@ -1,6 +1,4 @@
-package org.apache.lucene.util.fst;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.util.fst;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.fst;
+
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
@@ -74,6 +74,13 @@ public final class NoOutputs extends Outputs<Object> {
   }
 
   @Override
+  public Object merge(Object first, Object second) {
+    assert first == NO_OUTPUT;
+    assert second == NO_OUTPUT;
+    return NO_OUTPUT;
+  }
+
+  @Override
   public void write(Object prefix, DataOutput out) {
     //assert false;
   }
@@ -93,5 +100,15 @@ public final class NoOutputs extends Outputs<Object> {
   @Override
   public String outputToString(Object output) {
     return "";
+  }
+
+  @Override
+  public long ramBytesUsed(Object output) {
+    return 0;
+  }
+
+  @Override
+  public String toString() {
+    return "NoOutputs";
   }
 }

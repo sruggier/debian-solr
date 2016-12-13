@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,33 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import org.apache.solr.core.SolrInfoMBean;
 
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import java.io.IOException;
 
 
 /**
  * Primary API for dealing with Solr's internal caches.
- * 
- * @version $Id$
  */
 public interface SolrCache<K,V> extends SolrInfoMBean {
-  public final static Logger log = LoggerFactory.getLogger(SolrCache.class);
-
 
   /**
-   * The initialization routine.  Instance specific arguments are passed in
+   * The initialization routine. Instance specific arguments are passed in
    * the <code>args</code> map.
    * <p>
    * The persistence object will exist across different lifetimes of similar caches.
    * For example, all filter caches will share the same persistence object, sometimes
-   * at the same time (it must be threadsafe).  If null is passed, then the cache
+   * at the same time (it must be thread-safe).  If null is passed, then the cache
    * implementation should create and return a new persistence object.  If not null,
    * the passed in object should be returned again.
    * <p>
@@ -53,7 +45,7 @@ public interface SolrCache<K,V> extends SolrInfoMBean {
    * object may be of any type desired by the cache implementation.
    * <p>
    * The {@link CacheRegenerator} is what the cache uses during auto-warming to
-   * renenerate an item in the new cache from an entry in the old cache.
+   * regenerate an item in the new cache from an entry in the old cache.
    *
    */
   public Object init(Map args, Object persistence, CacheRegenerator regenerator);
@@ -125,7 +117,7 @@ public interface SolrCache<K,V> extends SolrInfoMBean {
    * Warm this cache associated with <code>searcher</code> using the <code>old</code>
    * cache object.  <code>this</code> and <code>old</code> will have the same concrete type.
    */
-  void warm(SolrIndexSearcher searcher, SolrCache<K,V> old) throws IOException;
+  void warm(SolrIndexSearcher searcher, SolrCache<K,V> old);
   // Q: an alternative to passing the searcher here would be to pass it in
   // init and have the cache implementation save it.
 

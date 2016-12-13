@@ -21,10 +21,24 @@
   <description>Lucene Tools</description>
 
   <property name="build.dir" location="../build/tools"/>
+  
+  <property name="rat.additional-includes" value="forbiddenApis/**,prettify/**"/>
 
   <import file="../common-build.xml"/>
 
-  <path id="classpath"/>
+  <path id="classpath">
+    <!-- TODO: we need this for forbidden-apis to be happy, because it does not support "includeantruntime": -->
+    <fileset dir="lib"/>
+  </path>
+
+  <path id="test.classpath"/>
+
+  <!-- redefine the test compilation, so it's just a no-op -->
+  <target name="compile-test"/>
+  
+  <!-- redefine the forbidden apis to be no-ops -->
+  <target name="-check-forbidden-tests"/>
+  <target name="-check-forbidden-sysout"/>
 
   <!--  
       Specialize compile-core to not depend on clover, to exclude a 
@@ -32,12 +46,14 @@
       non-existent resource files to the build output directory.
    -->
   <target name="compile-core" depends="init" description="Compiles tools classes.">
-    <compile srcdir="${src.dir}" destdir="${build.dir}/classes/java" 
-      includeantruntime="true" />
+    <compile srcdir="${src.dir}" destdir="${build.dir}/classes/java" includeantruntime="true">
+      <classpath refid="classpath"/>
+    </compile>
     <copy todir="${build.dir}/classes/java">
       <fileset dir="${src.dir}" excludes="**/*.java" />
     </copy>
   </target>
-  
+
   <target name="javadocs"/> <!-- to make common-build.xml happy -->
+  <target name="pitest"/> <!-- to make common-build.xml happy -->
 </project>

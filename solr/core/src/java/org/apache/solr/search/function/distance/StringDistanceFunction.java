@@ -1,6 +1,4 @@
-package org.apache.solr.search.function.distance;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +14,13 @@ package org.apache.solr.search.function.distance;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.function.distance;
 
-import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.docvalues.FloatDocValues;
 import org.apache.lucene.search.spell.StringDistance;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.ValueSource;
 
 import java.io.IOException;
 import java.util.Map;
@@ -34,11 +34,6 @@ public class StringDistanceFunction extends ValueSource {
   protected ValueSource str1, str2;
   protected StringDistance dist;
 
-  /**
-   * @param str1
-   * @param str2
-   * @param measure
-   */
   public StringDistanceFunction(ValueSource str1, ValueSource str2, StringDistance measure) {
     this.str1 = str1;
     this.str2 = str2;
@@ -48,29 +43,25 @@ public class StringDistanceFunction extends ValueSource {
   }
 
   @Override
-  public DocValues getValues(Map context, IndexReader reader) throws IOException {
-    final DocValues str1DV = str1.getValues(context, reader);
-    final DocValues str2DV = str2.getValues(context, reader);
-    return new DocValues() {
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
+    final FunctionValues str1DV = str1.getValues(context, readerContext);
+    final FunctionValues str2DV = str2.getValues(context, readerContext);
+    return new FloatDocValues(this) {
 
       @Override
       public float floatVal(int doc) {
-        return dist.getDistance(str1DV.strVal(doc), str2DV.strVal(doc));
+        String s1 = str1DV.strVal(doc);
+        String s2 = str2DV.strVal(doc);
+        if (null == s1 || null == s2) {
+          // the only thing a missing value scores 1.0 with is another missing value
+          return (s1 == s2) ? 1.0F : 0.0F;
+        }
+        return dist.getDistance(s1, s2);
       }
 
       @Override
-      public int intVal(int doc) {
-        return (int) doubleVal(doc);
-      }
-
-      @Override
-      public long longVal(int doc) {
-        return (long) doubleVal(doc);
-      }
-
-      @Override
-      public double doubleVal(int doc) {
-        return (double) floatVal(doc);
+      public boolean exists(int doc) {
+        return str1DV.exists(doc) && str2DV.exists(doc);
       }
 
       @Override

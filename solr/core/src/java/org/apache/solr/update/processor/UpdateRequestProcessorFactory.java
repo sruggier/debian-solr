@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update.processor;
 
 import org.apache.solr.common.util.NamedList;
@@ -33,12 +32,19 @@ import org.apache.solr.util.plugin.SolrCoreAware;
  * @since solr 1.3
  */
 public abstract class UpdateRequestProcessorFactory implements NamedListInitializedPlugin
-{    
+{
+
+  /** A marker interface for UpdateRequestProcessorFactory implementations indicating that
+   * the factory should be used even if the update.distrib parameter would otherwise cause
+   * it to not be run.
+   */
+  public interface RunAlways {}
+
+  @Override
   public void init( NamedList args )
   {
     // could process the Node
   }
   
-  abstract public UpdateRequestProcessor getInstance( 
-      SolrQueryRequest req, SolrQueryResponse rsp, UpdateRequestProcessor next );
+  abstract public UpdateRequestProcessor getInstance(SolrQueryRequest req, SolrQueryResponse rsp, UpdateRequestProcessor next );
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,43 +16,45 @@
  */
 package org.apache.solr.request;
 
-import org.apache.solr.common.SolrDocument;
-import org.apache.solr.common.SolrDocumentList;
-import org.apache.solr.common.params.CommonParams;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.common.util.JavaBinCodec;
-import org.apache.solr.response.BinaryQueryResponseWriter;
-import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.util.AbstractSolrTestCase;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+
+import org.apache.solr.common.SolrDocument;
+import org.apache.solr.common.SolrDocumentList;
+import org.apache.solr.common.params.CommonParams;
+import org.apache.solr.common.util.JavaBinCodec;
+import org.apache.solr.common.util.NamedList;
+import org.apache.solr.response.BinaryQueryResponseWriter;
+import org.apache.solr.response.BinaryResponseWriter.Resolver;
+import org.apache.solr.response.SolrQueryResponse;
+import org.apache.solr.search.SolrReturnFields;
+import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
 /**
  * Test for BinaryResponseWriter
+ * @Deprecated use {@link org.apache.solr.response.TestBinaryResponseWriter} instead.
  *
- * @version $Id$
  * @since solr 1.4
  */
+@Deprecated
 public class TestBinaryResponseWriter extends AbstractSolrTestCase {
 
-  @Override
-  public String getSchemaFile() {
-    return "schema12.xml";
-  }
-
-  @Override
-  public String getSolrConfigFile() {
-    return "solrconfig.xml";
+  
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    System.setProperty("enable.update.log", "false"); // schema12 doesn't support _version_
+    initCore("solrconfig.xml", "schema12.xml");
   }
 
   /**
    * Tests known types implementation by asserting correct encoding/decoding of UUIDField
    */
   public void testUUID() throws Exception {
-    String s = UUID.randomUUID().toString().toLowerCase(Locale.ENGLISH);
+    String s = UUID.randomUUID().toString().toLowerCase(Locale.ROOT);
     assertU(adoc("id", "101", "uuid", s));
     assertU(commit());
     LocalSolrQueryRequest req = lrf.makeRequest("q", "*:*");
@@ -70,4 +72,35 @@ public class TestBinaryResponseWriter extends AbstractSolrTestCase {
 
     req.close();
   }
+
+  public void testResolverSolrDocumentPartialFields() throws Exception {
+    LocalSolrQueryRequest req = lrf.makeRequest("q", "*:*",
+                                                "fl", "id,xxx,ddd_s"); 
+    SolrDocument in = new SolrDocument();
+    in.addField("id", 345);
+    in.addField("aaa_s", "aaa");
+    in.addField("bbb_s", "bbb");
+    in.addField("ccc_s", "ccc");
+    in.addField("ddd_s", "ddd");
+    in.addField("eee_s", "eee");    
+
+    Resolver r = new Resolver(req, new SolrReturnFields(req));
+    Object o = r.resolve(in, new JavaBinCodec());
+
+    assertNotNull("obj is null", o);
+    assertTrue("obj is not doc", o instanceof SolrDocument);
+
+    SolrDocument out = new SolrDocument();
+    for (Map.Entry<String, Object> e : in) {
+      if(r.isWritable(e.getKey())) out.put(e.getKey(),e.getValue());
+
+    }
+    assertTrue("id not found", out.getFieldNames().contains("id"));
+    assertTrue("ddd_s not found", out.getFieldNames().contains("ddd_s"));
+    assertEquals("Wrong number of fields found", 
+                 2, out.getFieldNames().size());
+    req.close();
+
+  }
+
 }

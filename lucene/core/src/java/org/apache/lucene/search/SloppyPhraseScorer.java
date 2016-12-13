@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -26,9 +26,17 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 
 import org.apache.lucene.index.Term;
-import org.apache.lucene.util.OpenBitSet;
+import org.apache.lucene.search.similarities.Similarity;
+import org.apache.lucene.util.FixedBitSet;
 
-final class SloppyPhraseScorer extends PhraseScorer {
+final class SloppyPhraseScorer extends Scorer {
+
+  private final DocIdSetIterator conjunction;
+  private final PhrasePositions[] phrasePositions;
+
+  private float sloppyFreq; //phrase frequency in current doc as computed by phraseFreq().
+
+  private final Similarity.SimScorer docScorer;
   
   private final int slop;
   private final int numPostings;
@@ -42,12 +50,28 @@ final class SloppyPhraseScorer extends PhraseScorer {
   private PhrasePositions[][] rptGroups; // in each group are PPs that repeats each other (i.e. same term), sorted by (query) offset 
   private PhrasePositions[] rptStack; // temporary stack for switching colliding repeating pps 
   
-  SloppyPhraseScorer(Weight weight, PhraseQuery.PostingsAndFreq[] postings, Similarity similarity,
-      int slop, byte[] norms) throws IOException {
-    super(weight, postings, similarity, norms);
+  private int numMatches;
+  final boolean needsScores;
+  private final float matchCost;
+  
+  SloppyPhraseScorer(Weight weight, PhraseQuery.PostingsAndFreq[] postings,
+      int slop, Similarity.SimScorer docScorer, boolean needsScores,
+      float matchCost) {
+    super(weight);
+    this.docScorer = docScorer;
+    this.needsScores = needsScores;
     this.slop = slop;
     this.numPostings = postings==null ? 0 : postings.length;
     pq = new PhraseQueue(postings.length);
+    DocIdSetIterator[] iterators = new DocIdSetIterator[postings.length];
+    phrasePositions = new PhrasePositions[postings.length];
+    for (int i = 0; i < postings.length; ++i) {
+      iterators[i] = postings[i].postings;
+      phrasePositions[i] = new PhrasePositions(postings[i].postings, postings[i].position, i, postings[i].terms);
+    }
+    conjunction = ConjunctionDISI.intersectIterators(Arrays.asList(iterators));
+    assert TwoPhaseIterator.unwrap(conjunction) == null;
+    this.matchCost = matchCost;
   }
 
   /**
@@ -68,12 +92,12 @@ final class SloppyPhraseScorer extends PhraseScorer {
    * would get same score as "g f"~2, although "c b"~2 could be matched twice.
    * We may want to fix this in the future (currently not, for performance reasons).
    */
-  @Override
-  protected float phraseFreq() throws IOException {
+  private float phraseFreq() throws IOException {
     if (!initPhrasePositions()) {
       return 0.0f;
     }
     float freq = 0.0f;
+    numMatches = 0;
     PhrasePositions pp = pq.pop();
     int matchLength = end - pp.position;
     int next = pq.top().position; 
@@ -83,7 +107,11 @@ final class SloppyPhraseScorer extends PhraseScorer {
       }
       if (pp.position > next) { // done minimizing current match-length 
         if (matchLength <= slop) {
-          freq += getSimilarity().sloppyFreq(matchLength); // score match
+          freq += docScorer.computeSlopFactor(matchLength); // score match
+          numMatches++;
+          if (!needsScores) {
+            return freq;
+          }
         }      
         pq.add(pp);
         pp = pq.pop();
@@ -97,7 +125,8 @@ final class SloppyPhraseScorer extends PhraseScorer {
       }
     }
     if (matchLength <= slop) {
-      freq += getSimilarity().sloppyFreq(matchLength); // score match
+      freq += docScorer.computeSlopFactor(matchLength); // score match
+      numMatches++;
     }    
     return freq;
   }
@@ -121,7 +150,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
       return true; // not a repeater
     }
     PhrasePositions[] rg = rptGroups[pp.rptGroup];
-    OpenBitSet bits = new OpenBitSet(rg.length); // for re-queuing after collisions are resolved
+    FixedBitSet bits = new FixedBitSet(rg.length); // for re-queuing after collisions are resolved
     int k0 = pp.rptInd;
     int k;
     while((k=collide(pp)) >= 0) {
@@ -130,16 +159,21 @@ final class SloppyPhraseScorer extends PhraseScorer {
         return false; // exhausted
       }
       if (k != k0) { // careful: mark only those currently in the queue
+        bits = FixedBitSet.ensureCapacity(bits, k);
         bits.set(k); // mark that pp2 need to be re-queued
       }
     }
     // collisions resolved, now re-queue
     // empty (partially) the queue until seeing all pps advanced for resolving collisions
     int n = 0;
+    // TODO would be good if we can avoid calling cardinality() in each iteration!
+    int numBits = bits.length(); // larges bit we set
     while (bits.cardinality() > 0) {
       PhrasePositions pp2 = pq.pop();
       rptStack[n++] = pp2;
-      if (pp2.rptGroup >= 0 && bits.get(pp2.rptInd)) {
+      if (pp2.rptGroup >= 0 
+          && pp2.rptInd < numBits  // this bit may not have been set
+          && bits.get(pp2.rptInd)) {
         bits.clear(pp2.rptInd);
       }
     }
@@ -204,7 +238,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
     //System.err.println("initSimple: doc: "+min.doc);
     pq.clear();
     // position pps and build queue from list
-    for (PhrasePositions pp=min,prev=null; prev!=max; pp=(prev=pp).next) {  // iterate cyclic list: done once handled max
+    for (PhrasePositions pp : phrasePositions) {
       pp.firstPosition();
       if (pp.position > end) {
         end = pp.position;
@@ -226,7 +260,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
 
   /** move all PPs to their first position */
   private void placeFirstPositions() throws IOException {
-    for (PhrasePositions pp=min,prev=null; prev!=max; pp=(prev=pp).next) { // iterate cyclic list: done once handled max
+    for (PhrasePositions pp : phrasePositions) {
       pp.firstPosition();
     }
   }
@@ -234,7 +268,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
   /** Fill the queue (all pps are already placed */
   private void fillQueue() {
     pq.clear();
-    for (PhrasePositions pp=min,prev=null; prev!=max; pp=(prev=pp).next) {  // iterate cyclic list: done once handled max
+    for (PhrasePositions pp : phrasePositions) {  // iterate cyclic list: done once handled max
       if (pp.position > end) {
         end = pp.position;
       }
@@ -325,6 +359,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
   private void sortRptGroups(ArrayList<ArrayList<PhrasePositions>> rgs) {
     rptGroups = new PhrasePositions[rgs.size()][];
     Comparator<PhrasePositions> cmprtr = new Comparator<PhrasePositions>() {
+      @Override
       public int compare(PhrasePositions pp1, PhrasePositions pp2) {
         return pp1.offset - pp2.offset;
       }
@@ -342,7 +377,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
   /** Detect repetition groups. Done once - for first doc */
   private ArrayList<ArrayList<PhrasePositions>> gatherRptGroups(LinkedHashMap<Term,Integer> rptTerms) throws IOException {
     PhrasePositions[] rpp = repeatingPPs(rptTerms); 
-    ArrayList<ArrayList<PhrasePositions>> res = new ArrayList<ArrayList<PhrasePositions>>();
+    ArrayList<ArrayList<PhrasePositions>> res = new ArrayList<>();
     if (!hasMultiTermRpts) {
       // simpler - no multi-terms - can base on positions in first doc
       for (int i=0; i<rpp.length; i++) {
@@ -362,7 +397,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
           if (g < 0) {
             g = res.size();
             pp.rptGroup = g;  
-            ArrayList<PhrasePositions> rl = new ArrayList<PhrasePositions>(2);
+            ArrayList<PhrasePositions> rl = new ArrayList<>(2);
             rl.add(pp);
             res.add(rl); 
           }
@@ -372,11 +407,11 @@ final class SloppyPhraseScorer extends PhraseScorer {
       }
     } else {
       // more involved - has multi-terms
-      ArrayList<HashSet<PhrasePositions>> tmp = new ArrayList<HashSet<PhrasePositions>>();
-      ArrayList<OpenBitSet> bb = ppTermsBitSets(rpp, rptTerms);
+      ArrayList<HashSet<PhrasePositions>> tmp = new ArrayList<>();
+      ArrayList<FixedBitSet> bb = ppTermsBitSets(rpp, rptTerms);
       unionTermGroups(bb);
       HashMap<Term,Integer> tg = termGroups(rptTerms, bb);
-      HashSet<Integer> distinctGroupIDs = new HashSet<Integer>(tg.values());
+      HashSet<Integer> distinctGroupIDs = new HashSet<>(tg.values());
       for (int i=0; i<distinctGroupIDs.size(); i++) {
         tmp.add(new HashSet<PhrasePositions>());
       }
@@ -391,7 +426,7 @@ final class SloppyPhraseScorer extends PhraseScorer {
         }
       }
       for (HashSet<PhrasePositions> hs : tmp) {
-        res.add(new ArrayList<PhrasePositions>(hs));
+        res.add(new ArrayList<>(hs));
       }
     }
     return res;
@@ -404,9 +439,9 @@ final class SloppyPhraseScorer extends PhraseScorer {
 
   /** find repeating terms and assign them ordinal values */
   private LinkedHashMap<Term,Integer> repeatingTerms() {
-    LinkedHashMap<Term,Integer> tord = new LinkedHashMap<Term,Integer>();
-    HashMap<Term,Integer> tcnt = new HashMap<Term,Integer>();
-    for (PhrasePositions pp=min,prev=null; prev!=max; pp=(prev=pp).next) { // iterate cyclic list: done once handled max
+    LinkedHashMap<Term,Integer> tord = new LinkedHashMap<>();
+    HashMap<Term,Integer> tcnt = new HashMap<>();
+    for (PhrasePositions pp : phrasePositions) {
       for (Term t : pp.terms) {
         Integer cnt0 = tcnt.get(t);
         Integer cnt = cnt0==null ? new Integer(1) : new Integer(1+cnt0.intValue());
@@ -421,8 +456,8 @@ final class SloppyPhraseScorer extends PhraseScorer {
 
   /** find repeating pps, and for each, if has multi-terms, update this.hasMultiTermRpts */
   private PhrasePositions[] repeatingPPs(HashMap<Term,Integer> rptTerms) {
-    ArrayList<PhrasePositions> rp = new ArrayList<PhrasePositions>(); 
-    for (PhrasePositions pp=min,prev=null; prev!=max; pp=(prev=pp).next) { // iterate cyclic list: done once handled max
+    ArrayList<PhrasePositions> rp = new ArrayList<>();
+    for (PhrasePositions pp : phrasePositions) {
       for (Term t : pp.terms) {
         if (rptTerms.containsKey(t)) {
           rp.add(pp);
@@ -435,10 +470,10 @@ final class SloppyPhraseScorer extends PhraseScorer {
   }
   
   /** bit-sets - for each repeating pp, for each of its repeating terms, the term ordinal values is set */
-  private ArrayList<OpenBitSet> ppTermsBitSets(PhrasePositions[] rpp, HashMap<Term,Integer> tord) {
-    ArrayList<OpenBitSet> bb = new ArrayList<OpenBitSet>(rpp.length);
+  private ArrayList<FixedBitSet> ppTermsBitSets(PhrasePositions[] rpp, HashMap<Term,Integer> tord) {
+    ArrayList<FixedBitSet> bb = new ArrayList<>(rpp.length);
     for (PhrasePositions pp : rpp) {
-      OpenBitSet b = new OpenBitSet(tord.size());
+      FixedBitSet b = new FixedBitSet(tord.size());
       Integer ord;
       for (Term t: pp.terms) {
         if ((ord=tord.get(t))!=null) {
@@ -451,14 +486,14 @@ final class SloppyPhraseScorer extends PhraseScorer {
   }
   
   /** union (term group) bit-sets until they are disjoint (O(n^^2)), and each group have different terms */
-  private void unionTermGroups(ArrayList<OpenBitSet> bb) {
+  private void unionTermGroups(ArrayList<FixedBitSet> bb) {
     int incr;
     for (int i=0; i<bb.size()-1; i+=incr) {
       incr = 1;
       int j = i+1;
       while (j<bb.size()) {
         if (bb.get(i).intersects(bb.get(j))) {
-          bb.get(i).union(bb.get(j));
+          bb.get(i).or(bb.get(j));
           bb.remove(j);
           incr = 0;
         } else {
@@ -469,17 +504,25 @@ final class SloppyPhraseScorer extends PhraseScorer {
   }
   
   /** map each term to the single group that contains it */ 
-  private HashMap<Term,Integer> termGroups(LinkedHashMap<Term,Integer> tord, ArrayList<OpenBitSet> bb) throws IOException {
-    HashMap<Term,Integer> tg = new HashMap<Term,Integer>();
+  private HashMap<Term,Integer> termGroups(LinkedHashMap<Term,Integer> tord, ArrayList<FixedBitSet> bb) throws IOException {
+    HashMap<Term,Integer> tg = new HashMap<>();
     Term[] t = tord.keySet().toArray(new Term[0]);
     for (int i=0; i<bb.size(); i++) { // i is the group no.
-      DocIdSetIterator bits = bb.get(i).iterator();
-      int ord;
-      while ((ord=bits.nextDoc())!=NO_MORE_DOCS) {
+      FixedBitSet bits = bb.get(i);
+      for (int ord = bits.nextSetBit(0); ord != DocIdSetIterator.NO_MORE_DOCS; ord = ord + 1 >= bits.length() ? DocIdSetIterator.NO_MORE_DOCS : bits.nextSetBit(ord + 1)) {
         tg.put(t[ord],i);
       }
     }
     return tg;
+  }
+
+  @Override
+  public int freq() {
+    return numMatches;
+  }
+
+  float sloppyFreq() {
+    return sloppyFreq;
   }
   
 //  private void printQueue(PrintStream ps, PhrasePositions ext, String title) {
@@ -503,4 +546,43 @@ final class SloppyPhraseScorer extends PhraseScorer {
 //    }
 //  }
   
+  
+  @Override
+  public int docID() {
+    return conjunction.docID(); 
+  }
+  
+  @Override
+  public float score() {
+    return docScorer.score(docID(), sloppyFreq);
+  }
+
+  @Override
+  public String toString() { return "scorer(" + weight + ")"; }
+
+  @Override
+  public TwoPhaseIterator twoPhaseIterator() {
+    return new TwoPhaseIterator(conjunction) {
+      @Override
+      public boolean matches() throws IOException {
+        sloppyFreq = phraseFreq(); // check for phrase
+        return sloppyFreq != 0F;
+      }
+
+      @Override
+      public float matchCost() {
+        return matchCost;
+      }
+
+      @Override
+      public String toString() {
+        return "SloppyPhraseScorer@asTwoPhaseIterator(" + SloppyPhraseScorer.this + ")";
+      }
+    };
+  }
+
+  @Override
+  public DocIdSetIterator iterator() {
+    return TwoPhaseIterator.asDocIdSetIterator(twoPhaseIterator());
+  }
 }

@@ -1,6 +1,4 @@
-package org.apache.solr.update.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.update.processor;
 
 public interface LangIdParams {
 
@@ -31,6 +30,7 @@ public interface LangIdParams {
   String THRESHOLD  = LANGUAGE_ID + ".threshold";            // Detection threshold
   String ENFORCE_SCHEMA =  LANGUAGE_ID + ".enforceSchema";   // Enforces that output fields exist in schema
   String LANG_WHITELIST  = LANGUAGE_ID + ".whitelist";       // Allowed languages
+  String LCMAP =  LANGUAGE_ID + ".lcmap";                    // Maps detected langcode to other value
   String MAP_ENABLE =  LANGUAGE_ID + ".map";                 // Turns on or off the field mapping
   String MAP_FL =  LANGUAGE_ID + ".map.fl";                  // Field list for mapping
   String MAP_OVERWRITE =  LANGUAGE_ID + ".map.overwrite";    // Whether to overwrite existing fields
@@ -40,12 +40,16 @@ public interface LangIdParams {
   String MAP_LCMAP =  LANGUAGE_ID + ".map.lcmap";            // Enables mapping multiple langs to same output field
   String MAP_PATTERN =  LANGUAGE_ID + ".map.pattern";        // RegEx pattern to match field name
   String MAP_REPLACE =  LANGUAGE_ID + ".map.replace";        // Replace pattern
+  String MAX_FIELD_VALUE_CHARS = LANGUAGE_ID + ".maxFieldValueChars";   // Maximum number of characters to use per field for language detection
+  String MAX_TOTAL_CHARS = LANGUAGE_ID + ".maxTotalChars";   // Maximum number of characters to use per all concatenated fields for language detection
 
   String DOCID_FIELD_DEFAULT = "id";
   String DOCID_LANGFIELD_DEFAULT = null;
   String DOCID_LANGSFIELD_DEFAULT = null;
   String MAP_PATTERN_DEFAULT = "(.*)";
   String MAP_REPLACE_DEFAULT = "$1_{lang}";
+  int MAX_FIELD_VALUE_CHARS_DEFAULT = 10000;
+  int MAX_TOTAL_CHARS_DEFAULT = 20000;
 
   // TODO: This default threshold accepts even "uncertain" detections. 
   // Increase &langid.threshold above 0.5 to return only certain detections

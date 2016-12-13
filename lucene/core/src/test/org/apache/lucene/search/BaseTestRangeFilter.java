@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,19 +14,28 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 import java.util.Random;
 
 import org.apache.lucene.analysis.MockAnalyzer;
+import org.apache.lucene.document.DoublePoint;
+import org.apache.lucene.document.FloatPoint;
+import org.apache.lucene.document.IntPoint;
+import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -54,9 +61,7 @@ public class BaseTestRangeFilter extends LuceneTestCase {
       this.minR = minR;
       this.maxR = maxR;
       this.allowNegativeRandomInts = allowNegativeRandomInts;
-      try {
-        index = newDirectory(random);
-      } catch (IOException e) { throw new RuntimeException(e); }
+      index = newDirectory(random);
     }
   }
   
@@ -94,10 +99,10 @@ public class BaseTestRangeFilter extends LuceneTestCase {
   @BeforeClass
   public static void beforeClassBaseTestRangeFilter() throws Exception {
     maxId = atLeast(500);
-    signedIndexDir = new TestIndex(random, Integer.MAX_VALUE, Integer.MIN_VALUE, true);
-    unsignedIndexDir = new TestIndex(random, Integer.MAX_VALUE, 0, false);
-    signedIndexReader = build(random, signedIndexDir);
-    unsignedIndexReader = build(random, unsignedIndexDir);
+    signedIndexDir = new TestIndex(random(), Integer.MAX_VALUE, Integer.MIN_VALUE, true);
+    unsignedIndexDir = new TestIndex(random(), Integer.MAX_VALUE, 0, false);
+    signedIndexReader = build(random(), signedIndexDir);
+    unsignedIndexReader = build(random(), unsignedIndexDir);
   }
   
   @AfterClass
@@ -114,26 +119,58 @@ public class BaseTestRangeFilter extends LuceneTestCase {
   
   private static IndexReader build(Random random, TestIndex index) throws IOException {
     /* build an index */
-
+    
     Document doc = new Document();
-    Field idField = newField(random, "id", "", Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS);
-    Field randField = newField(random, "rand", "", Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS);
-    Field bodyField = newField(random, "body", "", Field.Store.NO, Field.Index.NOT_ANALYZED_NO_NORMS);
+    Field idField = newStringField(random, "id", "", Field.Store.YES);
+    Field idDVField = new SortedDocValuesField("id", new BytesRef());
+    Field intIdField = new IntPoint("id_int", 0);
+    Field intDVField = new NumericDocValuesField("id_int", 0);
+    Field floatIdField = new FloatPoint("id_float", 0);
+    Field floatDVField = new NumericDocValuesField("id_float", 0);
+    Field longIdField = new LongPoint("id_long", 0);
+    Field longDVField = new NumericDocValuesField("id_long", 0);
+    Field doubleIdField = new DoublePoint("id_double", 0);
+    Field doubleDVField = new NumericDocValuesField("id_double", 0);
+    Field randField = newStringField(random, "rand", "", Field.Store.YES);
+    Field randDVField = new SortedDocValuesField("rand", new BytesRef());
+    Field bodyField = newStringField(random, "body", "", Field.Store.NO);
+    Field bodyDVField = new SortedDocValuesField("body", new BytesRef());
     doc.add(idField);
+    doc.add(idDVField);
+    doc.add(intIdField);
+    doc.add(intDVField);
+    doc.add(floatIdField);
+    doc.add(floatDVField);
+    doc.add(longIdField);
+    doc.add(longDVField);
+    doc.add(doubleIdField);
+    doc.add(doubleDVField);
     doc.add(randField);
+    doc.add(randDVField);
     doc.add(bodyField);
+    doc.add(bodyDVField);
 
     RandomIndexWriter writer = new RandomIndexWriter(random, index.index, 
-                                                     newIndexWriterConfig(random, TEST_VERSION_CURRENT, new MockAnalyzer(random))
-                                                     .setOpenMode(OpenMode.CREATE).setMaxBufferedDocs(_TestUtil.nextInt(random, 50, 1000)).setMergePolicy(newLogMergePolicy()));
-    _TestUtil.reduceOpenFiles(writer.w);
+                                                     newIndexWriterConfig(random, new MockAnalyzer(random))
+                                                     .setOpenMode(OpenMode.CREATE).setMaxBufferedDocs(TestUtil.nextInt(random, 50, 1000)).setMergePolicy(newLogMergePolicy()));
+    TestUtil.reduceOpenFiles(writer.w);
+
     while(true) {
 
       int minCount = 0;
       int maxCount = 0;
 
       for (int d = minId; d <= maxId; d++) {
-        idField.setValue(pad(d));
+        idField.setStringValue(pad(d));
+        idDVField.setBytesValue(new BytesRef(pad(d)));
+        intIdField.setIntValue(d);
+        intDVField.setLongValue(d);
+        floatIdField.setFloatValue(d);
+        floatDVField.setLongValue(Float.floatToRawIntBits(d));
+        longIdField.setLongValue(d);
+        longDVField.setLongValue(d);
+        doubleIdField.setDoubleValue(d);
+        doubleDVField.setLongValue(Double.doubleToRawLongBits(d));
         int r = index.allowNegativeRandomInts ? random.nextInt() : random
           .nextInt(Integer.MAX_VALUE);
         if (index.maxR < r) {
@@ -149,8 +186,10 @@ public class BaseTestRangeFilter extends LuceneTestCase {
         } else if (r == index.minR) {
           minCount++;
         }
-        randField.setValue(pad(r));
-        bodyField.setValue("body");
+        randField.setStringValue(pad(r));
+        randDVField.setBytesValue(new BytesRef(pad(r)));
+        bodyField.setStringValue("body");
+        bodyDVField.setBytesValue(new BytesRef("body"));
         writer.addDocument(doc);
       }
 

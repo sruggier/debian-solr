@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
+
 
 import java.util.Arrays;
 import java.util.AbstractMap;
@@ -24,8 +24,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.lucene.util.CharacterUtils;
-import org.apache.lucene.util.Version;
+import org.apache.lucene.analysis.CharacterUtils;
 
 /**
  * A simple class that stores key Strings as char[]'s in a
@@ -35,36 +34,20 @@ import org.apache.lucene.util.Version;
  * etc.  It is designed to be quick to retrieve items
  * by char[] keys without the necessity of converting
  * to a String first.
- * <p>You must specify the required {@link Version}
- * compatibility when creating {@link CharArrayMap}:
- * <ul>
- *   <li> As of 3.1, supplementary characters are
- *       properly lowercased.</li>
- * </ul>
- * Before 3.1 supplementary characters could not be
- * lowercased correctly due to the lack of Unicode 4
- * support in JDK 1.4. To use instances of
- * {@link CharArrayMap} with the behavior before Lucene
- * 3.1 pass a {@link Version} &lt; 3.1 to the constructors.
  */
 public class CharArrayMap<V> extends AbstractMap<Object,V> {
   // private only because missing generics
-  private static final CharArrayMap<?> EMPTY_MAP = new EmptyCharArrayMap<Object>();
+  private static final CharArrayMap<?> EMPTY_MAP = new EmptyCharArrayMap<>();
 
   private final static int INIT_SIZE = 8;
-  private final CharacterUtils charUtils;
   private boolean ignoreCase;  
   private int count;
-  final Version matchVersion; // package private because used in CharArraySet
   char[][] keys; // package private because used in CharArraySet's non Set-conform CharArraySetIterator
   V[] values; // package private because used in CharArraySet's non Set-conform CharArraySetIterator
 
   /**
    * Create map with enough capacity to hold startSize terms
-   * 
-   * @param matchVersion
-   *          compatibility match version see <a href="#version">Version
-   *          note</a> above for details.
+   *
    * @param startSize
    *          the initial capacity
    * @param ignoreCase
@@ -72,31 +55,26 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
    *          otherwise <code>true</code>.
    */
   @SuppressWarnings("unchecked")
-  public CharArrayMap(Version matchVersion, int startSize, boolean ignoreCase) {
+  public CharArrayMap(int startSize, boolean ignoreCase) {
     this.ignoreCase = ignoreCase;
     int size = INIT_SIZE;
     while(startSize + (startSize>>2) > size)
       size <<= 1;
     keys = new char[size][];
     values = (V[]) new Object[size];
-    this.charUtils = CharacterUtils.getInstance(matchVersion);
-    this.matchVersion = matchVersion;
   }
 
   /**
    * Creates a map from the mappings in another map. 
-   * 
-   * @param matchVersion
-   *          compatibility match version see <a href="#version">Version
-   *          note</a> above for details.
+   *
    * @param c
    *          a map whose mappings to be copied
    * @param ignoreCase
    *          <code>false</code> if and only if the set should be case sensitive
    *          otherwise <code>true</code>.
    */
-  public CharArrayMap(Version matchVersion, Map<?,? extends V> c, boolean ignoreCase) {
-    this(matchVersion, c.size(), ignoreCase);
+  public CharArrayMap(Map<?,? extends V> c, boolean ignoreCase) {
+    this(c.size(), ignoreCase);
     putAll(c);
   }
   
@@ -106,8 +84,6 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     this.values = toCopy.values;
     this.ignoreCase = toCopy.ignoreCase;
     this.count = toCopy.count;
-    this.charUtils = toCopy.charUtils;
-    this.matchVersion = toCopy.matchVersion;
   }
   
   /** Clears all entries in this map. This method is supported for reusing, but not {@link Map#remove}. */
@@ -119,12 +95,12 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   }
 
   /** true if the <code>len</code> chars of <code>text</code> starting at <code>off</code>
-   * are in the {@link #keySet} */
+   * are in the {@link #keySet()} */
   public boolean containsKey(char[] text, int off, int len) {
     return keys[getSlot(text, off, len)] != null;
   }
 
-  /** true if the <code>CharSequence</code> is in the {@link #keySet} */
+  /** true if the <code>CharSequence</code> is in the {@link #keySet()} */
   public boolean containsKey(CharSequence cs) {
     return keys[getSlot(cs)] != null;
   }
@@ -212,12 +188,9 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
    * The user should never modify this text array after calling this method.
    */
   public V put(char[] text, V value) {
-    if (ignoreCase)
-      for(int i=0;i<text.length;){
-        i += Character.toChars(
-              Character.toLowerCase(
-                  charUtils.codePointAt(text, i)), text, i);
-      }
+    if (ignoreCase) {
+      CharacterUtils.toLowerCase(text, 0, text.length);
+    }
     int slot = getSlot(text, 0, text.length);
     if (keys[slot] != null) {
       final V oldValue = values[slot];
@@ -261,8 +234,8 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     final int limit = off+len;
     if (ignoreCase) {
       for(int i=0;i<len;) {
-        final int codePointAt = charUtils.codePointAt(text1, off+i, limit);
-        if (Character.toLowerCase(codePointAt) != charUtils.codePointAt(text2, i))
+        final int codePointAt = Character.codePointAt(text1, off+i, limit);
+        if (Character.toLowerCase(codePointAt) != Character.codePointAt(text2, i, text2.length))
           return false;
         i += Character.charCount(codePointAt); 
       }
@@ -281,8 +254,8 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
       return false;
     if (ignoreCase) {
       for(int i=0;i<len;) {
-        final int codePointAt = charUtils.codePointAt(text1, i);
-        if (Character.toLowerCase(codePointAt) != charUtils.codePointAt(text2, i))
+        final int codePointAt = Character.codePointAt(text1, i);
+        if (Character.toLowerCase(codePointAt) != Character.codePointAt(text2, i, text2.length))
           return false;
         i += Character.charCount(codePointAt);
       }
@@ -302,7 +275,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     final int stop = offset + len;
     if (ignoreCase) {
       for (int i=offset; i<stop;) {
-        final int codePointAt = charUtils.codePointAt(text, i, stop);
+        final int codePointAt = Character.codePointAt(text, i, stop);
         code = code*31 + Character.toLowerCase(codePointAt);
         i += Character.charCount(codePointAt);
       }
@@ -321,7 +294,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     int len = text.length();
     if (ignoreCase) {
       for (int i=0; i<len;) {
-        int codePointAt = charUtils.codePointAt(text, i);
+        int codePointAt = Character.codePointAt(text, i);
         code = code*31 + Character.toLowerCase(codePointAt);
         i += Character.charCount(codePointAt);
       }
@@ -379,7 +352,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   public final CharArraySet keySet() {
     if (keySet == null) {
       // prevent adding of entries
-      keySet = new CharArraySet((CharArrayMap<Object>) this) {
+      keySet = new CharArraySet((CharArrayMap) this) {
         @Override
         public boolean add(Object o) {
           throw new UnsupportedOperationException();
@@ -418,6 +391,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
       while (pos < keys.length && keys[pos] == null) pos++;
     }
 
+    @Override
     public boolean hasNext() {
       return pos < keys.length;
     }
@@ -448,11 +422,13 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     }
 
     /** use nextCharArray() + currentValue() for better efficiency. */
+    @Override
     public Map.Entry<Object,V> next() {
       goNext();
       return new MapEntry(lastPos, allowModify);
     }
 
+    @Override
     public void remove() {
       throw new UnsupportedOperationException();
     }
@@ -467,16 +443,19 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
       this.allowModify = allowModify;
     }
 
+    @Override
     public Object getKey() {
       // we must clone here, as putAll to another CharArrayMap
       // with other case sensitivity flag would corrupt the keys
       return keys[pos].clone();
     }
 
+    @Override
     public V getValue() {
       return values[pos];
     }
 
+    @Override
     public V setValue(V value) {
       if (!allowModify)
         throw new UnsupportedOperationException();
@@ -507,7 +486,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
     }
     
     @Override
-    @SuppressWarnings({"unchecked","rawtypes"})
+    @SuppressWarnings("unchecked")
     public boolean contains(Object o) {
       if (!(o instanceof Map.Entry))
         return false;
@@ -553,24 +532,13 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
       return emptyMap();
     if (map instanceof UnmodifiableCharArrayMap)
       return map;
-    return new UnmodifiableCharArrayMap<V>(map);
+    return new UnmodifiableCharArrayMap<>(map);
   }
 
   /**
    * Returns a copy of the given map as a {@link CharArrayMap}. If the given map
    * is a {@link CharArrayMap} the ignoreCase property will be preserved.
-   * <p>
-   * <b>Note:</b> If you intend to create a copy of another {@link CharArrayMap} where
-   * the {@link Version} of the source map differs from its copy
-   * {@link #CharArrayMap(Version, Map, boolean)} should be used instead.
-   * The {@link #copy(Version, Map)} will preserve the {@link Version} of the
-   * source map it is an instance of {@link CharArrayMap}.
-   * </p>
    * 
-   * @param matchVersion
-   *          compatibility match version see <a href="#version">Version
-   *          note</a> above for details. This argument will be ignored if the
-   *          given map is a {@link CharArrayMap}.
    * @param map
    *          a map to copy
    * @return a copy of the given map as a {@link CharArrayMap}. If the given map
@@ -578,7 +546,7 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
    *         matchVersion will be of the given map will be preserved.
    */
   @SuppressWarnings("unchecked")
-  public static <V> CharArrayMap<V> copy(final Version matchVersion, final Map<?,? extends V> map) {
+  public static <V> CharArrayMap<V> copy(final Map<?,? extends V> map) {
     if(map == EMPTY_MAP)
       return emptyMap();
     if(map instanceof CharArrayMap) {
@@ -589,12 +557,12 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
       System.arraycopy(m.keys, 0, keys, 0, keys.length);
       final V[] values = (V[]) new Object[m.values.length];
       System.arraycopy(m.values, 0, values, 0, values.length);
-      m = new CharArrayMap<V>(m);
+      m = new CharArrayMap<>(m);
       m.keys = keys;
       m.values = values;
       return m;
     }
-    return new CharArrayMap<V>(matchVersion, map, false);
+    return new CharArrayMap<>(map, false);
   }
   
   /** Returns an empty, unmodifiable map. */
@@ -647,13 +615,13 @@ public class CharArrayMap<V> extends AbstractMap<Object,V> {
   }
   
   /**
-   * Empty {@link UnmodifiableCharArrayMap} optimized for speed.
+   * Empty {@link org.apache.lucene.analysis.CharArrayMap.UnmodifiableCharArrayMap} optimized for speed.
    * Contains checks will always return <code>false</code> or throw
    * NPE if necessary.
    */
   private static final class EmptyCharArrayMap<V> extends UnmodifiableCharArrayMap<V> {
     EmptyCharArrayMap() {
-      super(new CharArrayMap<V>(Version.LUCENE_CURRENT, 0, false));
+      super(new CharArrayMap<V>(0, false));
     }
     
     @Override

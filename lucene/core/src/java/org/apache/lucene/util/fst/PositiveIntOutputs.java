@@ -1,6 +1,4 @@
-package org.apache.lucene.util.fst;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +14,14 @@ package org.apache.lucene.util.fst;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.fst;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.RamUsageEstimator;
 
 /**
  * An FST {@link Outputs} implementation where each output
@@ -33,17 +34,13 @@ public final class PositiveIntOutputs extends Outputs<Long> {
   
   private final static Long NO_OUTPUT = new Long(0);
 
-  private final boolean doShare;
+  private final static PositiveIntOutputs singleton = new PositiveIntOutputs();
 
-  private final static PositiveIntOutputs singletonShare = new PositiveIntOutputs(true);
-  private final static PositiveIntOutputs singletonNoShare = new PositiveIntOutputs(false);
-
-  private PositiveIntOutputs(boolean doShare) {
-    this.doShare = doShare;
+  private PositiveIntOutputs() {
   }
 
-  public static PositiveIntOutputs getSingleton(boolean doShare) {
-    return doShare ? singletonShare : singletonNoShare;
+  public static PositiveIntOutputs getSingleton() {
+    return singleton;
   }
 
   @Override
@@ -52,14 +49,10 @@ public final class PositiveIntOutputs extends Outputs<Long> {
     assert valid(output2);
     if (output1 == NO_OUTPUT || output2 == NO_OUTPUT) {
       return NO_OUTPUT;
-    } else if (doShare) {
+    } else {
       assert output1 > 0;
       assert output2 > 0;
       return Math.min(output1, output2);
-    } else if (output1.equals(output2)) {
-      return output1;
-    } else {
-      return NO_OUTPUT;
     }
   }
 
@@ -109,8 +102,7 @@ public final class PositiveIntOutputs extends Outputs<Long> {
 
   private boolean valid(Long o) {
     assert o != null;
-    assert o instanceof Long;
-    assert o == NO_OUTPUT || o > 0;
+    assert o == NO_OUTPUT || o > 0: "o=" + o;
     return true;
   }
 
@@ -126,6 +118,11 @@ public final class PositiveIntOutputs extends Outputs<Long> {
 
   @Override
   public String toString() {
-    return "PositiveIntOutputs(doShare=" + doShare + ")";
+    return "PositiveIntOutputs";
+  }
+
+  @Override
+  public long ramBytesUsed(Long output) {
+    return RamUsageEstimator.sizeOf(output);
   }
 }

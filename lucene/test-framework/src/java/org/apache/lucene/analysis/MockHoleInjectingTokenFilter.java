@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,20 +14,22 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.lucene.analysis;
 
 import java.io.IOException;
 import java.util.Random;
 
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionLengthAttribute;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 // TODO: maybe, instead to be more "natural", we should make
 // a MockRemovesTokensTF, ideally subclassing FilteringTF
 // (in modules/analysis)
 
-// Randomly injects holes:
+/** 
+ * Randomly injects holes (similar to what a stopfilter would do)
+ */
 public final class MockHoleInjectingTokenFilter extends TokenFilter {
 
   private final long randomSeed;
@@ -62,7 +62,7 @@ public final class MockHoleInjectingTokenFilter extends TokenFilter {
       // Carefully inject a hole only where it won't mess up
       // the graph:
       if (posInc > 0 && maxPos <= nextPos && random.nextInt(5) == 3) {
-        final int holeSize = _TestUtil.nextInt(random, 1, 5);
+        final int holeSize = TestUtil.nextInt(random, 1, 5);
         posIncAtt.setPositionIncrement(posInc + holeSize);
         nextPos += holeSize;
       }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,23 +14,47 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.lucene.util.LuceneTestCase;
+import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.common.util.StrUtils;
+import org.apache.solr.common.util.Utils;
 import org.junit.Assert;
 
 /**
- * @version $Id$
+ *
  */
-public class TestUtils extends LuceneTestCase {
+public class TestUtils extends SolrTestCaseJ4 {
+  
+  public void testJoin() {
+    assertEquals("a|b|c",   StrUtils.join(Arrays.asList("a","b","c"), '|'));
+    assertEquals("a,b,c",   StrUtils.join(Arrays.asList("a","b","c"), ','));
+    assertEquals("a\\,b,c", StrUtils.join(Arrays.asList("a,b","c"), ','));
+    assertEquals("a,b|c",   StrUtils.join(Arrays.asList("a,b","c"), '|'));
+
+    assertEquals("a\\\\b|c",   StrUtils.join(Arrays.asList("a\\b","c"), '|'));
+  }
+
+  public void testEscapeTextWithSeparator() {
+    assertEquals("a",  StrUtils.escapeTextWithSeparator("a", '|'));
+    assertEquals("a",  StrUtils.escapeTextWithSeparator("a", ','));
+                              
+    assertEquals("a\\|b",  StrUtils.escapeTextWithSeparator("a|b", '|'));
+    assertEquals("a|b",    StrUtils.escapeTextWithSeparator("a|b", ','));
+    assertEquals("a,b",    StrUtils.escapeTextWithSeparator("a,b", '|'));
+    assertEquals("a\\,b",  StrUtils.escapeTextWithSeparator("a,b", ','));
+    assertEquals("a\\\\b", StrUtils.escapeTextWithSeparator("a\\b", ','));
+
+    assertEquals("a\\\\\\,b", StrUtils.escapeTextWithSeparator("a\\,b", ','));
+  }
+
   public void testSplitEscaping() {
     List<String> arr = StrUtils.splitSmart("\\r\\n:\\t\\f\\b", ":", true);
     assertEquals(2,arr.size());
@@ -74,20 +98,20 @@ public class TestUtils extends LuceneTestCase {
 
   public void testNamedLists()
   {
-    SimpleOrderedMap<Integer> map = new SimpleOrderedMap<Integer>();
+    SimpleOrderedMap<Integer> map = new SimpleOrderedMap<>();
     map.add( "test", 10 );
     SimpleOrderedMap<Integer> clone = map.clone();
     assertEquals( map.toString(), clone.toString() );
     assertEquals( new Integer(10), clone.get( "test" ) );
   
-    Map<String,Integer> realMap = new HashMap<String, Integer>();
+    Map<String,Integer> realMap = new HashMap<>();
     realMap.put( "one", 1 );
     realMap.put( "two", 2 );
     realMap.put( "three", 3 );
-    map = new SimpleOrderedMap<Integer>();
+    map = new SimpleOrderedMap<>();
     map.addAll( realMap );
     assertEquals( 3, map.size() );
-    map = new SimpleOrderedMap<Integer>();
+    map = new SimpleOrderedMap<>();
     map.add( "one", 1 );
     map.add( "two", 2 );
     map.add( "three", 3 );
@@ -101,7 +125,7 @@ public class TestUtils extends LuceneTestCase {
     assertEquals( 4, map.indexOf( null, 1 ) );
     assertEquals( null, map.get( null, 1 ) );
 
-    map = new SimpleOrderedMap<Integer>();
+    map = new SimpleOrderedMap<>();
     map.add( "one", 1 );
     map.add( "two", 2 );
     Iterator<Map.Entry<String, Integer>> iter = map.iterator();
@@ -112,7 +136,7 @@ public class TestUtils extends LuceneTestCase {
       try {
         iter.remove();
         Assert.fail( "should be unsupported..." );
-      } catch( UnsupportedOperationException ex ) {}
+      } catch( UnsupportedOperationException ignored) {}
     }
     // the values should be bigger
     assertEquals( new Integer(10), map.get( "one" ) );
@@ -125,9 +149,31 @@ public class TestUtils extends LuceneTestCase {
     String sortable = NumberUtils.double2sortableStr( number );
     assertEquals( number, NumberUtils.SortableStr2double(sortable), 0.001);
     
-    long num = System.currentTimeMillis();
+    long num = System.nanoTime();
     sortable = NumberUtils.long2sortableStr( num );
     assertEquals( num, NumberUtils.SortableStr2long(sortable, 0, sortable.length() ) );
     assertEquals( Long.toString(num), NumberUtils.SortableStr2long(sortable) );
+  }
+  
+  public void testUtilsJSPath(){
+    
+    String json = "{\n" +
+        "  'authorization':{\n" +
+        "    'class':'solr.RuleBasedAuthorizationPlugin',\n" +
+        "    'user-role':{\n" +
+        "      'solr':'admin',\n" +
+        "      'harry':'admin'},\n" +
+        "    'permissions':[{\n" +
+        "        'name':'security-edit',\n" +
+        "        'role':'admin'},\n" +
+        "      {\n" +
+        "        'name':'x-update',\n" +
+        "        'collection':'x',\n" +
+        "        'path':'/update/*',\n" +
+        "        'role':'dev'}],\n" +
+        "    '':{'v':4}}}";
+    Map m = (Map) Utils.fromJSONString(json);
+    assertEquals("x-update", Utils.getObjectByPath(m,false, "authorization/permissions[1]/name"));
+    
   }
 }

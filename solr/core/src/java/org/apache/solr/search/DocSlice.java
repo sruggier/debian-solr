@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,16 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
+
+import java.util.Collection;
+import java.util.Collections;
+
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.RamUsageEstimator;
 
 /**
  * <code>DocSlice</code> implements DocList as an array of docids and optional scores.
  *
- * @version $Id$
+ *
  * @since solr 0.9
  */
 public class DocSlice extends DocSetBase implements DocList {
+  private static final long BASE_RAM_BYTES_USED = RamUsageEstimator.shallowSizeOfInstance(DocSlice.class) + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
+
   final int offset;    // starting position of the docs (zero based)
   final int len;       // number of positions used in arrays
   final int[] docs;    // a slice of documents (docs 0-100 of the query)
@@ -50,6 +57,7 @@ public class DocSlice extends DocSetBase implements DocList {
     this.maxScore=maxScore;
   }
 
+  @Override
   public DocList subset(int offset, int len) {
     if (this.offset == offset && this.len==len) return this;
 
@@ -63,27 +71,26 @@ public class DocSlice extends DocSetBase implements DocList {
     return new DocSlice(offset, realLen, docs, scores, matches, maxScore);
   }
 
+  @Override
   public boolean hasScores() {
     return scores!=null;
   }
 
+  @Override
   public float maxScore() {
     return maxScore;
   }
 
 
+  @Override
   public int offset()  { return offset; }
+  @Override
   public int size()    { return len; }
+  @Override
   public int matches() { return matches; }
 
 
-  public long memSize() {
-    return (docs.length<<2)
-            + (scores==null ? 0 : (scores.length<<2))
-            + 24;
-  }
-
-
+  @Override
   public boolean exists(int doc) {
     int end = offset+len;
     for (int i=offset; i<end; i++) {
@@ -94,14 +101,17 @@ public class DocSlice extends DocSetBase implements DocList {
 
   // Hmmm, maybe I could have reused the scorer interface here...
   // except that it carries Similarity baggage...
+  @Override
   public DocIterator iterator() {
     return new DocIterator() {
       int pos=offset;
       final int end=offset+len;
+      @Override
       public boolean hasNext() {
         return pos < end;
       }
 
+      @Override
       public Integer next() {
         return nextDoc();
       }
@@ -109,14 +119,17 @@ public class DocSlice extends DocSetBase implements DocList {
       /**
        * The remove  operation is not supported by this Iterator.
        */
+      @Override
       public void remove() {
         throw new UnsupportedOperationException("The remove  operation is not supported by this Iterator.");
       }
 
+      @Override
       public int nextDoc() {
         return docs[pos++];
       }
 
+      @Override
       public float score() {
         return scores[pos-1];
       }
@@ -140,5 +153,34 @@ public class DocSlice extends DocSetBase implements DocList {
     }
     HashDocSet h = new HashDocSet(docs,offset,len);
     return h.intersectionSize(other);  
+  }
+
+  @Override
+  public boolean intersects(DocSet other) {
+    if (other instanceof SortedIntDocSet || other instanceof HashDocSet) {
+      return other.intersects(this);
+    }
+    HashDocSet h = new HashDocSet(docs,offset,len);
+    return h.intersects(other);
+  }
+
+  @Override
+  protected DocSlice clone() {
+    try {
+      // DocSlice is not currently mutable
+      DocSlice slice = (DocSlice) super.clone();
+    } catch (CloneNotSupportedException e) {}
+    return null;
+  }
+
+  /** WARNING: this can over-estimate real memory use since backing arrays are shared with other DocSlice instances */
+  @Override
+  public long ramBytesUsed() {
+    return BASE_RAM_BYTES_USED + ((long)docs.length << 2) + (scores == null ? 0 : ((long)scores.length<<2)+RamUsageEstimator.NUM_BYTES_ARRAY_HEADER);
+  }
+
+  @Override
+  public Collection<Accountable> getChildResources() {
+    return Collections.emptyList();
   }
 }

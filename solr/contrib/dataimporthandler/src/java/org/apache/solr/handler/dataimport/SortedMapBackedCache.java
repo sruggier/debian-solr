@@ -1,6 +1,4 @@
-package org.apache.solr.handler.dataimport;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +14,10 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.dataimport;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +31,7 @@ public class SortedMapBackedCache implements DIHCache {
   String primaryKeyName = null;
   
   @SuppressWarnings("unchecked")
+  @Override
   public void add(Map<String,Object> rec) {
     checkOpen(true);
     checkReadOnly();
@@ -60,7 +59,7 @@ public class SortedMapBackedCache implements DIHCache {
     }
     List<Map<String,Object>> thisKeysRecs = theMap.get(pk);
     if (thisKeysRecs == null) {
-      thisKeysRecs = new ArrayList<Map<String,Object>>();
+      thisKeysRecs = new ArrayList<>();
       theMap.put(pk, thisKeysRecs);
     }
     thisKeysRecs.add(rec);
@@ -82,10 +81,12 @@ public class SortedMapBackedCache implements DIHCache {
     }
   }
   
+  @Override
   public void close() {
     isOpen = false;
   }
   
+  @Override
   public void delete(Object key) {
     checkOpen(true);
     checkReadOnly();
@@ -95,6 +96,7 @@ public class SortedMapBackedCache implements DIHCache {
     theMap.remove(key);
   }
   
+  @Override
   public void deleteAll() {
     deleteAll(false);
   }
@@ -108,24 +110,27 @@ public class SortedMapBackedCache implements DIHCache {
     }
   }
   
+  @Override
   public void destroy() {
     deleteAll(true);
     theMap = null;
     isOpen = false;
   }
   
+  @Override
   public void flush() {
     checkOpen(true);
     checkReadOnly();
   }
   
+  @Override
   public Iterator<Map<String,Object>> iterator(Object key) {
     checkOpen(true);
     if(key==null) {
       return null;
     }
     if(key instanceof Iterable<?>) {
-      List<Map<String,Object>> vals = new ArrayList<Map<String,Object>>();
+      List<Map<String,Object>> vals = new ArrayList<>();
       Iterator<?> iter = ((Iterable<?>) key).iterator();
       while(iter.hasNext()) {
         List<Map<String,Object>> val = theMap.get(iter.next());
@@ -140,76 +145,81 @@ public class SortedMapBackedCache implements DIHCache {
     }    
     List<Map<String,Object>> val = theMap.get(key);
     if (val == null) {
-      return Collections.<Map<String,Object>>emptyList().iterator();
+      return null;
     }
     return val.iterator();
   }
   
+  @Override
   public Iterator<Map<String,Object>> iterator() {
-    return new Iterator<Map<String,Object>>() {
-      private Iterator<Map.Entry<Object,List<Map<String,Object>>>> theMapIter;
-      private List<Map<String,Object>> currentKeyResult = null;
-      private Iterator<Map<String,Object>> currentKeyResultIter = null;
-      
-      {
-        theMapIter = theMap.entrySet().iterator();
-      }
-      
-      public boolean hasNext() {
-        if (currentKeyResultIter != null) {
-          if (currentKeyResultIter.hasNext()) {
-            return true;
-          } else {
-            currentKeyResult = null;
-            currentKeyResultIter = null;
-          }
+    return new Iterator<Map<String, Object>>() {
+        private Iterator<Map.Entry<Object,List<Map<String,Object>>>> theMapIter;
+        private List<Map<String,Object>> currentKeyResult = null;
+        private Iterator<Map<String,Object>> currentKeyResultIter = null;
+
+        {
+            theMapIter = theMap.entrySet().iterator();
         }
-        
-        Map.Entry<Object,List<Map<String,Object>>> next = null;
-        if (theMapIter.hasNext()) {
-          next = theMapIter.next();
-          currentKeyResult = next.getValue();
-          currentKeyResultIter = currentKeyResult.iterator();
-          if (currentKeyResultIter.hasNext()) {
-            return true;
+
+        @Override
+        public boolean hasNext() {
+          if (currentKeyResultIter != null) {
+            if (currentKeyResultIter.hasNext()) {
+              return true;
+            } else {
+              currentKeyResult = null;
+              currentKeyResultIter = null;
+            }
           }
-        }
-        return false;
-      }
-      
-      public Map<String,Object> next() {
-        if (currentKeyResultIter != null) {
-          if (currentKeyResultIter.hasNext()) {
-            return currentKeyResultIter.next();
-          } else {
-            currentKeyResult = null;
-            currentKeyResultIter = null;
+
+          Map.Entry<Object,List<Map<String,Object>>> next = null;
+          if (theMapIter.hasNext()) {
+            next = theMapIter.next();
+            currentKeyResult = next.getValue();
+            currentKeyResultIter = currentKeyResult.iterator();
+            if (currentKeyResultIter.hasNext()) {
+              return true;
+            }
           }
+          return false;
         }
-        
-        Map.Entry<Object,List<Map<String,Object>>> next = null;
-        if (theMapIter.hasNext()) {
-          next = theMapIter.next();
-          currentKeyResult = next.getValue();
-          currentKeyResultIter = currentKeyResult.iterator();
-          if (currentKeyResultIter.hasNext()) {
-            return currentKeyResultIter.next();
+
+        @Override
+        public Map<String,Object> next() {
+          if (currentKeyResultIter != null) {
+            if (currentKeyResultIter.hasNext()) {
+              return currentKeyResultIter.next();
+            } else {
+              currentKeyResult = null;
+              currentKeyResultIter = null;
+            }
           }
+
+          Map.Entry<Object,List<Map<String,Object>>> next = null;
+          if (theMapIter.hasNext()) {
+            next = theMapIter.next();
+            currentKeyResult = next.getValue();
+            currentKeyResultIter = currentKeyResult.iterator();
+            if (currentKeyResultIter.hasNext()) {
+              return currentKeyResultIter.next();
+            }
+          }
+          return null;
         }
-        return null;
-      }
-      
-      public void remove() {
-        throw new UnsupportedOperationException();
-      }
+
+        @Override
+        public void remove() {
+          throw new UnsupportedOperationException();
+        }
     };
   }
-  
+
+    @Override
   public void open(Context context) {
     checkOpen(false);
     isOpen = true;
     if (theMap == null) {
-      theMap = new TreeMap<Object,List<Map<String,Object>>>();
+      theMap = new TreeMap<>();
     }
     
     String pkName = CachePropertyUtil.getAttributeValueAsString(context,

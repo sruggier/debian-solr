@@ -1,5 +1,4 @@
-package org.apache.solr.handler.dataimport;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,20 +14,30 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.junit.Ignore;
-import org.junit.Test;
+package org.apache.solr.handler.dataimport;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.solr.common.util.SuppressForbidden;
+import org.junit.Test;
 
 /**
  * <p>
  * Test for FileListEntityProcessor
  * </p>
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCase {
@@ -36,21 +45,19 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
   @Test
   @SuppressWarnings("unchecked")
   public void testSimple() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
-    createFile(tmpdir, "a.xml", "a.xml".getBytes(), false);
-    createFile(tmpdir, "b.xml", "b.xml".getBytes(), false);
-    createFile(tmpdir, "c.props", "c.props".getBytes(), false);
+    File tmpdir = createTempDir().toFile();
+
+    createFile(tmpdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), false);
+    createFile(tmpdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), false);
+    createFile(tmpdir, "c.props", "c.props".getBytes(StandardCharsets.UTF_8), false);
     Map attrs = createMap(
             FileListEntityProcessor.FILE_NAME, "xml$",
             FileListEntityProcessor.BASE_DIR, tmpdir.getAbsolutePath());
     Context c = getContext(null,
-            new VariableResolverImpl(), null, Context.FULL_DUMP, Collections.EMPTY_LIST, attrs);
+            new VariableResolver(), null, Context.FULL_DUMP, Collections.EMPTY_LIST, attrs);
     FileListEntityProcessor fileListEntityProcessor = new FileListEntityProcessor();
     fileListEntityProcessor.init(c);
-    List<String> fList = new ArrayList<String>();
+    List<String> fList = new ArrayList<>();
     while (true) {
       Map<String, Object> f = fileListEntityProcessor.nextRow();
       if (f == null)
@@ -62,25 +69,23 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
   
   @Test
   public void testBiggerSmallerFiles() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
+    File tmpdir = createTempDir().toFile();
+
     long minLength = Long.MAX_VALUE;
     String smallestFile = "";
-    byte[] content = "abcdefgij".getBytes("UTF-8");
+    byte[] content = "abcdefgij".getBytes(StandardCharsets.UTF_8);
     createFile(tmpdir, "a.xml", content, false);
     if (minLength > content.length) {
       minLength = content.length;
       smallestFile = "a.xml";
     }
-    content = "abcdefgij".getBytes("UTF-8");
+    content = "abcdefgij".getBytes(StandardCharsets.UTF_8);
     createFile(tmpdir, "b.xml", content, false);
     if (minLength > content.length) {
       minLength = content.length;
       smallestFile = "b.xml";
     }
-    content = "abc".getBytes("UTF-8");
+    content = "abc".getBytes(StandardCharsets.UTF_8);
     createFile(tmpdir, "c.props", content, false);
     if (minLength > content.length) {
       minLength = content.length;
@@ -92,10 +97,10 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
             FileListEntityProcessor.BIGGER_THAN, String.valueOf(minLength));
     List<String> fList = getFiles(null, attrs);
     assertEquals(2, fList.size());
-    Set<String> l = new HashSet<String>();
+    Set<String> l = new HashSet<>();
     l.add(new File(tmpdir, "a.xml").getAbsolutePath());
     l.add(new File(tmpdir, "b.xml").getAbsolutePath());
-    assertEquals(l, new HashSet<String>(fList));
+    assertEquals(l, new HashSet<>(fList));
     attrs = createMap(
             FileListEntityProcessor.FILE_NAME, ".*",
             FileListEntityProcessor.BASE_DIR, tmpdir.getAbsolutePath(),
@@ -103,24 +108,24 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
     fList = getFiles(null, attrs);
     l.clear();
     l.add(new File(tmpdir, smallestFile).getAbsolutePath());
-    assertEquals(l, new HashSet<String>(fList));
+    assertEquals(l, new HashSet<>(fList));
     attrs = createMap(
             FileListEntityProcessor.FILE_NAME, ".*",
             FileListEntityProcessor.BASE_DIR, tmpdir.getAbsolutePath(),
             FileListEntityProcessor.SMALLER_THAN, "${a.x}");
-    VariableResolverImpl resolver = new VariableResolverImpl();
+    VariableResolver resolver = new VariableResolver();
     resolver.addNamespace("a", createMap("x", "4"));
     fList = getFiles(resolver, attrs);
-    assertEquals(l, new HashSet<String>(fList));
+    assertEquals(l, new HashSet<>(fList));
   }
 
   @SuppressWarnings("unchecked")
-  static List<String> getFiles(VariableResolverImpl resolver, Map attrs) {
+  static List<String> getFiles(VariableResolver resolver, Map attrs) {
     Context c = getContext(null,
             resolver, null, Context.FULL_DUMP, Collections.EMPTY_LIST, attrs);
     FileListEntityProcessor fileListEntityProcessor = new FileListEntityProcessor();
     fileListEntityProcessor.init(c);
-    List<String> fList = new ArrayList<String>();
+    List<String> fList = new ArrayList<>();
     while (true) {
       Map<String, Object> f = fileListEntityProcessor.nextRow();
       if (f == null)
@@ -130,16 +135,14 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
     return fList;
   }
 
+  @SuppressForbidden(reason = "Needs currentTimeMillis to set last modified time")
   @Test
-  @Ignore("Known Locale/TZ problems: see https://issues.apache.org/jira/browse/SOLR-1916")
   public void testNTOT() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
-    createFile(tmpdir, "a.xml", "a.xml".getBytes(), true);
-    createFile(tmpdir, "b.xml", "b.xml".getBytes(), true);
-    createFile(tmpdir, "c.props", "c.props".getBytes(), true);
+    File tmpdir = createTempDir().toFile();
+
+    createFile(tmpdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(tmpdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(tmpdir, "c.props", "c.props".getBytes(StandardCharsets.UTF_8), true);
     Map attrs = createMap(
             FileListEntityProcessor.FILE_NAME, "xml$",
             FileListEntityProcessor.BASE_DIR, tmpdir.getAbsolutePath(),
@@ -158,10 +161,10 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
             FileListEntityProcessor.FILE_NAME, ".xml$",
             FileListEntityProcessor.BASE_DIR, tmpdir.getAbsolutePath(),
             FileListEntityProcessor.NEWER_THAN, "${a.x}");
-    VariableResolverImpl resolver = new VariableResolverImpl();
-    String lastMod = DataImporter.DATE_TIME_FORMAT.get().format(new Date(System.currentTimeMillis() - 50000));
+    VariableResolver resolver = new VariableResolver();
+    String lastMod = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date(System.currentTimeMillis() - 50000));
     resolver.addNamespace("a", createMap("x", lastMod));
-    createFile(tmpdir, "t.xml", "t.xml".getBytes(), false);
+    createFile(tmpdir, "t.xml", "t.xml".getBytes(StandardCharsets.UTF_8), false);
     fList = getFiles(resolver, attrs);
     assertEquals(1, fList.size());
     assertEquals("File name must be t.xml", new File(tmpdir, "t.xml").getAbsolutePath(), fList.get(0));
@@ -169,16 +172,12 @@ public class TestFileListEntityProcessor extends AbstractDataImportHandlerTestCa
 
   @Test
   public void testRECURSION() throws IOException {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
+    File tmpdir = createTempDir().toFile();
     File childdir = new File(tmpdir + "/child" );
-    childdir.mkdirs();
-    childdir.deleteOnExit();
-    createFile(childdir, "a.xml", "a.xml".getBytes(), true);
-    createFile(childdir, "b.xml", "b.xml".getBytes(), true);
-    createFile(childdir, "c.props", "c.props".getBytes(), true);
+    childdir.mkdir();
+    createFile(childdir, "a.xml", "a.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(childdir, "b.xml", "b.xml".getBytes(StandardCharsets.UTF_8), true);
+    createFile(childdir, "c.props", "c.props".getBytes(StandardCharsets.UTF_8), true);
     Map attrs = createMap(
             FileListEntityProcessor.FILE_NAME, "^.*\\.xml$",
             FileListEntityProcessor.BASE_DIR, childdir.getAbsolutePath(),

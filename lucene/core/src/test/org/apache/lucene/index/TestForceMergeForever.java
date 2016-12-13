@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -25,7 +25,7 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LineFileDocs;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestForceMergeForever extends LuceneTestCase {
 
@@ -40,7 +40,7 @@ public class TestForceMergeForever extends LuceneTestCase {
     }
 
     @Override
-    public void merge(MergePolicy.OneMerge merge) throws CorruptIndexException, IOException {
+    public void merge(MergePolicy.OneMerge merge) throws IOException {
       if (merge.maxNumSegments != -1 && (first || merge.segments.size() == 1)) {
         first = false;
         if (VERBOSE) {
@@ -54,12 +54,15 @@ public class TestForceMergeForever extends LuceneTestCase {
 
   public void test() throws Exception {
     final Directory d = newDirectory();
-    final MyIndexWriter w = new MyIndexWriter(d, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    MockAnalyzer analyzer = new MockAnalyzer(random());
+    analyzer.setMaxTokenLength(TestUtil.nextInt(random(), 1, IndexWriter.MAX_TERM_LENGTH));
+
+    final MyIndexWriter w = new MyIndexWriter(d, newIndexWriterConfig(analyzer));
 
     // Try to make an index that requires merging:
-    w.getConfig().setMaxBufferedDocs(_TestUtil.nextInt(random, 2, 11));
+    w.getConfig().setMaxBufferedDocs(TestUtil.nextInt(random(), 2, 11));
     final int numStartDocs = atLeast(20);
-    final LineFileDocs docs = new LineFileDocs(random);
+    final LineFileDocs docs = new LineFileDocs(random());
     for(int docIDX=0;docIDX<numStartDocs;docIDX++) {
       w.addDocument(docs.nextDoc());
     }
@@ -83,7 +86,7 @@ public class TestForceMergeForever extends LuceneTestCase {
       public void run() {
         try {
           while (!doStop.get()) {
-            w.updateDocument(new Term("docid", "" + random.nextInt(numStartDocs)),
+            w.updateDocument(new Term("docid", "" + random().nextInt(numStartDocs)),
                              docs.nextDoc());
             // Force deletes to apply
             w.getReader().close();
@@ -100,5 +103,6 @@ public class TestForceMergeForever extends LuceneTestCase {
     assertTrue("merge count is " + w.mergeCount.get(), w.mergeCount.get() <= 1);
     w.close();
     d.close();
+    docs.close();
   }
 }

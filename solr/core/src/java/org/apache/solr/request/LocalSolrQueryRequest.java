@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.request;
 
 import org.apache.solr.common.params.CommonParams;
@@ -31,13 +30,13 @@ import java.util.Iterator;
 // retained more for backward compatibility.
 
 /**
- * @version $Id$
+ *
  */
 public class LocalSolrQueryRequest extends SolrQueryRequestBase {
   public final static Map emptyArgs = new HashMap(0,1);
 
   protected static SolrParams makeParams(String query, String qtype, int start, int limit, Map args) {
-    Map<String,String[]> map = new HashMap<String,String[]>();
+    Map<String,String[]> map = new HashMap<>();
     for (Iterator iter = args.entrySet().iterator(); iter.hasNext();) {
       Map.Entry e = (Map.Entry)iter.next();
       String k = e.getKey().toString();
@@ -63,6 +62,7 @@ public class LocalSolrQueryRequest extends SolrQueryRequestBase {
   public LocalSolrQueryRequest(SolrCore core, Map<String,String[]> args) {
     super(core, new MultiMapSolrParams(args));
   }
+  
   public LocalSolrQueryRequest(SolrCore core, SolrParams args) {
     super(core, args);
   }

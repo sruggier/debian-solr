@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -26,6 +26,7 @@ import org.apache.solr.common.params.SolrParams;
  */
 public class HtmlFormatter extends HighlightingPluginBase implements SolrFormatter 
 {
+  @Override
   public Formatter getFormatter(String fieldName, SolrParams params ) 
   {
     numRequests++;
@@ -43,20 +44,5 @@ public class HtmlFormatter extends HighlightingPluginBase implements SolrFormatt
   @Override
   public String getDescription() {
     return "HtmlFormatter";
-  }
-
-  @Override
-  public String getVersion() {
-      return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 }

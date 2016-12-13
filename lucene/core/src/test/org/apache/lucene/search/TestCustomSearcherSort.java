@@ -1,11 +1,10 @@
-package org.apache.lucene.search;
-
-/**
- * Copyright 2005 The Apache Software Foundation
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -15,26 +14,30 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.TimeZone;
 import java.util.TreeMap;
 
 import org.apache.lucene.document.DateTools;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
 
 /** Unit test for sorting code. */
-public class TestCustomSearcherSort extends LuceneTestCase implements Serializable {
+public class TestCustomSearcherSort extends LuceneTestCase {
   
   private Directory index = null;
   private IndexReader reader;
@@ -50,23 +53,20 @@ public class TestCustomSearcherSort extends LuceneTestCase implements Serializab
     super.setUp();
     INDEX_SIZE = atLeast(2000);
     index = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, index);
-    RandomGen random = new RandomGen(LuceneTestCase.random);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), index);
+    RandomGen random = new RandomGen(random());
     for (int i = 0; i < INDEX_SIZE; ++i) { // don't decrease; if to low the
                                            // problem doesn't show up
       Document doc = new Document();
       if ((i % 5) != 0) { // some documents must not have an entry in the first
                           // sort field
-        doc.add(newField("publicationDate_", random.getLuceneDate(),
-            Field.Store.YES, Field.Index.NOT_ANALYZED));
+        doc.add(new SortedDocValuesField("publicationDate_", new BytesRef(random.getLuceneDate())));
       }
       if ((i % 7) == 0) { // some documents to match the query (see below)
-        doc.add(newField("content", "test", Field.Store.YES,
-            Field.Index.ANALYZED));
+        doc.add(newTextField("content", "test", Field.Store.YES));
       }
       // every document has a defined 'mandant' field
-      doc.add(newField("mandant", Integer.toString(i % 3), Field.Store.YES,
-          Field.Index.NOT_ANALYZED));
+      doc.add(newStringField("mandant", Integer.toString(i % 3), Field.Store.YES));
       writer.addDocument(doc);
     }
     reader = writer.getReader();
@@ -88,9 +88,9 @@ public class TestCustomSearcherSort extends LuceneTestCase implements Serializab
     // log("Run testFieldSortCustomSearcher");
     // define the sort criteria
     Sort custSort = new Sort(
-        new SortField("publicationDate_", SortField.STRING),
+        new SortField("publicationDate_", SortField.Type.STRING),
         SortField.FIELD_SCORE);
-    Searcher searcher = new CustomSearcher(reader, 2);
+    IndexSearcher searcher = new CustomSearcher(reader, 2);
     // search and check hits
     matchHits(searcher, custSort);
   }
@@ -102,35 +102,19 @@ public class TestCustomSearcherSort extends LuceneTestCase implements Serializab
     // log("Run testFieldSortSingleSearcher");
     // define the sort criteria
     Sort custSort = new Sort(
-        new SortField("publicationDate_", SortField.STRING),
+        new SortField("publicationDate_", SortField.Type.STRING),
         SortField.FIELD_SCORE);
-    Searcher searcher = new MultiSearcher(new Searcher[] {new CustomSearcher(
-        reader, 2)});
-    // search and check hits
-    matchHits(searcher, custSort);
-  }
-  
-  /**
-   * Run the test using two CustomSearcher instances.
-   */
-  public void testFieldSortMultiCustomSearcher() throws Exception {
-    // log("Run testFieldSortMultiCustomSearcher");
-    // define the sort criteria
-    Sort custSort = new Sort(
-        new SortField("publicationDate_", SortField.STRING),
-        SortField.FIELD_SCORE);
-    Searcher searcher = new MultiSearcher(new Searchable[] {
-        new CustomSearcher(reader, 0), new CustomSearcher(reader, 2)});
+    IndexSearcher searcher = new CustomSearcher(reader, 2);
     // search and check hits
     matchHits(searcher, custSort);
   }
   
   // make sure the documents returned by the search match the expected list
-  private void matchHits(Searcher searcher, Sort sort) throws IOException {
+  private void matchHits(IndexSearcher searcher, Sort sort) throws IOException {
     // make a query without sorting first
-    ScoreDoc[] hitsByRank = searcher.search(query, null, Integer.MAX_VALUE).scoreDocs;
+    ScoreDoc[] hitsByRank = searcher.search(query, Integer.MAX_VALUE).scoreDocs;
     checkHits(hitsByRank, "Sort by rank: "); // check for duplicates
-    Map<Integer,Integer> resultMap = new TreeMap<Integer,Integer>();
+    Map<Integer,Integer> resultMap = new TreeMap<>();
     // store hits in TreeMap - TreeMap does not allow duplicates; existing
     // entries are silently overwritten
     for (int hitid = 0; hitid < hitsByRank.length; ++hitid) {
@@ -140,7 +124,7 @@ public class TestCustomSearcherSort extends LuceneTestCase implements Serializab
     }
     
     // now make a query using the sort criteria
-    ScoreDoc[] resultSort = searcher.search(query, null, Integer.MAX_VALUE,
+    ScoreDoc[] resultSort = searcher.search(query, Integer.MAX_VALUE,
         sort).scoreDocs;
     checkHits(resultSort, "Sort by custom criteria: "); // check for duplicates
     
@@ -170,12 +154,10 @@ public class TestCustomSearcherSort extends LuceneTestCase implements Serializab
   
   /**
    * Check the hits for duplicates.
-   * 
-   * @param hits
    */
   private void checkHits(ScoreDoc[] hits, String prefix) {
     if (hits != null) {
-      Map<Integer,Integer> idMap = new TreeMap<Integer,Integer>();
+      Map<Integer,Integer> idMap = new TreeMap<>();
       for (int docnum = 0; docnum < hits.length; ++docnum) {
         Integer luceneId = null;
         
@@ -204,56 +186,41 @@ public class TestCustomSearcherSort extends LuceneTestCase implements Serializab
   public class CustomSearcher extends IndexSearcher {
     private int switcher;
     
-    /**
-     * @param r
-     */
     public CustomSearcher(IndexReader r, int switcher) {
       super(r);
       this.switcher = switcher;
     }
     
-    /*
-     * (non-Javadoc)
-     * 
-     * @see
-     * org.apache.lucene.search.Searchable#search(org.apache.lucene.search.Query
-     * , org.apache.lucene.search.Filter, int, org.apache.lucene.search.Sort)
-     */
     @Override
-    public TopFieldDocs search(Query query, Filter filter, int nDocs, Sort sort)
+    public TopFieldDocs search(Query query, int nDocs, Sort sort)
         throws IOException {
-      BooleanQuery bq = new BooleanQuery();
+      BooleanQuery.Builder bq = new BooleanQuery.Builder();
       bq.add(query, BooleanClause.Occur.MUST);
       bq.add(new TermQuery(new Term("mandant", Integer.toString(switcher))),
           BooleanClause.Occur.MUST);
-      return super.search(bq, filter, nDocs, sort);
+      return super.search(bq.build(), nDocs, sort);
     }
     
-    /*
-     * (non-Javadoc)
-     * 
-     * @see
-     * org.apache.lucene.search.Searchable#search(org.apache.lucene.search.Query
-     * , org.apache.lucene.search.Filter, int)
-     */
     @Override
-    public TopDocs search(Query query, Filter filter, int nDocs)
+    public TopDocs search(Query query, int nDocs)
         throws IOException {
-      BooleanQuery bq = new BooleanQuery();
+      BooleanQuery.Builder bq = new BooleanQuery.Builder();
       bq.add(query, BooleanClause.Occur.MUST);
       bq.add(new TermQuery(new Term("mandant", Integer.toString(switcher))),
           BooleanClause.Occur.MUST);
-      return super.search(bq, filter, nDocs);
+      return super.search(bq.build(), nDocs);
     }
   }
   
   private class RandomGen {
     RandomGen(Random random) {
       this.random = random;
+      base.set(1980, 1, 1);
     }
     
     private Random random;
-    private Calendar base = new GregorianCalendar(1980, 1, 1);
+    // we use the default Locale/TZ since LuceneTestCase randomizes it
+    private Calendar base = new GregorianCalendar(TimeZone.getDefault(), Locale.getDefault());
     
     // Just to generate some different Lucene Date strings
     private String getLuceneDate() {

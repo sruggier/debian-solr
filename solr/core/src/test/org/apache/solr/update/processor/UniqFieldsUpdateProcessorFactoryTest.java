@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update.processor;
 
 import java.util.ArrayList;
@@ -28,8 +27,7 @@ import org.apache.solr.common.params.UpdateParams;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.handler.XmlUpdateRequestHandler;
-import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.handler.UpdateRequestHandler;
 import org.apache.solr.request.SolrQueryRequestBase;
 import org.apache.solr.response.SolrQueryResponse;
 import org.junit.Before;
@@ -43,6 +41,7 @@ public class UniqFieldsUpdateProcessorFactoryTest extends SolrTestCaseJ4 {
 
   @BeforeClass
   public static void beforeClass() throws Exception {
+    System.setProperty("enable.update.log", "false"); // schema12 doesn't support _version_
     initCore("solrconfig.xml", "schema12.xml");
   }
 
@@ -59,8 +58,7 @@ public class UniqFieldsUpdateProcessorFactoryTest extends SolrTestCaseJ4 {
     SolrCore core = h.getCore();
     UpdateRequestProcessorChain chained = core
       .getUpdateProcessingChain("uniq-fields");
-    UniqFieldsUpdateProcessorFactory factory = ((UniqFieldsUpdateProcessorFactory) chained
-        .getFactories()[0]);
+    UniqFieldsUpdateProcessorFactory factory = ((UniqFieldsUpdateProcessorFactory) chained.getProcessors().get(0));
     assertNotNull(chained);
 
     addDoc(adoc("id", "1a", 
@@ -105,16 +103,16 @@ public class UniqFieldsUpdateProcessorFactoryTest extends SolrTestCaseJ4 {
   }
 
   private void addDoc(String doc) throws Exception {
-    Map<String, String[]> params = new HashMap<String, String[]>();
+    Map<String, String[]> params = new HashMap<>();
     MultiMapSolrParams mmparams = new MultiMapSolrParams(params);
     params.put(UpdateParams.UPDATE_CHAIN, new String[] { "uniq-fields" });
     SolrQueryRequestBase req = new SolrQueryRequestBase(h.getCore(),
         (SolrParams) mmparams) {
     };
 
-    XmlUpdateRequestHandler handler = new XmlUpdateRequestHandler();
+    UpdateRequestHandler handler = new UpdateRequestHandler();
     handler.init(null);
-    ArrayList<ContentStream> streams = new ArrayList<ContentStream>(2);
+    ArrayList<ContentStream> streams = new ArrayList<>(2);
     streams.add(new ContentStreamBase.StringStream(doc));
     req.setContentStreams(streams);
     handler.handleRequestBody(req, new SolrQueryResponse());

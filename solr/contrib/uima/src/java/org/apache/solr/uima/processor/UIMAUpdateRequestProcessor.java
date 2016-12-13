@@ -1,6 +1,4 @@
-package org.apache.solr.uima.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,51 +14,51 @@ package org.apache.solr.uima.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.uima.processor;
+
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.Map;
+import java.util.Map.Entry;
 
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
 import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.core.SolrCore;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.uima.processor.SolrUIMAConfiguration.MapField;
-import org.apache.solr.uima.processor.ae.AEProvider;
-import org.apache.solr.uima.processor.ae.AEProviderFactory;
 import org.apache.solr.update.AddUpdateCommand;
 import org.apache.solr.update.processor.UpdateRequestProcessor;
 import org.apache.uima.analysis_engine.AnalysisEngine;
 import org.apache.uima.analysis_engine.AnalysisEngineProcessException;
 import org.apache.uima.jcas.JCas;
 import org.apache.uima.resource.ResourceInitializationException;
-
-import java.io.IOException;
-import java.util.Map;
+import org.apache.uima.util.JCasPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Update document(s) to be indexed with UIMA extracted information
- *
- * @version $Id$
+ * 
  */
 public class UIMAUpdateRequestProcessor extends UpdateRequestProcessor {
-
-  SolrUIMAConfiguration solrUIMAConfiguration;
-
-  private AEProvider aeProvider;
   
-  private SolrCore solrCore;
-
-  public UIMAUpdateRequestProcessor(UpdateRequestProcessor next, SolrCore solrCore,
-      SolrUIMAConfiguration config) {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+  
+  private SolrUIMAConfiguration solrUIMAConfiguration;
+  
+  private AnalysisEngine ae;
+  
+  private JCasPool pool;
+  
+  public UIMAUpdateRequestProcessor(UpdateRequestProcessor next,
+      String coreName, SolrUIMAConfiguration config, AnalysisEngine ae,
+      JCasPool pool) {
     super(next);
-    initialize(solrCore, config);
-  }
-
-  private void initialize(SolrCore solrCore, SolrUIMAConfiguration config) {
-    this.solrCore = solrCore;
+    this.ae = ae;
+    this.pool = pool;
     solrUIMAConfiguration = config;
-    aeProvider = AEProviderFactory.getInstance().getAEProvider(solrCore.getName(),
-            solrUIMAConfiguration.getAePath(), solrUIMAConfiguration.getRuntimeParameters());
   }
-
+  
   @Override
   public void processAdd(AddUpdateCommand cmd) throws IOException {
     String text = null;
@@ -70,49 +68,62 @@ public class UIMAUpdateRequestProcessor extends UpdateRequestProcessor {
 
       /* get the fields to analyze */
       String[] texts = getTextsToAnalyze(solrInputDocument);
-      for (int i = 0; i < texts.length; i++) {
-        text = texts[i];
-        if (text != null && text.length()>0) {
-          /* process the text value */
-          JCas jcas = processText(text);
+      for (String currentText : texts) {
+        text = currentText;
+        if (text != null && text.length() > 0) {
+          /* create a JCas which contain the text to analyze */
+          JCas jcas = pool.getJCas(0);
+          try {
+            /* process the text value */
+            processText(text, jcas);
 
-          UIMAToSolrMapper uimaToSolrMapper = new UIMAToSolrMapper(solrInputDocument, jcas);
-          /* get field mapping from config */
-          Map<String, Map<String, MapField>> typesAndFeaturesFieldsMap = solrUIMAConfiguration
-                  .getTypesFeaturesFieldsMapping();
-          /* map type features on fields */
-          for (String typeFQN : typesAndFeaturesFieldsMap.keySet()) {
-            uimaToSolrMapper.map(typeFQN, typesAndFeaturesFieldsMap.get(typeFQN));
+            UIMAToSolrMapper uimaToSolrMapper = new UIMAToSolrMapper(
+                solrInputDocument, jcas);
+            /* get field mapping from config */
+            Map<String,Map<String,MapField>> typesAndFeaturesFieldsMap = solrUIMAConfiguration
+                .getTypesFeaturesFieldsMapping();
+            /* map type features on fields */
+            for (Entry<String,Map<String,MapField>> entry : typesAndFeaturesFieldsMap
+                .entrySet()) {
+              uimaToSolrMapper.map(entry.getKey(), entry.getValue());
+            }
+          } finally {
+            pool.releaseJCas(jcas);
           }
         }
       }
     } catch (Exception e) {
       String logField = solrUIMAConfiguration.getLogField();
-      if(logField == null){
-        SchemaField uniqueKeyField = solrCore.getSchema().getUniqueKeyField();
-        if(uniqueKeyField != null){
+      if (logField == null) {
+        SchemaField uniqueKeyField = cmd.getReq().getSchema()
+            .getUniqueKeyField();
+        if (uniqueKeyField != null) {
           logField = uniqueKeyField.getName();
         }
       }
-      String optionalFieldInfo = logField == null ? "." :
-        new StringBuilder(". ").append(logField).append("=")
-        .append((String)cmd.getSolrInputDocument().getField(logField).getValue())
-        .append(", ").toString();
-      int len = Math.min(text.length(), 100);
-      if (solrUIMAConfiguration.isIgnoreErrors()) {
-        log.warn(new StringBuilder("skip the text processing due to ")
-          .append(e.getLocalizedMessage()).append(optionalFieldInfo)
-          .append(" text=\"").append(text.substring(0, len)).append("...\"").toString());
+      String optionalFieldInfo = logField == null ? "." : ". " + logField + "=" + cmd.getSolrInputDocument().
+          getField(logField).getValue() + ", ";
+      int len;
+      String debugString;
+      if (text != null && text.length() > 0) {
+        len = Math.min(text.length(), 100);
+        debugString = " text=\"" + text.substring(0, len) + "...\"";
       } else {
-        throw new SolrException(ErrorCode.SERVER_ERROR,
-            new StringBuilder("processing error: ")
-              .append(e.getLocalizedMessage()).append(optionalFieldInfo)
-              .append(" text=\"").append(text.substring(0, len)).append("...\"").toString(), e);
+        debugString = " null text";
+      }
+      if (solrUIMAConfiguration.isIgnoreErrors()) {
+        log.warn(
+            "skip the text processing due to {}",
+            new StringBuilder().append(e.getLocalizedMessage())
+                .append(optionalFieldInfo).append(debugString));
+      } else {
+        throw new SolrException(ErrorCode.SERVER_ERROR, "processing error " + e.getLocalizedMessage() +
+            optionalFieldInfo + debugString, e);
       }
     }
     super.processAdd(cmd);
   }
-
+  
   /*
    * get the texts to analyze from the corresponding fields
    */
@@ -122,35 +133,57 @@ public class UIMAUpdateRequestProcessor extends UpdateRequestProcessor {
     String[] textVals;
     if (merge) {
       StringBuilder unifiedText = new StringBuilder("");
-      for (int i = 0; i < fieldsToAnalyze.length; i++) {
-        unifiedText.append(String.valueOf(solrInputDocument.getFieldValue(fieldsToAnalyze[i])));
+      for (String aFieldsToAnalyze : fieldsToAnalyze) {
+        if (solrInputDocument.getFieldValues(aFieldsToAnalyze) != null) {
+          Object[] Values = solrInputDocument.getFieldValues(aFieldsToAnalyze).toArray();
+          for (Object Value : Values) {
+            if (unifiedText.length() > 0) {
+              unifiedText.append(' ');
+            }
+            unifiedText.append(Value.toString());
+          }
+        }
       }
       textVals = new String[1];
       textVals[0] = unifiedText.toString();
     } else {
       textVals = new String[fieldsToAnalyze.length];
       for (int i = 0; i < fieldsToAnalyze.length; i++) {
-        textVals[i] = String.valueOf(solrInputDocument.getFieldValue(fieldsToAnalyze[i]));
+        if (solrInputDocument.getFieldValues(fieldsToAnalyze[i]) != null) {
+          Object[] Values = solrInputDocument.getFieldValues(fieldsToAnalyze[i]).toArray();
+          for (Object Value : Values) {
+            textVals[i] += Value.toString();
+          }
+        }
       }
     }
     return textVals;
   }
+  
+  /*
+   * process a field value executing UIMA on the JCas containing it as document
+   * text
+   */
+  private void processText(String textFieldValue, JCas jcas)
+      throws ResourceInitializationException, AnalysisEngineProcessException {
+    if (log.isDebugEnabled()) {
+      log.debug("Analyzing text");
+    }
 
-  /* process a field value executing UIMA the CAS containing it as document text */
-  private JCas processText(String textFieldValue) throws ResourceInitializationException,
-          AnalysisEngineProcessException {
-    log.info(new StringBuffer("Analazying text").toString());
-    /* get the UIMA analysis engine */
-    AnalysisEngine ae = aeProvider.getAE();
-
-    /* create a JCas which contain the text to analyze */
-    JCas jcas = ae.newJCas();
     jcas.setDocumentText(textFieldValue);
 
     /* perform analysis on text field */
     ae.process(jcas);
-    log.info(new StringBuilder("Text processing completed").toString());
-    return jcas;
+    if (log.isDebugEnabled()) {
+      log.debug("Text processing completed");
+    }
   }
 
+  /**
+   * @return the configuration object for this request processor
+   */
+  public SolrUIMAConfiguration getConfiguration()
+  {
+    return solrUIMAConfiguration;
+  }
 }

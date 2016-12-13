@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +14,13 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.document.Document;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.store.Directory;
@@ -30,7 +31,6 @@ public class TestTopDocsCollector extends LuceneTestCase {
   private static final class MyTopsDocCollector extends TopDocsCollector<ScoreDoc> {
 
     private int idx = 0;
-    private int base = 0;
     
     public MyTopsDocCollector(int size) {
       super(new HitQueue(size, false));
@@ -54,25 +54,26 @@ public class TestTopDocsCollector extends LuceneTestCase {
     }
     
     @Override
-    public void collect(int doc) throws IOException {
-      ++totalHits;
-      pq.insertWithOverflow(new ScoreDoc(doc + base, scores[idx++]));
-    }
+    public LeafCollector getLeafCollector(LeafReaderContext context) throws IOException {
+      final int base = context.docBase;
+      return new LeafCollector() {
+        
+        @Override
+        public void collect(int doc) {
+          ++totalHits;
+          pq.insertWithOverflow(new ScoreDoc(doc + base, scores[idx++]));
+        }
 
-    @Override
-    public void setNextReader(IndexReader reader, int docBase)
-        throws IOException {
-      base = docBase;
-    }
-
-    @Override
-    public void setScorer(Scorer scorer) throws IOException {
-      // Don't do anything. Assign scores in random
+        @Override
+        public void setScorer(Scorer scorer) {
+          // Don't do anything. Assign scores in random
+        }
+      };
     }
     
     @Override
-    public boolean acceptsDocsOutOfOrder() {
-      return true;
+    public boolean needsScores() {
+      return false;
     }
 
   }
@@ -97,7 +98,6 @@ public class TestTopDocsCollector extends LuceneTestCase {
     IndexSearcher searcher = newSearcher(reader);
     TopDocsCollector<ScoreDoc> tdc = new MyTopsDocCollector(numResults);
     searcher.search(q, tdc);
-    searcher.close();
     return tdc;
   }
   
@@ -108,7 +108,7 @@ public class TestTopDocsCollector extends LuceneTestCase {
     // populate an index with 30 documents, this should be enough for the test.
     // The documents have no content - the test uses MatchAllDocsQuery().
     dir = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir);
     for (int i = 0; i < 30; i++) {
       writer.addDocument(new Document());
     }

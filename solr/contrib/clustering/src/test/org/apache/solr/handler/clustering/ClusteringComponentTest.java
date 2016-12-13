@@ -1,5 +1,4 @@
-package org.apache.solr.handler.clustering;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.handler.clustering;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.handler.clustering;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.util.NamedList;
@@ -52,10 +51,10 @@ public class ClusteringComponentTest extends AbstractClusteringTestCase {
     SolrRequestHandler handler = core.getRequestHandler("standard");
     SolrQueryResponse rsp;
     rsp = new SolrQueryResponse();
-    rsp.add("responseHeader", new SimpleOrderedMap());
+    rsp.addResponseHeader(new SimpleOrderedMap<>());
     SolrQueryRequest req = new LocalSolrQueryRequest(core, params);
     handler.handleRequest(req, rsp);
-    NamedList values = rsp.getValues();
+    NamedList<?> values = rsp.getValues();
     Object clusters = values.get("clusters");
     //System.out.println("Clusters: " + clusters);
     assertTrue("clusters is null and it shouldn't be", clusters != null);
@@ -70,7 +69,7 @@ public class ClusteringComponentTest extends AbstractClusteringTestCase {
     handler = core.getRequestHandler("docClustering");
 
     rsp = new SolrQueryResponse();
-    rsp.add("responseHeader", new SimpleOrderedMap());
+    rsp.addResponseHeader(new SimpleOrderedMap<>());
     req = new LocalSolrQueryRequest(core, params);
     handler.handleRequest(req, rsp);
     values = rsp.getValues();

@@ -1,5 +1,3 @@
-package org.apache.solr.schema;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.schema;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.schema;
 
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.SolrInputDocument;
@@ -26,7 +25,7 @@ import org.junit.Test;
 public class NumericFieldsTest extends SolrTestCaseJ4 {
   @BeforeClass
   public static void beforeClass() throws Exception {
-    initCore("solrconfig-master.xml", "schema-numeric.xml");
+    initCore("solrconfig-basic.xml", "schema-numeric.xml");
   }
 
   static String[] types = new String[]{"int", "long", "float", "double", "date"};
@@ -106,7 +105,7 @@ public class NumericFieldsTest extends SolrTestCaseJ4 {
     }
 
 
-    // sortMissingLast = true 
+    // sortMissingLast = true
     suffix = "_last";
     for (String t : types) {
       assertQ("Sorting Asc: " + t + suffix,
@@ -131,7 +130,7 @@ public class NumericFieldsTest extends SolrTestCaseJ4 {
       );
     }
 
-    // sortMissingFirst = true 
+    // sortMissingFirst = true
     suffix = "_first";
     for (String t : types) {
       assertQ("Sorting Asc: " + t + suffix,

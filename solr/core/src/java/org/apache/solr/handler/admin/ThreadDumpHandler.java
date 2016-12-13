@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,13 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.admin;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
+import java.util.Locale;
 
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -28,14 +28,10 @@ import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 
+import static org.apache.solr.common.params.CommonParams.NAME;
+
 /**
- * Copied from "admin/threaddump.jsp"
  * 
- * NOTE: the response format is still likely to change.  It should be designed so
- * that it works nicely with an XSLT transformation.  Until we have a nice
- * XSLT front end for /admin, the format is still open to change.
- * 
- * @version $Id$
  * @since solr 1.2
  */
 public class ThreadDumpHandler extends RequestHandlerBase
@@ -43,13 +39,13 @@ public class ThreadDumpHandler extends RequestHandlerBase
   @Override
   public void handleRequestBody(SolrQueryRequest req, SolrQueryResponse rsp) throws IOException 
   {    
-    SimpleOrderedMap<Object> system = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> system = new SimpleOrderedMap<>();
     rsp.add( "system", system );
 
     ThreadMXBean tmbean = ManagementFactory.getThreadMXBean();
     
     // Thread Count
-    SimpleOrderedMap<Object> nl = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> nl = new SimpleOrderedMap<>();
     nl.add( "current",tmbean.getThreadCount() );
     nl.add( "peak", tmbean.getPeakThreadCount() );
     nl.add( "daemon", tmbean.getDaemonThreadCount() );
@@ -60,7 +56,7 @@ public class ThreadDumpHandler extends RequestHandlerBase
     long[] tids = tmbean.findMonitorDeadlockedThreads();
     if (tids != null) {
       tinfos = tmbean.getThreadInfo(tids, Integer.MAX_VALUE);
-      NamedList<SimpleOrderedMap<Object>> lst = new NamedList<SimpleOrderedMap<Object>>();
+      NamedList<SimpleOrderedMap<Object>> lst = new NamedList<>();
       for (ThreadInfo ti : tinfos) {
         if (ti != null) {
           lst.add( "thread", getThreadInfo( ti, tmbean ) );
@@ -72,7 +68,7 @@ public class ThreadDumpHandler extends RequestHandlerBase
     // Now show all the threads....
     tids = tmbean.getAllThreadIds();
     tinfos = tmbean.getThreadInfo(tids, Integer.MAX_VALUE);
-    NamedList<SimpleOrderedMap<Object>> lst = new NamedList<SimpleOrderedMap<Object>>();
+    NamedList<SimpleOrderedMap<Object>> lst = new NamedList<>();
     for (ThreadInfo ti : tinfos) {
       if (ti != null) {
         lst.add( "thread", getThreadInfo( ti, tmbean ) );
@@ -85,13 +81,12 @@ public class ThreadDumpHandler extends RequestHandlerBase
   //--------------------------------------------------------------------------------
   //--------------------------------------------------------------------------------
   
-  private static SimpleOrderedMap<Object> getThreadInfo( ThreadInfo ti, ThreadMXBean tmbean ) throws IOException 
-  {
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
+  private static SimpleOrderedMap<Object> getThreadInfo( ThreadInfo ti, ThreadMXBean tmbean ) {
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
     long tid = ti.getThreadId();
 
     info.add( "id", tid );
-    info.add( "name", ti.getThreadName() );
+    info.add(NAME, ti.getThreadName());
     info.add( "state", ti.getThreadState().toString() );
     
     if (ti.getLockName() != null) {
@@ -110,8 +105,8 @@ public class ThreadDumpHandler extends RequestHandlerBase
     }
 
     if (ti.getLockOwnerName() != null) {
-      SimpleOrderedMap<Object> owner = new SimpleOrderedMap<Object>();
-      owner.add( "name", ti.getLockOwnerName() );
+      SimpleOrderedMap<Object> owner = new SimpleOrderedMap<>();
+      owner.add(NAME, ti.getLockOwnerName());
       owner.add( "id", ti.getLockOwnerId() );
     }
     
@@ -126,7 +121,7 @@ public class ThreadDumpHandler extends RequestHandlerBase
   }
   
   private static String formatNanos(long ns) {
-    return String.format("%.4fms", ns / (double) 1000000);
+    return String.format(Locale.ROOT, "%.4fms", ns / (double) 1000000);
   }
 
   //////////////////////// SolrInfoMBeans methods //////////////////////
@@ -134,20 +129,5 @@ public class ThreadDumpHandler extends RequestHandlerBase
   @Override
   public String getDescription() {
     return "Thread Dump";
-  }
-
-  @Override
-  public String getVersion() {
-      return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 }

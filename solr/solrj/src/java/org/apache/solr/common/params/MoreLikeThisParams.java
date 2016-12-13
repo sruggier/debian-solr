@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
 import java.util.Locale;
@@ -31,6 +30,7 @@ public interface MoreLikeThisParams
   
   public final static String SIMILARITY_FIELDS     = PREFIX + "fl";
   public final static String MIN_TERM_FREQ         = PREFIX + "mintf";
+  public final static String MAX_DOC_FREQ          = PREFIX + "maxdf";
   public final static String MIN_DOC_FREQ          = PREFIX + "mindf";
   public final static String MIN_WORD_LEN          = PREFIX + "minwl";
   public final static String MAX_WORD_LEN          = PREFIX + "maxwl";
@@ -50,6 +50,9 @@ public interface MoreLikeThisParams
 
   // Do you want to include the original document in the results or not
   public final static String INTERESTING_TERMS = PREFIX + "interestingTerms";  // false,details,(list or true)
+
+  // the default doc count
+  public final static int DEFAULT_DOC_COUNT = 5;
   
   public enum TermStyle {
     NONE,
@@ -59,7 +62,7 @@ public interface MoreLikeThisParams
     public static TermStyle get( String p )
     {
       if( p != null ) {
-        p = p.toUpperCase(Locale.ENGLISH);
+        p = p.toUpperCase(Locale.ROOT);
         if( p.equals( "DETAILS" ) ) {
           return DETAILS;
         }

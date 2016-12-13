@@ -1,6 +1,4 @@
-package org.apache.lucene;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,23 +14,34 @@ package org.apache.lucene;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import java.io.IOException;
 
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.MockDirectoryWrapper;
-import org.apache.lucene.store.RAMDirectory;
-import org.apache.lucene.index.CorruptIndexException;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.index.LogMergePolicy;
-import org.apache.lucene.index.MergePolicy;
-import org.apache.lucene.index.ConcurrentMergeScheduler;
-import org.apache.lucene.index.MergeScheduler;
-import org.apache.lucene.index.MergePolicy.OneMerge;
+package org.apache.lucene;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.index.ConcurrentMergeScheduler;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LogMergePolicy;
+import org.apache.lucene.index.MergePolicy.OneMerge;
+import org.apache.lucene.index.MergePolicy;
+import org.apache.lucene.index.MergeScheduler;
+import org.apache.lucene.index.MergeTrigger;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.InfoStream;
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.PrintStreamInfoStream;
+import org.junit.AfterClass;
 
 /**
  * Holds tests cases to verify external APIs are accessible
@@ -43,11 +52,12 @@ public class TestMergeSchedulerExternal extends LuceneTestCase {
   volatile boolean mergeCalled;
   volatile boolean mergeThreadCreated;
   volatile boolean excCalled;
+  volatile static InfoStream infoStream;
 
   private class MyMergeScheduler extends ConcurrentMergeScheduler {
 
     private class MyMergeThread extends ConcurrentMergeScheduler.MergeThread {
-      public MyMergeThread(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
+      public MyMergeThread(IndexWriter writer, MergePolicy.OneMerge merge) {
         super(writer, merge);
         mergeThreadCreated = true;
       }
@@ -56,21 +66,23 @@ public class TestMergeSchedulerExternal extends LuceneTestCase {
     @Override
     protected MergeThread getMergeThread(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
       MergeThread thread = new MyMergeThread(writer, merge);
-      thread.setThreadPriority(getMergeThreadPriority());
       thread.setDaemon(true);
       thread.setName("MyMergeThread");
       return thread;
     }
 
     @Override
-    protected void handleMergeException(Throwable t) {
+    protected void handleMergeException(Directory dir, Throwable t) {
       excCalled = true;
+      if (infoStream.isEnabled("IW")) {
+        infoStream.message("IW", "TEST: now handleMergeException");
+      }
     }
 
     @Override
-    protected void doMerge(MergePolicy.OneMerge merge) throws IOException {
+    protected void doMerge(IndexWriter writer, MergePolicy.OneMerge merge) throws IOException {
       mergeCalled = true;
-      super.doMerge(merge);
+      super.doMerge(writer, merge);
     }
   }
 
@@ -79,53 +91,83 @@ public class TestMergeSchedulerExternal extends LuceneTestCase {
     public void eval(MockDirectoryWrapper dir)  throws IOException {
       StackTraceElement[] trace = new Exception().getStackTrace();
       for (int i = 0; i < trace.length; i++) {
-        if ("doMerge".equals(trace[i].getMethodName()))
-          throw new IOException("now failing during merge");
+        if ("doMerge".equals(trace[i].getMethodName())) {
+          IOException ioe = new IOException("now failing during merge");
+          StringWriter sw = new StringWriter();
+          PrintWriter pw = new PrintWriter(sw);
+          ioe.printStackTrace(pw);
+          if (infoStream.isEnabled("IW")) {
+            infoStream.message("IW", "TEST: now throw exc:\n" + sw.toString());
+          }
+          throw ioe;
+        }
       }
     }
   }
 
+  @AfterClass
+  public static void afterClass() {
+    infoStream = null;
+  }
+
   public void testSubclassConcurrentMergeScheduler() throws IOException {
-    MockDirectoryWrapper dir = newDirectory();
+    MockDirectoryWrapper dir = newMockDirectory();
     dir.failOn(new FailOnlyOnMerge());
 
     Document doc = new Document();
-    Field idField = newField("id", "", Field.Store.YES, Field.Index.NOT_ANALYZED);
+    Field idField = newStringField("id", "", Field.Store.YES);
     doc.add(idField);
-    
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random)).setMergeScheduler(new MyMergeScheduler())
-        .setMaxBufferedDocs(2).setRAMBufferSizeMB(IndexWriterConfig.DISABLE_AUTO_FLUSH)
-        .setMergePolicy(newLogMergePolicy()));
+
+    IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()))
+      .setMergeScheduler(new MyMergeScheduler())
+      .setMaxBufferedDocs(2).setRAMBufferSizeMB(IndexWriterConfig.DISABLE_AUTO_FLUSH)
+      .setMergePolicy(newLogMergePolicy());
+
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    infoStream = new PrintStreamInfoStream(new PrintStream(baos, true, IOUtils.UTF_8));
+    iwc.setInfoStream(infoStream);
+
+    IndexWriter writer = new IndexWriter(dir, iwc);
     LogMergePolicy logMP = (LogMergePolicy) writer.getConfig().getMergePolicy();
     logMP.setMergeFactor(10);
-    for(int i=0;i<20;i++)
+    for(int i=0;i<20;i++) {
       writer.addDocument(doc);
+    }
 
-    ((MyMergeScheduler) writer.getConfig().getMergeScheduler()).sync();
-    writer.close();
-    
-    assertTrue(mergeThreadCreated);
-    assertTrue(mergeCalled);
-    assertTrue(excCalled);
+    try {
+      ((MyMergeScheduler) writer.getConfig().getMergeScheduler()).sync();
+    } catch (IllegalStateException ise) {
+      // OK
+    }
+    writer.rollback();
+
+    try {
+      assertTrue(mergeThreadCreated);
+      assertTrue(mergeCalled);
+      assertTrue(excCalled);
+    } catch (AssertionError ae) {
+      System.out.println("TEST FAILED; IW infoStream output:");
+      System.out.println(baos.toString(IOUtils.UTF_8));
+      throw ae;
+    }
     dir.close();
   }
   
   private static class ReportingMergeScheduler extends MergeScheduler {
 
     @Override
-    public void merge(IndexWriter writer) throws CorruptIndexException, IOException {
+    public void merge(IndexWriter writer, MergeTrigger trigger, boolean newMergesFound) throws IOException {
       OneMerge merge = null;
       while ((merge = writer.getNextMerge()) != null) {
         if (VERBOSE) {
-          System.out.println("executing merge " + merge.segString(writer.getDirectory()));
+          System.out.println("executing merge " + merge.segString());
         }
         writer.merge(merge);
       }
     }
 
     @Override
-    public void close() throws CorruptIndexException, IOException {}
+    public void close() throws IOException {}
     
   }
 
@@ -134,7 +176,7 @@ public class TestMergeSchedulerExternal extends LuceneTestCase {
     // compiles. But ensure that it can be used as well, e.g., no other hidden
     // dependencies or something. Therefore, don't use any random API !
     Directory dir = new RAMDirectory();
-    IndexWriterConfig conf = new IndexWriterConfig(TEST_VERSION_CURRENT, null);
+    IndexWriterConfig conf = new IndexWriterConfig(null);
     conf.setMergeScheduler(new ReportingMergeScheduler());
     IndexWriter writer = new IndexWriter(dir, conf);
     writer.addDocument(new Document());

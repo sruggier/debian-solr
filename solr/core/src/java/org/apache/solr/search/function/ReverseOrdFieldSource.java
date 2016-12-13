@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,19 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search.function;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.ValueSource;
-import org.apache.lucene.search.FieldCache;
-
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.MultiReader;
+import org.apache.lucene.index.ReaderUtil;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.docvalues.IntDocValues;
+import org.apache.lucene.search.SortedSetSelector;
+import org.apache.solr.index.SlowCompositeReaderWrapper;
+import org.apache.solr.schema.SchemaField;
+import org.apache.solr.search.Insanity;
+import org.apache.solr.search.SolrIndexSearcher;
+
 /**
- * Obtains the ordinal of the field value from the default Lucene {@link org.apache.lucene.search.FieldCache} using getStringIndex()
+ * Obtains the ordinal of the field value from {@link org.apache.lucene.index.LeafReader#getSortedDocValues}
  * and reverses the order.
  * <br>
  * The native lucene index order is used to assign an ordinal value for each field value.
@@ -43,11 +54,11 @@ import java.util.Map;
  * at the top level reader, while sorting and function queries now use entries at the segment level.  Hence sorting
  * or using a different function query, in addition to ord()/rord() will double memory use.
  * 
- * @version $Id$
+ *
  */
 
 public class ReverseOrdFieldSource extends ValueSource {
-  public String field;
+  public final String field;
 
   public ReverseOrdFieldSource(String field) {
     this.field = field;
@@ -59,49 +70,45 @@ public class ReverseOrdFieldSource extends ValueSource {
   }
 
   @Override
-  public DocValues getValues(Map context, IndexReader reader) throws IOException {
-    final FieldCache.StringIndex sindex = FieldCache.DEFAULT.getStringIndex(reader, field);
-
-    final int arr[] = sindex.order;
-    final int end = sindex.lookup.length;
-
-    return new DocValues() {
-      @Override
-      public float floatVal(int doc) {
-        return (float)(end - arr[doc]);
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
+    final int off = readerContext.docBase;
+    final LeafReader r;
+    Object o = context.get("searcher");
+    if (o instanceof SolrIndexSearcher) {
+      SolrIndexSearcher is = (SolrIndexSearcher) o;
+      SchemaField sf = is.getSchema().getFieldOrNull(field);
+      if (sf != null && sf.hasDocValues() == false && sf.multiValued() == false && sf.getType().getNumericType() != null) {
+        // it's a single-valued numeric field: we must currently create insanity :(
+        List<LeafReaderContext> leaves = is.getIndexReader().leaves();
+        LeafReader insaneLeaves[] = new LeafReader[leaves.size()];
+        int upto = 0;
+        for (LeafReaderContext raw : leaves) {
+          insaneLeaves[upto++] = Insanity.wrapInsanity(raw.reader(), field);
+        }
+        r = SlowCompositeReaderWrapper.wrap(new MultiReader(insaneLeaves));
+      } else {
+        // reuse ordinalmap
+        r = ((SolrIndexSearcher)o).getSlowAtomicReader();
       }
+    } else {
+      IndexReader topReader = ReaderUtil.getTopLevelContext(readerContext).reader();
+      r = SlowCompositeReaderWrapper.wrap(topReader);
+    }
+    // if it's e.g. tokenized/multivalued, emulate old behavior of single-valued fc
+    final SortedDocValues sindex = SortedSetSelector.wrap(DocValues.getSortedSet(r, field), SortedSetSelector.Type.MIN);
+    final int end = sindex.getValueCount();
 
-      @Override
+    return new IntDocValues(this) {
+     @Override
       public int intVal(int doc) {
-        return (end - arr[doc]);
-      }
-
-      @Override
-      public long longVal(int doc) {
-        return (long)(end - arr[doc]);
-      }
-
-      @Override
-      public double doubleVal(int doc) {
-        return (double)(end - arr[doc]);
-      }
-
-      @Override
-      public String strVal(int doc) {
-        // the string value of the ordinal, not the string itself
-        return Integer.toString((end - arr[doc]));
-      }
-
-      @Override
-      public String toString(int doc) {
-        return description() + '=' + strVal(doc);
+        return (end - sindex.getOrd(doc+off) - 1);
       }
     };
   }
 
   @Override
   public boolean equals(Object o) {
-    if (o.getClass() !=  ReverseOrdFieldSource.class) return false;
+    if (o == null || (o.getClass() !=  ReverseOrdFieldSource.class)) return false;
     ReverseOrdFieldSource other = (ReverseOrdFieldSource)o;
     return this.field.equals(other.field);
   }
@@ -110,6 +117,6 @@ public class ReverseOrdFieldSource extends ValueSource {
   @Override
   public int hashCode() {
     return hcode + field.hashCode();
-  };
+  }
 
 }

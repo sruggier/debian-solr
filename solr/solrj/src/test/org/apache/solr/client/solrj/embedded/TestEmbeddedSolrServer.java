@@ -1,6 +1,4 @@
-package org.apache.solr.client.solrj.embedded;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,9 +14,15 @@ package org.apache.solr.client.solrj.embedded;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.client.solrj.embedded;
 
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.List;
+
+import com.carrotsearch.randomizedtesting.rules.SystemPropertiesRestoreRule;
 import junit.framework.Assert;
-import org.apache.lucene.util.SystemPropertiesRestoreRule;
 import org.apache.solr.core.SolrCore;
 import org.junit.Rule;
 import org.junit.rules.RuleChain;
@@ -26,25 +30,17 @@ import org.junit.rules.TestRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-
 public class TestEmbeddedSolrServer extends AbstractEmbeddedSolrServerTestCase {
 
   @Rule
   public TestRule solrTestRules = 
     RuleChain.outerRule(new SystemPropertiesRestoreRule());
 
-  protected static Logger log = LoggerFactory.getLogger(TestEmbeddedSolrServer.class);
-
-  protected EmbeddedSolrServer getSolrCore1() {
-    return new EmbeddedSolrServer(cores, "core1");
-  }
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   @Override
-  protected File getSolrXml() throws Exception {
-    return new File(SOLR_HOME, "solr.xml");
+  protected EmbeddedSolrServer getSolrCore1() {
+    return new EmbeddedSolrServer(cores, "core1");
   }
 
   public void testGetCoreContainer() {
@@ -52,18 +48,18 @@ public class TestEmbeddedSolrServer extends AbstractEmbeddedSolrServerTestCase {
     Assert.assertEquals(cores, ((EmbeddedSolrServer)getSolrCore1()).getCoreContainer());
   }
   
-  public void testShutdown() {
+  public void testClose() throws IOException {
     
-    EmbeddedSolrServer solrServer = (EmbeddedSolrServer)getSolrCore0();
+    EmbeddedSolrServer solrServer = (EmbeddedSolrServer) getSolrCore0();
     
-    Assert.assertEquals(2, cores.getCores().size());
-    List<SolrCore> solrCores = new ArrayList<SolrCore>();
+    Assert.assertEquals(3, cores.getCores().size());
+    List<SolrCore> solrCores = new ArrayList<>();
     for (SolrCore solrCore : cores.getCores()) {
       Assert.assertEquals(false, solrCore.isClosed());
       solrCores.add(solrCore);
     }
     
-    solrServer.shutdown();
+    solrServer.close();
     
     Assert.assertEquals(0, cores.getCores().size());
     

@@ -23,15 +23,15 @@
     Language Identifier contrib for extracting language from a document being indexed
   </description>
 
-	<import file="../contrib-build.xml"/>
+  <import file="../contrib-build.xml"/>
 
-	<path id="classpath">
+  <path id="classpath">
     <fileset dir="../extraction/lib" excludes="${common.classpath.excludes}"/>
     <fileset dir="lib" excludes="${common.classpath.excludes}"/>
     <path refid="solr.base.classpath"/>   
   </path>
 
-    <!-- we don't actually need to compile this thing, we just want its libs -->
+  <!-- we don't actually need to compile this thing, we just want its libs -->
   <target name="resolve-extraction-libs">
     <ant dir="${common-solr.dir}/contrib/extraction" target="resolve" inheritAll="false">
       <propertyset refid="uptodate.and.compiled.properties"/>

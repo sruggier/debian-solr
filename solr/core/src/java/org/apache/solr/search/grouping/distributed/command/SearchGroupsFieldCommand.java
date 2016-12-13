@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.distributed.command;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,12 +14,20 @@ package org.apache.solr.search.grouping.distributed.command;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.distributed.command;
 
+import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.Collector;
 import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.grouping.AbstractAllGroupsCollector;
+import org.apache.lucene.search.grouping.AbstractFirstPassGroupingCollector;
 import org.apache.lucene.search.grouping.SearchGroup;
-import org.apache.lucene.search.grouping.TermAllGroupsCollector;
-import org.apache.lucene.search.grouping.TermFirstPassGroupingCollector;
+import org.apache.lucene.search.grouping.function.FunctionAllGroupsCollector;
+import org.apache.lucene.search.grouping.function.FunctionFirstPassGroupingCollector;
+import org.apache.lucene.search.grouping.term.TermAllGroupsCollector;
+import org.apache.lucene.search.grouping.term.TermFirstPassGroupingCollector;
+import org.apache.lucene.util.BytesRef;
+import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.search.grouping.Command;
 
@@ -31,7 +37,7 @@ import java.util.*;
 /**
  * Creates all the collectors needed for the first phase and how to handle the results.
  */
-public class SearchGroupsFieldCommand implements Command<Pair<Integer, Collection<SearchGroup<String>>>> {
+public class SearchGroupsFieldCommand implements Command<SearchGroupsFieldCommandResult> {
 
   public static class Builder {
 
@@ -75,8 +81,8 @@ public class SearchGroupsFieldCommand implements Command<Pair<Integer, Collectio
   private final int topNGroups;
   private final boolean includeGroupCount;
 
-  private TermFirstPassGroupingCollector firstPassGroupingCollector;
-  private TermAllGroupsCollector allGroupsCollector;
+  private AbstractFirstPassGroupingCollector firstPassGroupingCollector;
+  private AbstractAllGroupsCollector allGroupsCollector;
 
   private SearchGroupsFieldCommand(SchemaField field, Sort groupSort, int topNGroups, boolean includeGroupCount) {
     this.field = field;
@@ -85,43 +91,63 @@ public class SearchGroupsFieldCommand implements Command<Pair<Integer, Collectio
     this.includeGroupCount = includeGroupCount;
   }
 
+  @Override
   public List<Collector> create() throws IOException {
-    List<Collector> collectors = new ArrayList<Collector>();
+    final List<Collector> collectors = new ArrayList<>(2);
+    final FieldType fieldType = field.getType();
     if (topNGroups > 0) {
-      firstPassGroupingCollector = new TermFirstPassGroupingCollector(field.getName(), groupSort, topNGroups);
+      if (fieldType.getNumericType() != null) {
+        ValueSource vs = fieldType.getValueSource(field, null);
+        firstPassGroupingCollector = new FunctionFirstPassGroupingCollector(vs, new HashMap<Object,Object>(), groupSort, topNGroups);
+      } else {
+        firstPassGroupingCollector = new TermFirstPassGroupingCollector(field.getName(), groupSort, topNGroups);
+      }
       collectors.add(firstPassGroupingCollector);
     }
     if (includeGroupCount) {
-      allGroupsCollector = new TermAllGroupsCollector(field.getName());
+      if (fieldType.getNumericType() != null) {
+        ValueSource vs = fieldType.getValueSource(field, null);
+        allGroupsCollector = new FunctionAllGroupsCollector(vs, new HashMap<Object,Object>());
+      } else {
+        allGroupsCollector = new TermAllGroupsCollector(field.getName());
+      }
       collectors.add(allGroupsCollector);
     }
     return collectors;
   }
 
-  public Pair<Integer, Collection<SearchGroup<String>>> result() {
-    final Collection<SearchGroup<String>> topGroups;
-    if (topNGroups > 0) {
-      topGroups = firstPassGroupingCollector.getTopGroups(0, true);
+  @Override
+  public SearchGroupsFieldCommandResult result() {
+    final Collection<SearchGroup<BytesRef>> topGroups;
+    if (firstPassGroupingCollector != null) {
+      if (field.getType().getNumericType() != null) {
+        topGroups = GroupConverter.fromMutable(field, firstPassGroupingCollector.getTopGroups(0, true));
+      } else {
+        topGroups = firstPassGroupingCollector.getTopGroups(0, true);
+      }
     } else {
       topGroups = Collections.emptyList();
     }
     final Integer groupCount;
-    if (includeGroupCount) {
+    if (allGroupsCollector != null) {
       groupCount = allGroupsCollector.getGroupCount();
     } else {
       groupCount = null;
     }
-    return new Pair<Integer, Collection<SearchGroup<String>>>(groupCount, topGroups);
+    return new SearchGroupsFieldCommandResult(groupCount, topGroups);
   }
 
+  @Override
   public Sort getSortWithinGroup() {
     return null;
   }
 
+  @Override
   public Sort getGroupSort() {
     return groupSort;
   }
 
+  @Override
   public String getKey() {
     return field.getName();
   }

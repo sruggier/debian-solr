@@ -1,5 +1,4 @@
-package org.apache.solr.update.processor;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.update.processor;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -23,6 +22,8 @@ import java.util.Collections;
 import java.util.List;
 
 import org.apache.lucene.index.Term;
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.SolrException.ErrorCode;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.SolrInputField;
 import org.apache.solr.common.params.SolrParams;
@@ -31,9 +32,13 @@ import org.apache.solr.common.util.StrUtils;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.update.AddUpdateCommand;
+import org.apache.solr.core.SolrCore;
+import org.apache.solr.schema.SchemaField;
+import org.apache.solr.util.plugin.SolrCoreAware;
 
-public class SignatureUpdateProcessorFactory extends
-    UpdateRequestProcessorFactory {
+public class SignatureUpdateProcessorFactory 
+  extends UpdateRequestProcessorFactory 
+  implements SolrCoreAware {
 
   private List<String> sigFields;
   private String signatureField;
@@ -55,8 +60,6 @@ public class SignatureUpdateProcessorFactory extends
 
       signatureField = params.get("signatureField", "signatureField");
 
-      signatureTerm = new Term(signatureField, "");
-
       signatureClass = params.get("signatureClass",
           "org.apache.solr.update.processor.Lookup3Signature");
       this.params = params;
@@ -66,6 +69,24 @@ public class SignatureUpdateProcessorFactory extends
       if (sigFields != null) {
         Collections.sort(sigFields);
       }
+    }
+  }
+
+  @Override
+  public void inform(SolrCore core) {
+    final SchemaField field = core.getLatestSchema().getFieldOrNull(getSignatureField());
+    if (null == field) {
+      throw new SolrException
+        (ErrorCode.SERVER_ERROR,
+         "Can't use signatureField which does not exist in schema: "
+         + getSignatureField());
+    }
+
+    if (getOverwriteDupes() && ( ! field.indexed() ) ) {
+      throw new SolrException
+        (ErrorCode.SERVER_ERROR,
+         "Can't set overwriteDupes when signatureField is not indexed: "
+         + getSignatureField());
     }
   }
 
@@ -112,21 +133,33 @@ public class SignatureUpdateProcessorFactory extends
       if (enabled) {
         SolrInputDocument doc = cmd.getSolrInputDocument();
         List<String> currDocSigFields = null;
+        boolean isPartialUpdate = AtomicUpdateDocumentMerger.isAtomicUpdate(cmd);
         if (sigFields == null || sigFields.size() == 0) {
+          if (isPartialUpdate)  {
+            throw new SolrException
+                (ErrorCode.SERVER_ERROR,
+                    "Can't use SignatureUpdateProcessor with partial updates on signature fields");
+          }
           Collection<String> docFields = doc.getFieldNames();
-          currDocSigFields = new ArrayList<String>(docFields.size());
+          currDocSigFields = new ArrayList<>(docFields.size());
           currDocSigFields.addAll(docFields);
           Collections.sort(currDocSigFields);
         } else {
           currDocSigFields = sigFields;
         }
 
-        Signature sig = (Signature) req.getCore().getResourceLoader().newInstance(signatureClass); 
+        Signature sig = req.getCore().getResourceLoader().newInstance(signatureClass, Signature.class);
         sig.init(params);
 
         for (String field : currDocSigFields) {
           SolrInputField f = doc.getField(field);
           if (f != null) {
+            if (isPartialUpdate)  {
+              throw new SolrException
+                  (ErrorCode.SERVER_ERROR,
+                      "Can't use SignatureUpdateProcessor with partial update request " +
+                          "containing signature field: " + field);
+            }
             sig.add(field);
             Object o = f.getValue();
             if (o instanceof Collection) {
@@ -151,7 +184,7 @@ public class SignatureUpdateProcessorFactory extends
         doc.addField(signatureField, sigString);
 
         if (overwriteDupes) {
-          cmd.updateTerm = signatureTerm.createTerm(sigString);
+          cmd.updateTerm = new Term(signatureField, sigString);
         }
 
       }

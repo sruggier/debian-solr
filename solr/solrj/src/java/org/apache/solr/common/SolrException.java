@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,23 +14,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common;
-
-import org.slf4j.Logger;
 
 import java.io.CharArrayWriter;
 import java.io.PrintWriter;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.apache.solr.common.util.NamedList;
+import org.slf4j.Logger;
+import org.slf4j.MDC;
 
 /**
- * @version $Id$
+ *
  */
 public class SolrException extends RuntimeException {
 
+  public static final String ROOT_ERROR_CLASS = "root-error-class";
+  public static final String ERROR_CLASS = "error-class";
+  final private Map mdcContext;
+
   /**
+   * This list of valid HTTP Status error codes that Solr may return in 
+   * the case of a "Server Side" error.
+   *
    * @since solr 1.2
    */
   public enum ErrorCode {
@@ -38,8 +46,11 @@ public class SolrException extends RuntimeException {
     UNAUTHORIZED( 401 ),
     FORBIDDEN( 403 ),
     NOT_FOUND( 404 ),
+    CONFLICT( 409 ),
+    UNSUPPORTED_MEDIA_TYPE( 415 ),
     SERVER_ERROR( 500 ),
     SERVICE_UNAVAILABLE( 503 ),
+    INVALID_STATE( 510 ),
     UNKNOWN(0);
     public final int code;
     
@@ -55,105 +66,81 @@ public class SolrException extends RuntimeException {
     }
   };
 
-  /**
-   * @deprecated Logging should now occur from the top-most level, making this unnecessary in 4.x
-   */
-  @Deprecated
-  public boolean logged=false;
-
   public SolrException(ErrorCode code, String msg) {
-    this(code, msg, null, false);
+    super(msg);
+    this.code = code.code;
+    this.mdcContext = MDC.getCopyOfContextMap();
   }
-
-  /**
-   * @deprecated Logging should now occur from the top-most level, making this unnecessary in 4.x.
-   * use {@link #SolrException(ErrorCode, String)}
-   */
-  @Deprecated
-  public SolrException(ErrorCode code, String msg, boolean alreadyLogged) {
-    this(code, msg, null, alreadyLogged);
-  }
-
-  /**
-   * @deprecated Logging should now occur from the top-most level, making this unnecessary in 4.x
-   * use {@link #SolrException(ErrorCode, String, Throwable)}
-   */
-  @Deprecated
-  public SolrException(ErrorCode code, String msg, Throwable th, boolean alreadyLogged) {
-    super(msg,th);
-    this.code=code.code;
-    logged=alreadyLogged;
-  }
-
   public SolrException(ErrorCode code, String msg, Throwable th) {
-    this(code, msg, th, (th instanceof SolrException) ? ((SolrException)th).logged : false);
+    super(msg, th);
+    this.code = code.code;
+    this.mdcContext = MDC.getCopyOfContextMap();
   }
 
   public SolrException(ErrorCode code, Throwable th) {
-    this(code, null, th, (th instanceof SolrException) ? ((SolrException)th).logged : false);
-  }
-  
-  /**
-   * @deprecated Use {@link #SolrException(ErrorCode,String)}.
-   */
-  @Deprecated
-  public SolrException(int code, String msg) {
-    super(msg);
-    this.code=code;
-  }
-  
-  /**
-   * @deprecated Use {@link #SolrException(ErrorCode,String,boolean)}.
-   */
-  @Deprecated
-  public SolrException(int code, String msg, boolean alreadyLogged) {
-    super(msg);
-    this.code=code;
-    this.logged=alreadyLogged;
-  }
-
-  /**
-   * @deprecated Use {@link #SolrException(ErrorCode,String,Throwable,boolean)}.
-   */
-  @Deprecated
-  public SolrException(int code, String msg, Throwable th, boolean alreadyLogged) {
-    super(msg,th);
-    this.code=code;
-    logged=alreadyLogged;
-  }
-
-  /**
-   * @deprecated Use {@link #SolrException(ErrorCode,String,Throwable)}.
-   */
-  @Deprecated
-  public SolrException(int code, String msg, Throwable th) {
-    this(code,msg,th,true);
-  }
-
-  /**
-   * @deprecated Use {@link #SolrException(ErrorCode,Throwable)}.
-   */
-  @Deprecated
-  public SolrException(int code, Throwable th) {
     super(th);
-    this.code=code;
-    logged=true;
+    this.code = code.code;
+    this.mdcContext = MDC.getCopyOfContextMap();
   }
 
+  /**
+   * Constructor that can set arbitrary http status code. Not for 
+   * use in Solr, but may be used by clients in subclasses to capture 
+   * errors returned by the servlet container or other HTTP proxies.
+   */
+  protected SolrException(int code, String msg, Throwable th) {
+    super(msg, th);
+    this.code = code;
+    this.mdcContext = MDC.getCopyOfContextMap();
+  }
+  
   int code=0;
+  protected NamedList<String> metadata;
+
+  /**
+   * The HTTP Status code associated with this Exception.  For SolrExceptions 
+   * thrown by Solr "Server Side", this should valid {@link ErrorCode}, 
+   * however client side exceptions may contain an arbitrary error code based 
+   * on the behavior of the Servlet Container hosting Solr, or any HTTP 
+   * Proxies that may exist between the client and the server.
+   *
+   * @return The HTTP Status code associated with this Exception
+   */
   public int code() { return code; }
 
+  public void setMetadata(NamedList<String> metadata) {
+    this.metadata = metadata;
+  }
 
+  public NamedList<String> getMetadata() {
+    return metadata;
+  }
 
+  public String getMetadata(String key) {
+    return (metadata != null && key != null) ? metadata.get(key) : null;
+  }
+
+  public void setMetadata(String key, String value) {
+    if (key == null || value == null)
+      throw new IllegalArgumentException("Exception metadata cannot be null!");
+
+    if (metadata == null)
+      metadata = new NamedList<String>();
+    metadata.add(key, value);
+  }
+  
+  public String getThrowable() {
+    return getMetadata(ERROR_CLASS);
+  }
+
+  public String getRootThrowable() {
+    return getMetadata(ROOT_ERROR_CLASS);
+  }
 
   public void log(Logger log) { log(log,this); }
   public static void log(Logger log, Throwable e) {
-    if (e instanceof SolrException) {
-      ((SolrException)e).logged = true;
-      if (((SolrException) e).code() == ErrorCode.SERVICE_UNAVAILABLE.code)  return;
-    }
     String stackTrace = toStr(e);
-    String ignore = doIgnore(stackTrace);
+    String ignore = doIgnore(e, stackTrace);
     if (ignore != null) {
       log.info(ignore);
       return;
@@ -163,12 +150,18 @@ public class SolrException extends RuntimeException {
   }
 
   public static void log(Logger log, String msg, Throwable e) {
-    if (e instanceof SolrException) {
-      ((SolrException)e).logged = true;
-      if (((SolrException) e).code() == ErrorCode.SERVICE_UNAVAILABLE.code)  return;
-    }
     String stackTrace = msg + ':' + toStr(e);
-    String ignore = doIgnore(stackTrace);
+    String ignore = doIgnore(e, stackTrace);
+    if (ignore != null) {
+      log.info(ignore);
+      return;
+    }
+    log.error(stackTrace);
+  }
+  
+  public static void log(Logger log, String msg) {
+    String stackTrace = msg;
+    String ignore = doIgnore(null, stackTrace);
     if (ignore != null) {
       log.info(ignore);
       return;
@@ -176,24 +169,11 @@ public class SolrException extends RuntimeException {
     log.error(stackTrace);
   }
 
-  /**
-   * @deprecated use {@link #log(Logger, String, Throwable)}
-   */
-  public static void logOnce(Logger log, String msg, Throwable e) {
-    if (e instanceof SolrException) {
-      if(((SolrException)e).logged) return;
-      if (((SolrException) e).code() == ErrorCode.SERVICE_UNAVAILABLE.code) return;
-    }
-    if (msg!=null) log(log,msg,e);
-    else log(log,e);
-  }
-
-
   // public String toString() { return toStr(this); }  // oops, inf loop
   @Override
   public String toString() { return super.toString(); }
 
-  public static String toStr(Throwable e) {
+  public static String toStr(Throwable e) {   
     CharArrayWriter cw = new CharArrayWriter();
     PrintWriter pw = new PrintWriter(cw);
     e.printStackTrace(pw);
@@ -215,17 +195,60 @@ public class SolrException extends RuntimeException {
   public static Set<String> ignorePatterns;
 
   /** Returns null if this exception does not match any ignore patterns, or a message string to use if it does. */
-  public static String doIgnore(String m) {
+  public static String doIgnore(Throwable t, String m) {
     if (ignorePatterns == null || m == null) return null;
+    if (t != null && t instanceof AssertionError) return null;
 
     for (String regex : ignorePatterns) {
       Pattern pattern = Pattern.compile(regex);
       Matcher matcher = pattern.matcher(m);
+      
       if (matcher.find()) return "Ignoring exception matching " + regex;
     }
 
     return null;
   }
+  
+  public static Throwable getRootCause(Throwable t) {
+    while (true) {
+      Throwable cause = t.getCause();
+      if (cause!=null) {
+        t = cause;
+      } else {
+        break;
+      }
+    }
+    return t;
+  }
 
+  public void logInfoWithMdc(Logger logger, String msg) {
+    Map previousMdcContext = MDC.getCopyOfContextMap();
+    MDC.setContextMap(mdcContext);
+    try {
+      logger.info(msg);
+    } finally{
+      MDC.setContextMap(previousMdcContext);
+    }
+  }
+
+  public void logDebugWithMdc(Logger logger, String msg) {
+    Map previousMdcContext = MDC.getCopyOfContextMap();
+    MDC.setContextMap(mdcContext);
+    try {
+      logger.debug(msg);
+    } finally{
+      MDC.setContextMap(previousMdcContext);
+    }
+  }
+
+  public void logWarnWithMdc(Logger logger, String msg) {
+    Map previousMdcContext = MDC.getCopyOfContextMap();
+    MDC.setContextMap(mdcContext);
+    try {
+      logger.warn(msg);
+    } finally{
+      MDC.setContextMap(previousMdcContext);
+    }
+  }
 
 }

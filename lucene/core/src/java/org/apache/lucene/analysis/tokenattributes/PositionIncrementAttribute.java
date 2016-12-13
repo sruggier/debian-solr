@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,10 +14,12 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
+
 
 import org.apache.lucene.util.Attribute;
 
-/** The positionIncrement determines the position of this token
+/** Determines the position of this token
  * relative to the previous Token in a TokenStream, used in phrase
  * searching.
  *
@@ -43,17 +43,20 @@ import org.apache.lucene.util.Attribute;
  *
  * </ul>
  * 
- * @see org.apache.lucene.index.TermPositions
+ * @see org.apache.lucene.index.PostingsEnum
  */
 public interface PositionIncrementAttribute extends Attribute {
   /** Set the position increment. The default value is one.
    *
    * @param positionIncrement the distance from the prior term
+   * @throws IllegalArgumentException if <code>positionIncrement</code> 
+   *         is negative.
+   * @see #getPositionIncrement()
    */
   public void setPositionIncrement(int positionIncrement);
 
   /** Returns the position increment of this Token.
-   * @see #setPositionIncrement
+   * @see #setPositionIncrement(int)
    */
   public int getPositionIncrement();
 }

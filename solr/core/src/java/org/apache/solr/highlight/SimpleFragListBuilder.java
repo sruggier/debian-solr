@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.highlight;
 
 import org.apache.lucene.search.vectorhighlight.FragListBuilder;
@@ -23,6 +22,7 @@ import org.apache.solr.common.params.SolrParams;
 public class SimpleFragListBuilder extends HighlightingPluginBase implements
     SolrFragListBuilder {
 
+  @Override
   public FragListBuilder getFragListBuilder(SolrParams params) {
     // NOTE: This class (currently) makes no use of params
     // If that ever changes, it should wrap them with defaults...
@@ -40,20 +40,5 @@ public class SimpleFragListBuilder extends HighlightingPluginBase implements
   @Override
   public String getDescription() {
     return "SimpleFragListBuilder";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
   }
 }

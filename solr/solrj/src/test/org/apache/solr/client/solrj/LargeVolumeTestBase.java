@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,25 +14,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-
 import org.apache.solr.SolrJettyTestBase;
+import org.apache.solr.client.solrj.embedded.EmbeddedSolrServer;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.UpdateResponse;
 import org.apache.solr.common.SolrInputDocument;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * @version $Id$
+ *
  * @since solr 1.3
  */
-public abstract class LargeVolumeTestBase extends SolrJettyTestBase 
+public abstract class LargeVolumeTestBase extends SolrJettyTestBase
 {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   // for real load testing, make these numbers bigger
   static final int numdocs = 100; //1000 * 1000;
@@ -40,8 +44,8 @@ public abstract class LargeVolumeTestBase extends SolrJettyTestBase
 
   @Test
   public void testMultiThreaded() throws Exception {
-    SolrServer gserver = this.getSolrServer();
-    gserver.deleteByQuery( "*:*" ); // delete everything!
+    SolrClient client = this.getSolrClient();
+    client.deleteByQuery("*:*"); // delete everything!
     
     DocThread[] threads = new DocThread[threadCount];
     for (int i=0; i<threadCount; i++) {
@@ -56,28 +60,28 @@ public abstract class LargeVolumeTestBase extends SolrJettyTestBase
 
     // some of the commits could have failed because maxWarmingSearchers exceeded,
     // so do a final commit to make sure everything is visible.
-    gserver.commit();
+    client.commit();
     
     query(threadCount * numdocs);
     log.info("done");
   }
 
   private void query(int count) throws SolrServerException, IOException {
-    SolrServer gserver = this.getSolrServer();
+    SolrClient client = this.getSolrClient();
     SolrQuery query = new SolrQuery("*:*");
-    QueryResponse response = gserver.query(query);
+    QueryResponse response = client.query(query);
     assertEquals(0, response.getStatus());
     assertEquals(count, response.getResults().getNumFound());
   }
 
   public class DocThread extends Thread {
     
-    final SolrServer tserver;
+    final SolrClient client;
     final String name;
     
     public DocThread( String name )
     {
-      tserver = createNewSolrServer();
+      client = createNewSolrClient();
       this.name = name;
     }
     
@@ -85,16 +89,16 @@ public abstract class LargeVolumeTestBase extends SolrJettyTestBase
     public void run() {
       try {
         UpdateResponse resp = null;
-        List<SolrInputDocument> docs = new ArrayList<SolrInputDocument>();
+        List<SolrInputDocument> docs = new ArrayList<>();
         for (int i = 0; i < numdocs; i++) {
           if (i > 0 && i % 200 == 0) {
-            resp = tserver.add(docs);
+            resp = client.add(docs);
             assertEquals(0, resp.getStatus());
-            docs = new ArrayList<SolrInputDocument>();
+            docs = new ArrayList<>();
           }
           if (i > 0 && i % 5000 == 0) {
             log.info(getName() + " - Committing " + i);
-            resp = tserver.commit();
+            resp = client.commit();
             assertEquals(0, resp.getStatus());
           }
           SolrInputDocument doc = new SolrInputDocument();
@@ -102,17 +106,20 @@ public abstract class LargeVolumeTestBase extends SolrJettyTestBase
           doc.addField("cat", "foocat");
           docs.add(doc);
         }
-        resp = tserver.add(docs);
+        resp = client.add(docs);
         assertEquals(0, resp.getStatus());
 
         try {
-        resp = tserver.commit();
+        resp = client.commit();
         assertEquals(0, resp.getStatus());
-        resp = tserver.optimize();
+        resp = client.optimize();
         assertEquals(0, resp.getStatus());
         } catch (Exception e) {
           // a commit/optimize can fail with a too many warming searchers exception
           log.info("Caught benign exception during commit: " + e.getMessage());
+        }
+        if (!(client instanceof EmbeddedSolrServer)) {
+          client.close();
         }
 
       } catch (Exception e) {

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.highlight;
 
 import org.apache.lucene.search.highlight.Encoder;
@@ -27,6 +26,7 @@ import org.apache.solr.common.params.SolrParams;
 public class DefaultEncoder extends HighlightingPluginBase implements
     SolrEncoder {
 
+  @Override
   public Encoder getEncoder(String fieldName, SolrParams params) {
     return new org.apache.lucene.search.highlight.DefaultEncoder();
   }
@@ -38,20 +38,5 @@ public class DefaultEncoder extends HighlightingPluginBase implements
   @Override
   public String getDescription() {
     return "DefaultEncoder";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
   }
 }

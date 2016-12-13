@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,344 +14,328 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
-import java.util.List;
+import java.util.Arrays;
+import java.util.Collection;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.BooleanClause.Occur;
-import org.apache.lucene.search.BooleanQuery.BooleanWeight;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.PriorityQueue;
 
-/* Description from Doug Cutting (excerpted from
- * LUCENE-1483):
- *
- * BooleanScorer uses an array to score windows of
- * 2K docs. So it scores docs 0-2K first, then docs 2K-4K,
- * etc. For each window it iterates through all query terms
- * and accumulates a score in table[doc%2K]. It also stores
- * in the table a bitmask representing which terms
- * contributed to the score. Non-zero scores are chained in
- * a linked list. At the end of scoring each window it then
- * iterates through the linked list and, if the bitmask
- * matches the boolean constraints, collects a hit. For
- * boolean queries with lots of frequent terms this can be
- * much faster, since it does not need to update a priority
- * queue for each posting, instead performing constant-time
- * operations per posting. The only downside is that it
- * results in hits being delivered out-of-order within the
- * window, which means it cannot be nested within other
- * scorers. But it works well as a top-level scorer.
- *
- * The new BooleanScorer2 implementation instead works by
- * merging priority queues of postings, albeit with some
- * clever tricks. For example, a pure conjunction (all terms
- * required) does not require a priority queue. Instead it
- * sorts the posting streams at the start, then repeatedly
- * skips the first to to the last. If the first ever equals
- * the last, then there's a hit. When some terms are
- * required and some terms are optional, the conjunction can
- * be evaluated first, then the optional terms can all skip
- * to the match and be added to the score. Thus the
- * conjunction can reduce the number of priority queue
- * updates for the optional terms. */
+/**
+ * {@link BulkScorer} that is used for pure disjunctions and disjunctions
+ * that have low values of {@link BooleanQuery.Builder#setMinimumNumberShouldMatch(int)}
+ * and dense clauses. This scorer scores documents by batches of 2048 docs.
+ */
+final class BooleanScorer extends BulkScorer {
 
-final class BooleanScorer extends Scorer {
-  
-  private static final class BooleanScorerCollector extends Collector {
-    private BucketTable bucketTable;
-    private int mask;
-    private Scorer scorer;
-    
-    public BooleanScorerCollector(int mask, BucketTable bucketTable) {
-      this.mask = mask;
-      this.bucketTable = bucketTable;
-    }
-    
-    @Override
-    public void collect(final int doc) throws IOException {
-      final BucketTable table = bucketTable;
-      final int i = doc & BucketTable.MASK;
-      final Bucket bucket = table.buckets[i];
-      
-      if (bucket.doc != doc) {                    // invalid bucket
-        bucket.doc = doc;                         // set doc
-        bucket.score = scorer.score();            // initialize score
-        bucket.bits = mask;                       // initialize mask
-        bucket.coord = 1;                         // initialize coord
+  static final int SHIFT = 11;
+  static final int SIZE = 1 << SHIFT;
+  static final int MASK = SIZE - 1;
+  static final int SET_SIZE = 1 << (SHIFT - 6);
+  static final int SET_MASK = SET_SIZE - 1;
 
-        bucket.next = table.first;                // push onto valid list
-        table.first = bucket;
-      } else {                                    // valid bucket
-        bucket.score += scorer.score();           // increment score
-        bucket.bits |= mask;                      // add bits in mask
-        bucket.coord++;                           // increment coord
-      }
-    }
-    
-    @Override
-    public void setNextReader(IndexReader reader, int docBase) {
-      // not needed by this implementation
-    }
-    
-    @Override
-    public void setScorer(Scorer scorer) throws IOException {
-      this.scorer = scorer;
-    }
-    
-    @Override
-    public boolean acceptsDocsOutOfOrder() {
-      return true;
-    }
-
-  }
-  
-  // An internal class which is used in score(Collector, int) for setting the
-  // current score. This is required since Collector exposes a setScorer method
-  // and implementations that need the score will call scorer.score().
-  // Therefore the only methods that are implemented are score() and doc().
-  private static final class BucketScorer extends Scorer {
-
-    float score;
-    int doc = NO_MORE_DOCS;
+  static class Bucket {
+    double score;
     int freq;
-    
-    public BucketScorer(Weight weight) { super(weight); }
-    
-    @Override
-    public int advance(int target) throws IOException { return NO_MORE_DOCS; }
-
-    @Override
-    public int docID() { return doc; }
-
-    @Override
-    public float freq() { return freq; }
-
-    @Override
-    public int nextDoc() throws IOException { return NO_MORE_DOCS; }
-    
-    @Override
-    public float score() throws IOException { return score; }
-    
   }
 
-  static final class Bucket {
-    int doc = -1;            // tells if bucket is valid
-    float score;             // incremental score
-    // TODO: break out bool anyProhibited, int
-    // numRequiredMatched; then we can remove 32 limit on
-    // required clauses
-    int bits;                // used for bool constraints
-    int coord;               // count of terms in score
-    Bucket next;             // next valid bucket
-  }
-  
-  /** A simple hash table of document scores within a range. */
-  static final class BucketTable {
-    public static final int SIZE = 1 << 11;
-    public static final int MASK = SIZE - 1;
+  private class BulkScorerAndDoc {
+    final BulkScorer scorer;
+    final long cost;
+    int next;
 
-    final Bucket[] buckets = new Bucket[SIZE];
-    Bucket first = null;                          // head of valid list
-  
-    public BucketTable() {
-      // Pre-fill to save the lazy init when collecting
-      // each sub:
-      for(int idx=0;idx<SIZE;idx++) {
-        buckets[idx] = new Bucket();
-      }
-    }
-
-    public Collector newCollector(int mask) {
-      return new BooleanScorerCollector(mask, this);
-    }
-
-    public int size() { return SIZE; }
-  }
-
-  static final class SubScorer {
-    public Scorer scorer;
-    // TODO: re-enable this if BQ ever sends us required clauses
-    //public boolean required = false;
-    public boolean prohibited;
-    public Collector collector;
-    public SubScorer next;
-
-    public SubScorer(Scorer scorer, boolean required, boolean prohibited,
-        Collector collector, SubScorer next)
-      throws IOException {
-      if (required) {
-        throw new IllegalArgumentException("this scorer cannot handle required=true");
-      }
+    BulkScorerAndDoc(BulkScorer scorer) {
       this.scorer = scorer;
-      // TODO: re-enable this if BQ ever sends us required clauses
-      //this.required = required;
-      this.prohibited = prohibited;
-      this.collector = collector;
-      this.next = next;
+      this.cost = scorer.cost();
+      this.next = -1;
+    }
+
+    void advance(int min) throws IOException {
+      score(orCollector, null, min, min);
+    }
+
+    void score(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
+      next = scorer.score(collector, acceptDocs, min, max);
     }
   }
-  
-  private SubScorer scorers = null;
-  private BucketTable bucketTable = new BucketTable();
-  private final float[] coordFactors;
-  // TODO: re-enable this if BQ ever sends us required clauses
-  //private int requiredMask = 0;
-  private final int minNrShouldMatch;
-  private int end;
-  private Bucket current;
-  // Any time a prohibited clause matches we set bit 0:
-  private static final int PROHIBITED_MASK = 1;
-  
-  BooleanScorer(BooleanWeight weight, boolean disableCoord, Similarity similarity, int minNrShouldMatch,
-      List<Scorer> optionalScorers, List<Scorer> prohibitedScorers, int maxCoord) throws IOException {
-    super(weight);
-    this.minNrShouldMatch = minNrShouldMatch;
 
-    if (optionalScorers != null && optionalScorers.size() > 0) {
-      for (Scorer scorer : optionalScorers) {
-        if (scorer.nextDoc() != NO_MORE_DOCS) {
-          scorers = new SubScorer(scorer, false, false, bucketTable.newCollector(0), scorers);
-        }
+  // See MinShouldMatchSumScorer for an explanation
+  private static long cost(Collection<BulkScorer> scorers, int minShouldMatch) {
+    final PriorityQueue<BulkScorer> pq = new PriorityQueue<BulkScorer>(scorers.size() - minShouldMatch + 1) {
+      @Override
+      protected boolean lessThan(BulkScorer a, BulkScorer b) {
+        return a.cost() > b.cost();
       }
+    };
+    for (BulkScorer scorer : scorers) {
+      pq.insertWithOverflow(scorer);
     }
-    
-    if (prohibitedScorers != null && prohibitedScorers.size() > 0) {
-      for (Scorer scorer : prohibitedScorers) {
-        if (scorer.nextDoc() != NO_MORE_DOCS) {
-          scorers = new SubScorer(scorer, false, true, bucketTable.newCollector(PROHIBITED_MASK), scorers);
-        }
-      }
+    long cost = 0;
+    for (BulkScorer scorer = pq.pop(); scorer != null; scorer = pq.pop()) {
+      cost += scorer.cost();
+    }
+    return cost;
+  }
+
+  static final class HeadPriorityQueue extends PriorityQueue<BulkScorerAndDoc> {
+
+    public HeadPriorityQueue(int maxSize) {
+      super(maxSize);
     }
 
-    coordFactors = new float[optionalScorers.size() + 1];
+    @Override
+    protected boolean lessThan(BulkScorerAndDoc a, BulkScorerAndDoc b) {
+      return a.next < b.next;
+    }
+
+  }
+
+  static final class TailPriorityQueue extends PriorityQueue<BulkScorerAndDoc> {
+
+    public TailPriorityQueue(int maxSize) {
+      super(maxSize);
+    }
+
+    @Override
+    protected boolean lessThan(BulkScorerAndDoc a, BulkScorerAndDoc b) {
+      return a.cost < b.cost;
+    }
+
+    public BulkScorerAndDoc get(int i) {
+      if (i < 0 || i >= size()) {
+        throw new IndexOutOfBoundsException();
+      }
+      return (BulkScorerAndDoc) getHeapArray()[1 + i];
+    }
+
+  }
+
+  final Bucket[] buckets = new Bucket[SIZE];
+  // This is basically an inlined FixedBitSet... seems to help with bound checks
+  final long[] matching = new long[SET_SIZE];
+
+  final float[] coordFactors;
+  final BulkScorerAndDoc[] leads;
+  final HeadPriorityQueue head;
+  final TailPriorityQueue tail;
+  final FakeScorer fakeScorer = new FakeScorer();
+  final int minShouldMatch;
+  final long cost;
+
+  final class OrCollector implements LeafCollector {
+    Scorer scorer;
+
+    @Override
+    public void setScorer(Scorer scorer) {
+      this.scorer = scorer;
+    }
+
+    @Override
+    public void collect(int doc) throws IOException {
+      final int i = doc & MASK;
+      final int idx = i >>> 6;
+      matching[idx] |= 1L << i;
+      final Bucket bucket = buckets[i];
+      bucket.freq++;
+      bucket.score += scorer.score();
+    }
+  }
+
+  final OrCollector orCollector = new OrCollector();
+
+  BooleanScorer(BooleanWeight weight, boolean disableCoord, int maxCoord, Collection<BulkScorer> scorers, int minShouldMatch, boolean needsScores) {
+    if (minShouldMatch < 1 || minShouldMatch > scorers.size()) {
+      throw new IllegalArgumentException("minShouldMatch should be within 1..num_scorers. Got " + minShouldMatch);
+    }
+    if (scorers.size() <= 1) {
+      throw new IllegalArgumentException("This scorer can only be used with two scorers or more, got " + scorers.size());
+    }
+    for (int i = 0; i < buckets.length; i++) {
+      buckets[i] = new Bucket();
+    }
+    this.leads = new BulkScorerAndDoc[scorers.size()];
+    this.head = new HeadPriorityQueue(scorers.size() - minShouldMatch + 1);
+    this.tail = new TailPriorityQueue(minShouldMatch - 1);
+    this.minShouldMatch = minShouldMatch;
+    for (BulkScorer scorer : scorers) {
+      if (needsScores == false) {
+        // OrCollector calls score() all the time so we have to explicitly
+        // disable scoring in order to avoid decoding useless norms
+        scorer = BooleanWeight.disableScoring(scorer);
+      }
+      final BulkScorerAndDoc evicted = tail.insertWithOverflow(new BulkScorerAndDoc(scorer));
+      if (evicted != null) {
+        head.add(evicted);
+      }
+    }
+    this.cost = cost(scorers, minShouldMatch);
+
+    coordFactors = new float[scorers.size() + 1];
     for (int i = 0; i < coordFactors.length; i++) {
-      coordFactors[i] = disableCoord ? 1.0f : weight.coord(i, maxCoord); 
+      coordFactors[i] = disableCoord ? 1.0f : weight.coord(i, maxCoord);
     }
   }
 
-  // firstDocID is ignored since nextDoc() initializes 'current'
   @Override
-  protected boolean score(Collector collector, int max, int firstDocID) throws IOException {
-    // Make sure it's only BooleanScorer that calls us:
-    assert firstDocID == -1;
-    boolean more;
-    Bucket tmp;
-    BucketScorer bs = new BucketScorer(weight);
-
-    // The internal loop will set the score and doc before calling collect.
-    collector.setScorer(bs);
-    do {
-      bucketTable.first = null;
-      
-      while (current != null) {         // more queued 
-
-        // check prohibited & required
-        if ((current.bits & PROHIBITED_MASK) == 0) {
-
-          // TODO: re-enable this if BQ ever sends us required
-          // clauses
-          //&& (current.bits & requiredMask) == requiredMask) {
-          
-          // TODO: can we remove this?  
-          if (current.doc >= max){
-            tmp = current;
-            current = current.next;
-            tmp.next = bucketTable.first;
-            bucketTable.first = tmp;
-            continue;
-          }
-          
-          if (current.coord >= minNrShouldMatch) {
-            bs.score = current.score * coordFactors[current.coord];
-            bs.doc = current.doc;
-            bs.freq = current.coord;
-            collector.collect(current.doc);
-          }
-        }
-        
-        current = current.next;         // pop the queue
-      }
-      
-      if (bucketTable.first != null){
-        current = bucketTable.first;
-        bucketTable.first = current.next;
-        return true;
-      }
-
-      // refill the queue
-      more = false;
-      end += BucketTable.SIZE;
-      for (SubScorer sub = scorers; sub != null; sub = sub.next) {
-        int subScorerDocID = sub.scorer.docID();
-        if (subScorerDocID != NO_MORE_DOCS) {
-          more |= sub.scorer.score(sub.collector, end, subScorerDocID);
-        }
-      }
-      current = bucketTable.first;
-      
-    } while (current != null || more);
-
-    return false;
-  }
-  
-  @Override
-  public int advance(int target) throws IOException {
-    throw new UnsupportedOperationException();
+  public long cost() {
+    return cost;
   }
 
-  @Override
-  public int docID() {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public int nextDoc() throws IOException {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public float score() {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public void score(Collector collector) throws IOException {
-    score(collector, Integer.MAX_VALUE, -1);
-  }
-  
-  @Override
-  public String toString() {
-    StringBuilder buffer = new StringBuilder();
-    buffer.append("boolean(");
-    for (SubScorer sub = scorers; sub != null; sub = sub.next) {
-      buffer.append(sub.scorer.toString());
-      buffer.append(" ");
+  private void scoreDocument(LeafCollector collector, int base, int i) throws IOException {
+    final FakeScorer fakeScorer = this.fakeScorer;
+    final Bucket bucket = buckets[i];
+    if (bucket.freq >= minShouldMatch) {
+      fakeScorer.freq = bucket.freq;
+      fakeScorer.score = (float) bucket.score * coordFactors[bucket.freq];
+      final int doc = base | i;
+      fakeScorer.doc = doc;
+      collector.collect(doc);
     }
-    buffer.append(")");
-    return buffer.toString();
+    bucket.freq = 0;
+    bucket.score = 0;
   }
-  
-  @Override
-  public void visitSubScorers(Query parent, Occur relationship, ScorerVisitor<Query, Query, Scorer> visitor) {
-    super.visitSubScorers(parent, relationship, visitor);
-    final Query q = weight.getQuery();
-    SubScorer sub = scorers;
-    while(sub != null) {
-      // TODO: re-enable this if BQ ever sends us required
-      //clauses
-      //if (sub.required) {
-      //relationship = Occur.MUST;
-      if (!sub.prohibited) {
-        relationship = Occur.SHOULD;
+
+  private void scoreMatches(LeafCollector collector, int base) throws IOException {
+    long matching[] = this.matching;
+    for (int idx = 0; idx < matching.length; idx++) {
+      long bits = matching[idx];
+      while (bits != 0L) {
+        int ntz = Long.numberOfTrailingZeros(bits);
+        int doc = idx << 6 | ntz;
+        scoreDocument(collector, base, doc);
+        bits ^= 1L << ntz;
+      }
+    }
+  }
+
+  private void scoreWindowIntoBitSetAndReplay(LeafCollector collector, Bits acceptDocs,
+      int base, int min, int max, BulkScorerAndDoc[] scorers, int numScorers) throws IOException {
+    for (int i = 0; i < numScorers; ++i) {
+      final BulkScorerAndDoc scorer = scorers[i];
+      assert scorer.next < max;
+      scorer.score(orCollector, acceptDocs, min, max);
+    }
+
+    scoreMatches(collector, base);
+    Arrays.fill(matching, 0L);
+  }
+
+  private BulkScorerAndDoc advance(int min) throws IOException {
+    assert tail.size() == minShouldMatch - 1;
+    final HeadPriorityQueue head = this.head;
+    final TailPriorityQueue tail = this.tail;
+    BulkScorerAndDoc headTop = head.top();
+    BulkScorerAndDoc tailTop = tail.top();
+    while (headTop.next < min) {
+      if (tailTop == null || headTop.cost <= tailTop.cost) {
+        headTop.advance(min);
+        headTop = head.updateTop();
       } else {
-        // TODO: maybe it's pointless to do this, but, it is
-        // possible the doc may still be collected, eg foo
-        // OR (bar -fee)
-        relationship = Occur.MUST_NOT;
+        // swap the top of head and tail
+        final BulkScorerAndDoc previousHeadTop = headTop;
+        tailTop.advance(min);
+        headTop = head.updateTop(tailTop);
+        tailTop = tail.updateTop(previousHeadTop);
       }
-      sub.scorer.visitSubScorers(q, relationship, visitor);
-      sub = sub.next;
     }
+    return headTop;
+  }
+
+  private void scoreWindowMultipleScorers(LeafCollector collector, Bits acceptDocs, int windowBase, int windowMin, int windowMax, int maxFreq) throws IOException {
+    while (maxFreq < minShouldMatch && maxFreq + tail.size() >= minShouldMatch) {
+      // a match is still possible
+      final BulkScorerAndDoc candidate = tail.pop();
+      candidate.advance(windowMin);
+      if (candidate.next < windowMax) {
+        leads[maxFreq++] = candidate;
+      } else {
+        head.add(candidate);
+      }
+    }
+
+    if (maxFreq >= minShouldMatch) {
+      // There might be matches in other scorers from the tail too
+      for (int i = 0; i < tail.size(); ++i) {
+        leads[maxFreq++] = tail.get(i);
+      }
+      tail.clear();
+
+      scoreWindowIntoBitSetAndReplay(collector, acceptDocs, windowBase, windowMin, windowMax, leads, maxFreq);
+    }
+
+    // Push back scorers into head and tail
+    for (int i = 0; i < maxFreq; ++i) {
+      final BulkScorerAndDoc evicted = head.insertWithOverflow(leads[i]);
+      if (evicted != null) {
+        tail.add(evicted);
+      }
+    }
+  }
+
+  private void scoreWindowSingleScorer(BulkScorerAndDoc bulkScorer, LeafCollector collector, LeafCollector singleClauseCollector,
+      Bits acceptDocs, int windowMin, int windowMax, int max) throws IOException {
+    assert tail.size() == 0;
+    final int nextWindowBase = head.top().next & ~MASK;
+    final int end = Math.max(windowMax, Math.min(max, nextWindowBase));
+    
+    bulkScorer.score(singleClauseCollector, acceptDocs, windowMin, end);
+    
+    // reset the scorer that should be used for the general case
+    collector.setScorer(fakeScorer);
+  }
+
+  private BulkScorerAndDoc scoreWindow(BulkScorerAndDoc top, LeafCollector collector,
+      LeafCollector singleClauseCollector, Bits acceptDocs, int min, int max) throws IOException {
+    final int windowBase = top.next & ~MASK; // find the window that the next match belongs to
+    final int windowMin = Math.max(min, windowBase);
+    final int windowMax = Math.min(max, windowBase + SIZE);
+
+    // Fill 'leads' with all scorers from 'head' that are in the right window
+    leads[0] = head.pop();
+    int maxFreq = 1;
+    while (head.size() > 0 && head.top().next < windowMax) {
+      leads[maxFreq++] = head.pop();
+    }
+
+    if (minShouldMatch == 1 && maxFreq == 1) {
+      // special case: only one scorer can match in the current window,
+      // we can collect directly
+      final BulkScorerAndDoc bulkScorer = leads[0];
+      scoreWindowSingleScorer(bulkScorer, collector, singleClauseCollector, acceptDocs, windowMin, windowMax, max);
+      return head.add(bulkScorer);
+    } else {
+      // general case, collect through a bit set first and then replay
+      scoreWindowMultipleScorers(collector, acceptDocs, windowBase, windowMin, windowMax, maxFreq);
+      return head.top();
+    }
+  }
+
+  @Override
+  public int score(LeafCollector collector, Bits acceptDocs, int min, int max) throws IOException {
+    fakeScorer.doc = -1;
+    collector.setScorer(fakeScorer);
+
+    final LeafCollector singleClauseCollector;
+    if (coordFactors[1] == 1f) {
+      singleClauseCollector = collector;
+    } else {
+      singleClauseCollector = new FilterLeafCollector(collector) {
+        @Override
+        public void setScorer(Scorer scorer) throws IOException {
+          super.setScorer(new BooleanTopLevelScorers.BoostedScorer(scorer, coordFactors[1]));
+        }
+      };
+    }
+
+    BulkScorerAndDoc top = advance(min);
+    while (top.next < max) {
+      top = scoreWindow(top, collector, singleClauseCollector, acceptDocs, min, max);
+    }
+
+    return top.next;
   }
 
 }

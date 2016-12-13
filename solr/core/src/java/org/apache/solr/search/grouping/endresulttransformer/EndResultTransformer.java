@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.endresulttransformer;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.search.grouping.endresulttransformer;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.endresulttransformer;
 
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.solr.common.SolrDocument;
@@ -43,7 +42,7 @@ public interface EndResultTransformer {
    * Abstracts the source for {@link SolrDocument} instances.
    * The source of documents is different for a distributed search than local search
    */
-  public interface SolrDocumentSource {
+  interface SolrDocumentSource {
 
     SolrDocument retrieve(ScoreDoc doc);
 

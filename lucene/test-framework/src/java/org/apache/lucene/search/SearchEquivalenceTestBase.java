@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,22 +14,28 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
 import java.util.BitSet;
+import java.util.Random;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.StringField;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
-
+import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
+import org.apache.lucene.util.TestUtil;
+import org.apache.lucene.util.automaton.Automata;
+import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
@@ -42,6 +46,7 @@ import org.junit.BeforeClass;
  * {@link #assertSameSet(Query, Query)} and 
  * {@link #assertSubsetOf(Query, Query)}
  */
+@SuppressCodecs("SimpleText")
 public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
   protected static IndexSearcher s1, s2;
   protected static Directory directory;
@@ -51,23 +56,23 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
   
   @BeforeClass
   public static void beforeClass() throws Exception {
+    Random random = random();
     directory = newDirectory();
     stopword = "" + randomChar();
-    CharArraySet stopset = new CharArraySet(TEST_VERSION_CURRENT, 1, false);
-    stopset.add(stopword);
-    analyzer = new MockAnalyzer(random, MockTokenizer.WHITESPACE, false, stopset, true);
+    CharacterRunAutomaton stopset = new CharacterRunAutomaton(Automata.makeString(stopword));
+    analyzer = new MockAnalyzer(random, MockTokenizer.WHITESPACE, false, stopset);
     RandomIndexWriter iw = new RandomIndexWriter(random, directory, analyzer);
     Document doc = new Document();
-    Field id = new Field("id", "", Field.Store.NO, Field.Index.NOT_ANALYZED_NO_NORMS);
-    Field field = new Field("field", "", Field.Store.NO, Field.Index.ANALYZED);
+    Field id = new StringField("id", "", Field.Store.NO);
+    Field field = new TextField("field", "", Field.Store.NO);
     doc.add(id);
     doc.add(field);
     
     // index some docs
-    int numDocs = atLeast(1000);
+    int numDocs = TEST_NIGHTLY ? atLeast(1000) : atLeast(100);
     for (int i = 0; i < numDocs; i++) {
-      id.setValue(Integer.toString(i));
-      field.setValue(randomFieldContents());
+      id.setStringValue(Integer.toString(i));
+      field.setStringValue(randomFieldContents());
       iw.addDocument(doc);
     }
     
@@ -107,7 +112,7 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
   static String randomFieldContents() {
     // TODO: zipf-like distribution
     StringBuilder sb = new StringBuilder();
-    int numTerms = random.nextInt(15);
+    int numTerms = random().nextInt(15);
     for (int i = 0; i < numTerms; i++) {
       if (sb.length() > 0) {
         sb.append(' '); // whitespace
@@ -121,9 +126,9 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
    * returns random character (a-z)
    */
   static char randomChar() {
-    return (char) _TestUtil.nextInt(random, 'a', 'z');
+    return (char) TestUtil.nextInt(random(), 'a', 'z');
   }
-  
+
   /**
    * returns a term suitable for searching.
    * terms are single characters in lowercase (a-z)
@@ -135,8 +140,16 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
   /**
    * Returns a random filter over the document set
    */
-  protected Filter randomFilter() {
-    return new QueryWrapperFilter(new TermRangeQuery("field", "a", "" + randomChar(), true, true));
+  protected Query randomFilter() {
+    final Query query;
+    if (random().nextBoolean()) {
+      query = TermRangeQuery.newStringRange("field", "a", "" + randomChar(), true, true);
+    } else {
+      // use a query with a two-phase approximation
+      PhraseQuery phrase = new PhraseQuery(100, "field", "" + randomChar(), "" + randomChar());
+      query = phrase;
+    }
+    return query;
   }
 
   /**
@@ -156,8 +169,14 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
     // test without a filter
     assertSubsetOf(q1, q2, null);
     
-    // test with a filter (this will sometimes cause advance'ing enough to test it)
-    assertSubsetOf(q1, q2, randomFilter());
+    // test with some filters (this will sometimes cause advance'ing enough to test it)
+    int numFilters = TEST_NIGHTLY ? atLeast(10) : atLeast(3);
+    for (int i = 0; i < numFilters; i++) {
+      Query filter = randomFilter();
+      // incorporate the filter in different ways.
+      assertSubsetOf(q1, q2, filter);
+      assertSubsetOf(filteredQuery(q1, filter), filteredQuery(q2, filter), null);
+    }
   }
   
   /**
@@ -166,21 +185,82 @@ public abstract class SearchEquivalenceTestBase extends LuceneTestCase {
    * 
    * Both queries will be filtered by <code>filter</code>
    */
-  protected void assertSubsetOf(Query q1, Query q2, Filter filter) throws Exception {   
+  protected void assertSubsetOf(Query q1, Query q2, Query filter) throws Exception {
+    QueryUtils.check(q1);
+    QueryUtils.check(q2);
+
+    if (filter != null) {
+      q1 = new BooleanQuery.Builder()
+          .add(q1, Occur.MUST)
+          .add(filter, Occur.FILTER)
+          .build();
+      q2 = new BooleanQuery.Builder()
+          .add(q2, Occur.MUST)
+          .add(filter, Occur.FILTER)
+          .build();
+    }
+    // we test both INDEXORDER and RELEVANCE because we want to test needsScores=true/false
+    for (Sort sort : new Sort[] { Sort.INDEXORDER, Sort.RELEVANCE }) {
+      // not efficient, but simple!
+      TopDocs td1 = s1.search(q1, reader.maxDoc(), sort);
+      TopDocs td2 = s2.search(q2, reader.maxDoc(), sort);
+      assertTrue("too many hits: " + td1.totalHits + " > " + td2.totalHits, td1.totalHits <= td2.totalHits);
+      
+      // fill the superset into a bitset
+      BitSet bitset = new BitSet();
+      for (int i = 0; i < td2.scoreDocs.length; i++) {
+        bitset.set(td2.scoreDocs[i].doc);
+      }
+      
+      // check in the subset, that every bit was set by the super
+      for (int i = 0; i < td1.scoreDocs.length; i++) {
+        assertTrue(bitset.get(td1.scoreDocs[i].doc));
+      }
+    }
+  }
+
+  /**
+   * Assert that two queries return the same documents and with the same scores.
+   */
+  protected void assertSameScores(Query q1, Query q2) throws Exception {
+    assertSameSet(q1, q2);
+
+    assertSameScores(q1, q2, null);
+    // also test with some filters to test advancing
+    int numFilters = TEST_NIGHTLY ? atLeast(10) : atLeast(3);
+    for (int i = 0; i < numFilters; i++) {
+      Query filter = randomFilter();
+      // incorporate the filter in different ways.
+      assertSameScores(q1, q2, filter);
+      assertSameScores(filteredQuery(q1, filter), filteredQuery(q2, filter), null);
+    }
+  }
+
+  protected void assertSameScores(Query q1, Query q2, Query filter) throws Exception {
     // not efficient, but simple!
-    TopDocs td1 = s1.search(q1, filter, reader.maxDoc());
-    TopDocs td2 = s2.search(q2, filter, reader.maxDoc());
-    assertTrue(td1.totalHits <= td2.totalHits);
-    
-    // fill the superset into a bitset
-    BitSet bitset = new BitSet();
-    for (int i = 0; i < td2.scoreDocs.length; i++) {
-      bitset.set(td2.scoreDocs[i].doc);
+    if (filter != null) {
+      q1 = new BooleanQuery.Builder()
+          .add(q1, Occur.MUST)
+          .add(filter, Occur.FILTER)
+          .build();
+      q2 = new BooleanQuery.Builder()
+          .add(q2, Occur.MUST)
+          .add(filter, Occur.FILTER)
+          .build();
     }
-    
-    // check in the subset, that every bit was set by the super
-    for (int i = 0; i < td1.scoreDocs.length; i++) {
-      assertTrue(bitset.get(td1.scoreDocs[i].doc));
+    TopDocs td1 = s1.search(q1, reader.maxDoc());
+    TopDocs td2 = s2.search(q2, reader.maxDoc());
+    assertEquals(td1.totalHits, td2.totalHits);
+    for (int i = 0; i < td1.scoreDocs.length; ++i) {
+      assertEquals(td1.scoreDocs[i].doc, td2.scoreDocs[i].doc);
+      assertEquals(td1.scoreDocs[i].score, td2.scoreDocs[i].score, 10e-5);
     }
+  }
+  
+  protected Query filteredQuery(Query query, Query filter) {
+    return new BooleanQuery.Builder()
+        .add(query, Occur.MUST)
+        .add(filter, Occur.FILTER)
+        .build();
   }
 }

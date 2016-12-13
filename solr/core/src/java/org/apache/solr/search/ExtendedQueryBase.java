@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,48 +14,60 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import org.apache.lucene.search.Query;
 
-public class ExtendedQueryBase extends Query implements ExtendedQuery {
+public abstract class ExtendedQueryBase extends Query implements ExtendedQuery {
   private int cost;
   private boolean cache = true;
   private boolean cacheSep;
 
+  @Override
   public void setCache(boolean cache) {
     this.cache = cache;
   }
 
+  @Override
   public boolean getCache() {
     return cache;
   }
 
+  @Override
   public void setCacheSep(boolean cacheSep) {
     this.cacheSep = cacheSep;
   }
 
+  @Override
   public boolean getCacheSep() {
     return cacheSep;
   }
 
+  @Override
   public void setCost(int cost) {
     this.cost = cost;
   }
 
+  @Override
   public int getCost() {
     return cost;
   }
 
   public String getOptions() {
+    return getOptionsString(this);
+  }
+
+  public static String getOptionsString(ExtendedQuery q) {
     StringBuilder sb = new StringBuilder();
-    if (!cache) {
+    if (!q.getCache()) {
       sb.append("{!cache=false");
-      sb.append(" cost=");
-      sb.append(cost);
+      int cost = q.getCost();
+      if (cost != 0) {
+        sb.append(" cost=");
+        sb.append(q.getCost());
+      }
       sb.append("}");
-    } else if (cacheSep) {
+    } else if (q.getCacheSep()) {
       sb.append("{!cache=sep");
       sb.append("}");
     }

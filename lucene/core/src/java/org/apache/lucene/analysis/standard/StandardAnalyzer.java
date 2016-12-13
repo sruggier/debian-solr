@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.standard;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,126 +14,109 @@ package org.apache.lucene.analysis.standard;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.standard;
 
-import org.apache.lucene.analysis.*;
-import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.Version;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
-import java.util.Set;
+import java.util.Arrays;
+import java.util.List;
+
+import org.apache.lucene.analysis.CharArraySet;
+import org.apache.lucene.analysis.LowerCaseFilter;
+import org.apache.lucene.analysis.StopFilter;
+import org.apache.lucene.analysis.StopwordAnalyzerBase;
+import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.WordlistLoader;
 
 /**
  * Filters {@link StandardTokenizer} with {@link StandardFilter}, {@link
  * LowerCaseFilter} and {@link StopFilter}, using a list of
  * English stop words.
- *
- * <a name="version"/>
- * <p>You must specify the required {@link Version}
- * compatibility when creating StandardAnalyzer:
- * <ul>
- *   <li> As of 3.4, Hiragana and Han characters are no longer wrongly split
- *        from their combining characters. If you use a previous version number,
- *        you get the exact broken behavior for backwards compatibility.
- *   <li> As of 3.1, StandardTokenizer implements Unicode text segmentation,
- *        and StopFilter correctly handles Unicode 4.0 supplementary characters
- *        in stopwords.  {@link ClassicTokenizer} and {@link ClassicAnalyzer} 
- *        are the pre-3.1 implementations of StandardTokenizer and
- *        StandardAnalyzer.
- *   <li> As of 2.9, StopFilter preserves position increments
- *   <li> As of 2.4, Tokens incorrectly identified as acronyms
- *        are corrected (see <a href="https://issues.apache.org/jira/browse/LUCENE-1068">LUCENE-1068</a>)
- * </ul>
  */
 public final class StandardAnalyzer extends StopwordAnalyzerBase {
 
+  /** An unmodifiable set containing some common English words that are not usually useful
+  for searching.*/
+  public static final CharArraySet ENGLISH_STOP_WORDS_SET;
+  
+  static {
+    final List<String> stopWords = Arrays.asList(
+      "a", "an", "and", "are", "as", "at", "be", "but", "by",
+      "for", "if", "in", "into", "is", "it",
+      "no", "not", "of", "on", "or", "such",
+      "that", "the", "their", "then", "there", "these",
+      "they", "this", "to", "was", "will", "with"
+    );
+    final CharArraySet stopSet = new CharArraySet(stopWords, false);
+    ENGLISH_STOP_WORDS_SET = CharArraySet.unmodifiableSet(stopSet); 
+  }
+  
   /** Default maximum allowed token length */
   public static final int DEFAULT_MAX_TOKEN_LENGTH = 255;
 
   private int maxTokenLength = DEFAULT_MAX_TOKEN_LENGTH;
 
-  /**
-   * Specifies whether deprecated acronyms should be replaced with HOST type.
-   * See {@linkplain "https://issues.apache.org/jira/browse/LUCENE-1068"}
-   */
-  private final boolean replaceInvalidAcronym;
-
   /** An unmodifiable set containing some common English words that are usually not
   useful for searching. */
-  public static final Set<?> STOP_WORDS_SET = StopAnalyzer.ENGLISH_STOP_WORDS_SET; 
+  public static final CharArraySet STOP_WORDS_SET = ENGLISH_STOP_WORDS_SET;
 
   /** Builds an analyzer with the given stop words.
-   * @param matchVersion Lucene version to match See {@link
-   * <a href="#version">above</a>}
    * @param stopWords stop words */
-  public StandardAnalyzer(Version matchVersion, Set<?> stopWords) {
-    super(matchVersion, stopWords);
-    replaceInvalidAcronym = matchVersion.onOrAfter(Version.LUCENE_24);
+  public StandardAnalyzer(CharArraySet stopWords) {
+    super(stopWords);
   }
 
-  /** Builds an analyzer with the default stop words ({@link
-   * #STOP_WORDS_SET}).
-   * @param matchVersion Lucene version to match See {@link
-   * <a href="#version">above</a>}
+  /** Builds an analyzer with the default stop words ({@link #STOP_WORDS_SET}).
    */
-  public StandardAnalyzer(Version matchVersion) {
-    this(matchVersion, STOP_WORDS_SET);
-  }
-
-  /** Builds an analyzer with the stop words from the given file.
-   * @see WordlistLoader#getWordSet(Reader, Version)
-   * @param matchVersion Lucene version to match See {@link
-   * <a href="#version">above</a>}
-   * @param stopwords File to read stop words from 
-   * @deprecated Use {@link #StandardAnalyzer(Version, Reader)} instead. 
-   */
-  @Deprecated
-  public StandardAnalyzer(Version matchVersion, File stopwords) throws IOException {
-    this(matchVersion, WordlistLoader.getWordSet(IOUtils.getDecodingReader(stopwords,
-        IOUtils.CHARSET_UTF_8), matchVersion));
+  public StandardAnalyzer() {
+    this(STOP_WORDS_SET);
   }
 
   /** Builds an analyzer with the stop words from the given reader.
-   * @see WordlistLoader#getWordSet(Reader, Version)
-   * @param matchVersion Lucene version to match See {@link
-   * <a href="#version">above</a>}
+   * @see WordlistLoader#getWordSet(Reader)
    * @param stopwords Reader to read stop words from */
-  public StandardAnalyzer(Version matchVersion, Reader stopwords) throws IOException {
-    this(matchVersion, WordlistLoader.getWordSet(stopwords, matchVersion));
+  public StandardAnalyzer(Reader stopwords) throws IOException {
+    this(loadStopwordSet(stopwords));
   }
 
   /**
    * Set maximum allowed token length.  If a token is seen
    * that exceeds this length then it is discarded.  This
    * setting only takes effect the next time tokenStream or
-   * reusableTokenStream is called.
+   * tokenStream is called.
    */
   public void setMaxTokenLength(int length) {
     maxTokenLength = length;
   }
     
-  /**
-   * @see #setMaxTokenLength
-   */
+  /** Returns the current maximum token length
+   * 
+   *  @see #setMaxTokenLength */
   public int getMaxTokenLength() {
     return maxTokenLength;
   }
 
   @Override
-  protected TokenStreamComponents createComponents(final String fieldName, final Reader reader) {
-    final StandardTokenizer src = new StandardTokenizer(matchVersion, reader);
+  protected TokenStreamComponents createComponents(final String fieldName) {
+    final StandardTokenizer src = new StandardTokenizer();
     src.setMaxTokenLength(maxTokenLength);
-    src.setReplaceInvalidAcronym(replaceInvalidAcronym);
-    TokenStream tok = new StandardFilter(matchVersion, src);
-    tok = new LowerCaseFilter(matchVersion, tok);
-    tok = new StopFilter(matchVersion, tok, stopwords);
+    TokenStream tok = new StandardFilter(src);
+    tok = new LowerCaseFilter(tok);
+    tok = new StopFilter(tok, stopwords);
     return new TokenStreamComponents(src, tok) {
       @Override
-      protected boolean reset(final Reader reader) throws IOException {
+      protected void setReader(final Reader reader) {
         src.setMaxTokenLength(StandardAnalyzer.this.maxTokenLength);
-        return super.reset(reader);
+        super.setReader(reader);
       }
     };
+  }
+
+  @Override
+  protected TokenStream normalize(String fieldName, TokenStream in) {
+    TokenStream result = new StandardFilter(in);
+    result = new LowerCaseFilter(result);
+    return result;
   }
 }

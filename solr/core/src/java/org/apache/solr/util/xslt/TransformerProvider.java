@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util.xslt;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.lang.invoke.MethodHandles;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.solr.util.TimeOut;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.commons.io.IOUtils;
@@ -29,8 +31,8 @@ import javax.xml.transform.TransformerConfigurationException;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.stream.StreamSource;
 
-import org.apache.solr.common.ResourceLoader;
-import org.apache.solr.common.util.SystemIdResolver;
+import org.apache.lucene.analysis.util.ResourceLoader;
+import org.apache.solr.util.SystemIdResolver;
 import org.apache.solr.common.util.XMLErrorLogger;
 import org.apache.solr.core.SolrConfig;
 
@@ -45,9 +47,9 @@ import org.apache.solr.core.SolrConfig;
 public class TransformerProvider {
   private String lastFilename;
   private Templates lastTemplates = null;
-  private long cacheExpires = 0;
-  
-  private static final Logger log = LoggerFactory.getLogger(TransformerProvider.class.getName());
+  private TimeOut cacheExpiresTimeout;
+
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final XMLErrorLogger xmllog = new XMLErrorLogger(log);
   
   public static TransformerProvider instance = new TransformerProvider();
@@ -64,12 +66,13 @@ public class TransformerProvider {
   }
   
   /** Return a new Transformer, possibly created from our cached Templates object  
-   * @throws TransformerConfigurationException 
+   * @throws IOException If there is a low-level I/O error.
    */ 
   public synchronized Transformer getTransformer(SolrConfig solrConfig, String filename,int cacheLifetimeSeconds) throws IOException {
     // For now, the Templates are blindly reloaded once cacheExpires is over.
     // It'd be better to check the file modification time to reload only if needed.
-    if(lastTemplates!=null && filename.equals(lastFilename) && System.currentTimeMillis() < cacheExpires) {
+    if(lastTemplates!=null && filename.equals(lastFilename) &&
+        cacheExpiresTimeout != null && ! cacheExpiresTimeout.hasTimedOut()) {
       if(log.isDebugEnabled()) {
         log.debug("Using cached Templates:" + filename);
       }
@@ -83,9 +86,7 @@ public class TransformerProvider {
       result = lastTemplates.newTransformer();
     } catch(TransformerConfigurationException tce) {
       log.error(getClass().getName(), "getTransformer", tce);
-      final IOException ioe = new IOException("newTransformer fails ( " + lastFilename + ")");
-      ioe.initCause(tce);
-      throw ioe;
+      throw new IOException("newTransformer fails ( " + lastFilename + ")", tce);
     }
     
     return result;
@@ -114,15 +115,13 @@ public class TransformerProvider {
       }
     } catch (Exception e) {
       log.error(getClass().getName(), "newTemplates", e);
-      final IOException ioe = new IOException("Unable to initialize Templates '" + filename + "'");
-      ioe.initCause(e);
-      throw ioe;
+      throw new IOException("Unable to initialize Templates '" + filename + "'", e);
     }
     
     lastFilename = filename;
     lastTemplates = result;
-    cacheExpires = System.currentTimeMillis() + (cacheLifetimeSeconds * 1000);
-    
+    cacheExpiresTimeout = new TimeOut(cacheLifetimeSeconds, TimeUnit.SECONDS);
+
     return result;
   }
 }

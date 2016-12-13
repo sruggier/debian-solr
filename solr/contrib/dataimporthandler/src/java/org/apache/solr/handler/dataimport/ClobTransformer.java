@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -27,13 +27,12 @@ import java.util.Map;
 
 /**
  * {@link Transformer} instance which converts a {@link Clob} to a {@link String}.
- * <p/>
+ * <p>
  * Refer to <a href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
- * <p/>
+ * <p>
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id$
  * @since solr 1.4
  */
 public class ClobTransformer extends Transformer {
@@ -48,7 +47,7 @@ public class ClobTransformer extends Transformer {
       Object o = aRow.get(srcCol);
       if (o instanceof List) {
         List<Clob> inputs = (List<Clob>) o;
-        List<String> results = new ArrayList<String>();
+        List<String> results = new ArrayList<>();
         for (Object input : inputs) {
           if (input instanceof Clob) {
             Clob clob = (Clob) input;

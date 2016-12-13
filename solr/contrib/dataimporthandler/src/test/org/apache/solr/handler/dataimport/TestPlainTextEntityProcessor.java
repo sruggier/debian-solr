@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,25 +16,28 @@
  */
 package org.apache.solr.handler.dataimport;
 
-import org.junit.Test;
-
+import java.io.IOException;
 import java.io.StringReader;
 import java.util.Properties;
+
+import org.junit.Test;
 
 /**
  * Test for PlainTextEntityProcessor
  *
- * @version $Id$
+ *
  * @see org.apache.solr.handler.dataimport.PlainTextEntityProcessor
  * @since solr 1.4
  */
 public class TestPlainTextEntityProcessor extends AbstractDataImportHandlerTestCase {
   @Test
-  public void testSimple() {
+  public void testSimple() throws IOException {
     DataImporter di = new DataImporter();
     di.loadAndInit(DATA_CONFIG);
+    redirectTempProperties(di);
+
     TestDocBuilder.SolrWriterImpl sw = new TestDocBuilder.SolrWriterImpl();
-    DataImporter.RequestParams rp = new DataImporter.RequestParams(createMap("command", "full-import"));
+    RequestInfo rp = new RequestInfo(null, createMap("command", "full-import"), null);
     di.runCmd(rp, sw);
     assertEquals(DS.s, sw.docs.get(0).getFieldValue("x"));
   }

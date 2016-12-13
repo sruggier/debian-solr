@@ -1,5 +1,4 @@
-package org.apache.solr.spelling;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.spelling;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.spelling;
 import org.apache.lucene.search.spell.SuggestWord;
 
 import java.util.Comparator;
@@ -27,6 +26,8 @@ import java.util.Comparator;
  **/
 public class SampleComparator implements Comparator<SuggestWord> {
 
+
+  @Override
   public int compare(SuggestWord suggestWord, SuggestWord suggestWord1) {
     return suggestWord.string.compareTo(suggestWord1.string);
   }

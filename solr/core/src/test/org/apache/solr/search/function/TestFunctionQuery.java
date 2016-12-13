@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,22 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search.function;
 
-import org.apache.lucene.search.FieldCache;
-import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
-import org.junit.BeforeClass;
-import org.junit.Test;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+
+import org.apache.lucene.index.FieldInvertState;
+import org.apache.lucene.search.similarities.Similarity;
+import org.apache.lucene.search.similarities.TFIDFSimilarity;
+import org.apache.solr.SolrTestCaseJ4;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 /**
  * Tests some basic functionality of Solr while demonstrating good
@@ -41,19 +42,16 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     initCore("solrconfig-functionquery.xml","schema11.xml");
   }
 
-  @Override
-  public void setUp() throws Exception {
-    super.setUp();
-    clearIndex();
-  }
   
   String base = "external_foo_extf";
-  static long start = System.currentTimeMillis();
-  void makeExternalFile(String field, String contents, String charset) {
+
+  static long start = System.nanoTime();
+  
+  void makeExternalFile(String field, String contents) {
     String dir = h.getCore().getDataDir();
     String filename = dir + "/external_" + field + "." + (start++);
     try {
-      Writer out = new OutputStreamWriter(new FileOutputStream(filename), charset);
+      Writer out = new OutputStreamWriter(new FileOutputStream(filename), StandardCharsets.UTF_8);
       out.write(contents);
       out.close();
     } catch (Exception e) {
@@ -66,32 +64,44 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     // lrf.args.put("version","2.0");
     for (float val : values) {
       String s = Float.toString(val);
+
       if (field!=null) assertU(adoc("id", s, field, s));
       else assertU(adoc("id", s));
+
+      if (random().nextInt(100) < 20) {
+        if (field!=null) assertU(adoc("id", s, field, s));
+        else assertU(adoc("id", s));
+      }
+
+      if (random().nextInt(100) < 20) {
+        assertU(commit());
+
+      }
+
+
       // System.out.println("added doc for " + val);
     }
-    assertU(optimize()); // squeeze out any possible deleted docs
+    // assertU(optimize()); // squeeze out any possible deleted docs
+    assertU(commit());
   }
 
-  // replace \0 with the field name and create a parseable string 
+  // replace \0 with the field name and create a parsable string 
   public String func(String field, String template) {
-    StringBuilder sb = new StringBuilder("_val_:\"");
+    StringBuilder sb = new StringBuilder("{!func}");
     for (char ch : template.toCharArray()) {
       if (ch=='\0') {
         sb.append(field);
         continue;
       }
-      if (ch=='"') sb.append('\\');
       sb.append(ch);
     }
-    sb.append('"');
     return sb.toString();
   }
 
-  void singleTest(String field, String funcTemplate, List<String> args, float... results) {
+  protected void singleTest(String field, String funcTemplate, List<String> args, float... results) {
     String parseableQuery = func(field, funcTemplate);
 
-    List<String> nargs = new ArrayList<String>(Arrays.asList("q", parseableQuery
+    List<String> nargs = new ArrayList<>(Arrays.asList("q", parseableQuery
             ,"fl", "*,score"
             ,"indent","on"
             ,"rows","100"));
@@ -102,10 +112,10 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
       }
     }
 
-    List<String> tests = new ArrayList<String>();
+    List<String> tests = new ArrayList<>();
 
     // Construct xpaths like the following:
-    // "//doc[./float[@name='foo_pf']='10.0' and ./float[@name='score']='10.0']"
+    // "//doc[./float[@name='foo_f']='10.0' and ./float[@name='score']='10.0']"
 
     for (int i=0; i<results.length; i+=2) {
       String xpath = "//doc[./float[@name='" + "id" + "']='"
@@ -160,6 +170,9 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
 
     singleTest(field,"map(\0,0,0,500)",10,10, -4,-4, 0,500);
     singleTest(field,"map(\0,-4,5,500)",100,100, -4,500, 0,500, 5,500, 10,10, 25,25);
+    singleTest(field,"map(\0,0,0,sum(\0,500))",10,10, -4,-4, 0,500);
+    singleTest(field,"map(\0,0,0,sum(\0,500),sum(\0,1))",10,11, -4,-3, 0,500);
+    singleTest(field,"map(\0,-4,5,sum(\0,1))",100,100, -4,-3, 0,1, 5,6, 10,10, 25,25);
 
     singleTest(field,"scale(\0,-1,1)",-4,-1, 100,1, 0,-0.9230769f);
     singleTest(field,"scale(\0,-10,1000)",-4,-10, 100,1000, 0,28.846153f);
@@ -184,13 +197,10 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     singleTest(field,"sum(query($v1,5),query($v1,7))",
             Arrays.asList("v1","\0:[* TO *]"),  88,12
             );
-
-    purgeFieldCache(FieldCache.DEFAULT);   // avoid FC insanity
   }
 
   @Test
   public void testFunctions() {
-    doTest("foo_pf");  // a plain float field
     doTest("foo_f");  // a sortable float field
     doTest("foo_tf");  // a trie float field
   }
@@ -204,7 +214,7 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     createIndex(null,ids);
 
     // Unsorted field, largest first
-    makeExternalFile(field, "54321=543210\n0=-999\n25=250","UTF-8");
+    makeExternalFile(field, "54321=543210\n0=-999\n25=250");
     // test identity (straight field value)
     singleTest(field, "\0", 54321, 543210, 0,-999, 25,250, 100, 1);
     Object orig = FileFloatSource.onlyForTesting;
@@ -214,13 +224,13 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     singleTest(field, "sqrt(\0)");
     assertTrue(orig == FileFloatSource.onlyForTesting);
 
-    makeExternalFile(field, "0=1","UTF-8");
+    makeExternalFile(field, "0=1");
     assertU(h.query("/reloadCache",lrf.makeRequest("","")));
     singleTest(field, "sqrt(\0)");
     assertTrue(orig != FileFloatSource.onlyForTesting);
 
 
-    Random r = random;
+    Random r = random();
     for (int i=0; i<10; i++) {   // do more iterations for a thorough test
       int len = r.nextInt(ids.length+1);
       boolean sorted = r.nextBoolean();
@@ -248,7 +258,7 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
       for (int j=0; j<len; j++) {
         sb.append("" + ids[j] + "=" + vals[j]+"\n");        
       }
-      makeExternalFile(field, sb.toString(),"UTF-8");
+      makeExternalFile(field, sb.toString());
 
       // make it visible
       assertU(h.query("/reloadCache",lrf.makeRequest("","")));
@@ -266,9 +276,7 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
 
       singleTest(field, "\0", answers);
       // System.out.println("Done test "+i);
-    }
-
-    purgeFieldCache(FieldCache.DEFAULT);   // avoid FC insanity    
+    }  
   }
 
   @Test
@@ -279,7 +287,7 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     assertU(adoc("id", "992", keyField, "BBB"));
     assertU(adoc("id", "993", keyField, "CCC=CCC"));
     assertU(commit());
-    makeExternalFile(extField, "AAA=AAA=543210\nBBB=-8\nCCC=CCC=250","UTF-8");
+    makeExternalFile(extField, "AAA=AAA=543210\nBBB=-8\nCCC=CCC=250");
     singleTest(extField,"\0",991,543210,992,-8,993,250);
   }
 
@@ -291,7 +299,7 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     assertU(adoc("id", "992", keyField, "92"));
     assertU(adoc("id", "993", keyField, "93"));
     assertU(commit());
-    makeExternalFile(extField, "91=543210\n92=-8\n93=250\n=67","UTF-8");
+    makeExternalFile(extField, "91=543210\n92=-8\n93=250\n=67");
     singleTest(extField,"\0",991,543210,992,-8,993,250);
   }
 
@@ -300,21 +308,33 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     clearIndex();
     
     assertU(adoc("id","1", "a_tdt","2009-08-31T12:10:10.123Z", "b_tdt","2009-08-31T12:10:10.124Z"));
-    assertU(adoc("id","2"));
+    assertU(adoc("id","2", "a_t","how now brown cow"));
     assertU(commit()); // create more than one segment
-    assertU(adoc("id","3"));
+    assertU(adoc("id","3", "a_t","brown cow"));
     assertU(adoc("id","4"));
     assertU(commit()); // create more than one segment
     assertU(adoc("id","5"));
-    assertU(adoc("id","6"));
+    assertU(adoc("id","6", "a_t","cow cow cow cow cow"));
     assertU(commit());
 
+    // test relevancy functions
+    assertQ(req("fl","*,score","q", "{!func}numdocs()", "fq","id:6"), "//float[@name='score']='6.0'");
+    assertQ(req("fl","*,score","q", "{!func}maxdoc()", "fq","id:6"), "//float[@name='score']='6.0'");
+    assertQ(req("fl","*,score","q", "{!func}docfreq(a_t,cow)", "fq","id:6"), "//float[@name='score']='3.0'");
+    assertQ(req("fl","*,score","q", "{!func}docfreq('a_t','cow')", "fq","id:6"), "//float[@name='score']='3.0'");
+    assertQ(req("fl","*,score","q", "{!func}docfreq($field,$value)", "fq","id:6", "field","a_t", "value","cow"), "//float[@name='score']='3.0'");
+    assertQ(req("fl","*,score","q", "{!func}termfreq(a_t,cow)", "fq","id:6"), "//float[@name='score']='5.0'");
+
+    // make sure it doesn't get a NPE if no terms are present in a field.
+    assertQ(req("fl","*,score","q", "{!func}termfreq(nofield_t,cow)", "fq","id:6"), "//float[@name='score']='0.0'");
+    assertQ(req("fl","*,score","q", "{!func}docfreq(nofield_t,cow)", "fq","id:6"), "//float[@name='score']='0.0'");
+    
     // test that ord and rord are working on a global index basis, not just
     // at the segment level (since Lucene 2.9 has switched to per-segment searching)
-    assertQ(req("fl","*,score","q", "{!func}ord(id)", "fq","id:6"), "//float[@name='score']='6.0'");
-    assertQ(req("fl","*,score","q", "{!func}top(ord(id))", "fq","id:6"), "//float[@name='score']='6.0'");
-    assertQ(req("fl","*,score","q", "{!func}rord(id)", "fq","id:1"),"//float[@name='score']='6.0'");
-    assertQ(req("fl","*,score","q", "{!func}top(rord(id))", "fq","id:1"),"//float[@name='score']='6.0'");
+    assertQ(req("fl","*,score","q", "{!func}ord(id)", "fq","id:6"), "//float[@name='score']='5.0'");
+    assertQ(req("fl","*,score","q", "{!func}top(ord(id))", "fq","id:6"), "//float[@name='score']='5.0'");
+    assertQ(req("fl","*,score","q", "{!func}rord(id)", "fq","id:1"),"//float[@name='score']='5.0'");
+    assertQ(req("fl","*,score","q", "{!func}top(rord(id))", "fq","id:1"),"//float[@name='score']='5.0'");
 
 
     // test that we can subtract dates to millisecond precision
@@ -335,7 +355,7 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     }
     assertU(commit());
     assertU(adoc("id","120", "text","batman superman"));   // in a smaller segment
-    assertU(adoc("id","121", "text","superman"));
+    assertU(adoc("id","121", "text","superman junkterm"));
     assertU(commit());
 
     // superman has a higher df (thus lower idf) in one segment, but reversed in the complete index
@@ -369,15 +389,77 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
       // OK
     }
 
-    // test that sorting by function weights correctly.  superman should sort higher than batman due to idf of the whole index
+    // test that sorting by function query weights correctly.  superman should sort higher than batman due to idf of the whole index
 
     assertQ(req("q", "*:*", "fq","id:120 OR id:121", "sort","{!func v=$sortfunc} desc", "sortfunc","query($qq)", "qq","text:(batman OR superman)")
            ,"*//doc[1]/float[.='120.0']"
            ,"*//doc[2]/float[.='121.0']"
     );
+  }
 
+  public void testTFIDFFunctions() {
+    clearIndex();
 
-    purgeFieldCache(FieldCache.DEFAULT);   // avoid FC insanity
+    TFIDFSimilarity similarity = null;
+    {
+      Similarity sim = h.getCore().getLatestSchema().getFieldType("a_tfidf").getSimilarity();
+      assertNotNull("Test needs *_tfidf to use a TFIDFSimilarity ... who broke the config?", sim);
+      assertTrue("Test needs *_tfidf to use a TFIDFSimilarity ... who broke the config: " + sim.getClass(),
+                 sim instanceof TFIDFSimilarity);
+      similarity = (TFIDFSimilarity) sim;
+    }
+     
+    assertU(adoc("id","1", "a_tdt","2009-08-31T12:10:10.123Z", "b_tdt","2009-08-31T12:10:10.124Z"));
+    assertU(adoc("id","2", "a_tfidf","how now brown cow"));
+    assertU(commit()); // create more than one segment
+    assertU(adoc("id","3", "a_tfidf","brown cow"));
+    assertU(adoc("id","4"));
+    assertU(commit()); // create more than one segment
+    assertU(adoc("id","5"));
+    assertU(adoc("id","6", "a_tfidf","cow cow cow cow cow"));
+    assertU(commit());
+
+    // make sure it doesn't get a NPE if no terms are present in a field.
+    assertQ(req("fl","*,score","q", "{!func}idf(nofield_tfidf,cow)", "fq","id:6"),
+            "//float[@name='score']='" + similarity.idf(0,6)  + "'");
+    assertQ(req("fl","*,score","q", "{!func}tf(nofield_tfidf,cow)", "fq","id:6"),
+            "//float[@name='score']='" + similarity.tf(0)  + "'");
+    
+    // fields with real values
+    assertQ(req("fl","*,score","q", "{!func}idf(a_tfidf,cow)", "fq","id:6"),
+            "//float[@name='score']='" + similarity.idf(3,6)  + "'");
+    assertQ(req("fl","*,score","q", "{!func}tf(a_tfidf,cow)", "fq","id:6"),
+            "//float[@name='score']='" + similarity.tf(5)  + "'");
+    
+    FieldInvertState state = new FieldInvertState("a_tfidf");
+    state.setBoost(1.0f);
+    state.setLength(4);
+    long norm = similarity.computeNorm(state);
+    float nrm = similarity.decodeNormValue((byte) norm);
+    assertQ(req("fl","*,score","q", "{!func}norm(a_tfidf)", "fq","id:2"),
+        "//float[@name='score']='" + nrm  + "'");  // sqrt(4)==2 and is exactly representable when quantized to a byte
+    
+  }
+  
+  /**
+   * test collection-level term stats (new in 4.x indexes)
+   */
+  public void testTotalTermFreq() throws Exception {  
+    clearIndex();
+    
+    assertU(adoc("id","1", "a_tdt","2009-08-31T12:10:10.123Z", "b_tdt","2009-08-31T12:10:10.124Z"));
+    assertU(adoc("id","2", "a_t","how now brown cow"));
+    assertU(commit()); // create more than one segment
+    assertU(adoc("id","3", "a_t","brown cow"));
+    assertU(adoc("id","4"));
+    assertU(commit()); // create more than one segment
+    assertU(adoc("id","5"));
+    assertU(adoc("id","6", "a_t","cow cow cow cow cow"));
+    assertU(commit());
+    assertQ(req("fl","*,score","q", "{!func}totaltermfreq('a_t','cow')", "fq","id:6"), "//float[@name='score']='7.0'");    
+    assertQ(req("fl","*,score","q", "{!func}ttf(a_t,'cow')", "fq","id:6"), "//float[@name='score']='7.0'");
+    assertQ(req("fl","*,score","q", "{!func}sumtotaltermfreq('a_t')", "fq","id:6"), "//float[@name='score']='11.0'");
+    assertQ(req("fl","*,score","q", "{!func}sttf(a_t)", "fq","id:6"), "//float[@name='score']='11.0'");
   }
 
   @Test
@@ -494,6 +576,29 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     assertQ(req("fl", "*,score", "q", "{!func}strdist(x_s, 'foit', edit)", "fq", "id:1"), "//float[@name='score']='0.75'");
     assertQ(req("fl", "*,score", "q", "{!func}strdist(x_s, 'foit', jw)", "fq", "id:1"), "//float[@name='score']='0.8833333'");
     assertQ(req("fl", "*,score", "q", "{!func}strdist(x_s, 'foit', ngram, 2)", "fq", "id:1"), "//float[@name='score']='0.875'");
+
+    // strdist on a missing valuesource should itself by missing, so the ValueSourceAugmenter 
+    // should supress it...
+    assertQ(req("q", "id:1",
+                "fl", "good:strdist(x_s, 'toil', edit)", 
+                "fl", "bad1:strdist(missing1_s, missing2_s, edit)", 
+                "fl", "bad2:strdist(missing1_s, 'something', edit)", 
+                "fl", "bad3:strdist(missing1_s, x_s, edit)")
+            , "//float[@name='good']='0.75'"
+            , "count(//float[starts-with(@name,'bad')])=0"
+            );
+
+    // in a query context, there is always a number...
+    //
+    // if a ValueSource is missing, it is maximally distant from every other
+    // value source *except* for another missing value source 
+    // ie: strdist(null,null)==1 but strdist(null,anything)==0
+    assertQ(req("fl","score","fq", "id:1", "q", "{!func}strdist(missing1_s, missing2_s, edit)"), 
+            "//float[@name='score']='1.0'");
+    assertQ(req("fl","score","fq", "id:1", "q", "{!func}strdist(missing1_s, x_s, edit)"), 
+            "//float[@name='score']='0.0'");
+    assertQ(req("fl","score","fq", "id:1", "q", "{!func}strdist(missing1_s, 'const', edit)"), 
+            "//float[@name='score']='0.0'");
   }
 
   public void dofunc(String func, double val) throws Exception {
@@ -542,5 +647,215 @@ public class TestFunctionQuery extends SolrTestCaseJ4 {
     dofunc("atan2(.25,.5)", Math.atan2(.25,.5));
   }
 
+  /**
+   * verify that both the field("...") value source parser as well as 
+   * ExternalFileField work with esoteric field names
+   */
+  @Test
+  public void testExternalFieldValueSourceParser() {
+    clearIndex();
 
-}
+    String field = "CoMpleX fieldName _extf";
+    String fieldAsFunc = "field(\"CoMpleX fieldName _extf\")";
+
+    float[] ids = {100,-4,0,10,25,5,77,23,55,-78,-45,-24,63,78,94,22,34,54321,261,-627};
+
+    createIndex(null,ids);
+
+    // Unsorted field, largest first
+    makeExternalFile(field, "54321=543210\n0=-999\n25=250");
+    // test identity (straight field value)
+    singleTest(fieldAsFunc, "\0", 54321, 543210, 0,-999, 25,250, 100, 1);
+    Object orig = FileFloatSource.onlyForTesting;
+    singleTest(fieldAsFunc, "log(\0)");
+    // make sure the values were cached
+    assertTrue(orig == FileFloatSource.onlyForTesting);
+    singleTest(fieldAsFunc, "sqrt(\0)");
+    assertTrue(orig == FileFloatSource.onlyForTesting);
+
+    makeExternalFile(field, "0=1");
+    assertU(adoc("id", "10000")); // will get same reader if no index change
+    assertU(commit());   
+    singleTest(fieldAsFunc, "sqrt(\0)");
+    assertTrue(orig != FileFloatSource.onlyForTesting);  
+  }
+
+  /**
+   * some platforms don't allow quote characters in filenames, so 
+   * in addition to testExternalFieldValueSourceParser above, test a field 
+   * name with quotes in it that does NOT use ExternalFileField
+   * @see #testExternalFieldValueSourceParser
+   */
+  @Test
+  public void testFieldValueSourceParser() {
+    clearIndex();
+
+    String field = "CoMpleX \" fieldName _f";
+    String fieldAsFunc = "field(\"CoMpleX \\\" fieldName _f\")";
+
+    float[] ids = {100,-4,0,10,25,5,77,1};
+
+    createIndex(field, ids);
+
+    // test identity (straight field value)
+    singleTest(fieldAsFunc, "\0", 
+               100,100,  -4,-4,  0,0,  10,10,  25,25,  5,5,  77,77,  1,1);
+    singleTest(fieldAsFunc, "sqrt(\0)", 
+               100,10,  25,5,  0,0,   1,1);
+    singleTest(fieldAsFunc, "log(\0)",  1,0); 
+  }
+
+    @Test
+  public void testBooleanFunctions() throws Exception {
+    assertU(adoc("id", "1", "text", "hello", "foo_s","A", "foo_ti", "0", "foo_tl","0"));
+    assertU(adoc("id", "2"                              , "foo_ti","10", "foo_tl","11"));
+    assertU(commit());
+
+    // test weighting of functions
+    assertJQ(req("q", "id:1", "fl", "a:testfunc(1)")
+          , "/response/docs/[0]=={'a':1}");
+
+    // true and false functions and constants
+    assertJQ(req("q", "id:1", "fl", "t:true(),f:false(),tt:{!func}true,ff:{!func}false")
+        , "/response/docs/[0]=={'t':true,'f':false,'tt':true,'ff':false}");
+
+    // test that exists(query) depends on the query matching the document
+    assertJQ(req("q", "id:1", "fl", "t:exists(query($q1)),f:exists(query($q2))", "q1","text:hello", "q2","text:there")
+        , "/response/docs/[0]=={'t':true,'f':false}");
+
+    // test if()
+    assertJQ(req("q", "id:1", "fl", "a1:if(true,'A','B')", "fl","b1:if(false,'A',testfunc('B'))")
+        , "/response/docs/[0]=={'a1':'A', 'b1':'B'}");
+
+    // test boolean operators
+    assertJQ(req("q", "id:1", "fl", "t1:and(testfunc(true),true)", "fl","f1:and(true,false)", "fl","f2:and(false,true)", "fl","f3:and(false,false)")
+        , "/response/docs/[0]=={'t1':true, 'f1':false, 'f2':false, 'f3':false}");
+    assertJQ(req("q", "id:1", "fl", "t1:or(testfunc(true),true)", "fl","t2:or(true,false)", "fl","t3:or(false,true)", "fl","f1:or(false,false)")
+        , "/response/docs/[0]=={'t1':true, 't2':true, 't3':true, 'f1':false}");
+    assertJQ(req("q", "id:1", "fl", "f1:xor(testfunc(true),true)", "fl","t1:xor(true,false)", "fl","t2:xor(false,true)", "fl","f2:xor(false,false)")
+        , "/response/docs/[0]=={'t1':true, 't2':true, 'f1':false, 'f2':false}");
+    assertJQ(req("q", "id:1", "fl", "t:not(testfunc(false)),f:not(true)")
+        , "/response/docs/[0]=={'t':true, 'f':false}");
+
+
+    // def(), the default function that returns the first value that exists
+    assertJQ(req("q", "id:1", "fl", "x:def(id,testfunc(123.0)), y:def(foo_f,234.0)")
+        , "/response/docs/[0]=={'x':1.0, 'y':234.0}");
+    assertJQ(req("q", "id:1", "fl", "x:def(foo_s,'Q'), y:def(missing_s,'W')")
+        , "/response/docs/[0]=={'x':'A', 'y':'W'}");
+
+    // test constant conversion to boolean
+    assertJQ(req("q", "id:1", "fl", "a:not(0), b:not(1), c:not(0.0), d:not(1.1), e:not('A')")
+        , "/response/docs/[0]=={'a':true, 'b':false, 'c':true, 'd':false, 'e':false}");
+
+  }
+
+
+  @Test
+  public void testPseudoFieldFunctions() throws Exception {
+    assertU(adoc("id", "1", "text", "hello", "foo_s","A", "yak_i", "32"));
+    assertU(adoc("id", "2"));
+    assertU(commit());
+
+    // if exists() is false, no pseudo-field should be added
+    assertJQ(req("q", "id:1", "fl", "a:1,b:2.0,c:'X',d:{!func}foo_s,e:{!func}bar_s")  
+             , "/response/docs/[0]=={'a':1, 'b':2.0,'c':'X','d':'A'}");
+    assertJQ(req("q", "id:1", "fl", "a:sum(yak_i,bog_i),b:mul(yak_i,bog_i),c:min(yak_i,bog_i)")  
+             , "/response/docs/[0]=={ 'c':32.0 }");
+    assertJQ(req("q", "id:1", "fl", "a:sum(yak_i,def(bog_i,42)), b:max(yak_i,bog_i)")  
+             , "/response/docs/[0]=={ 'a': 74.0, 'b':32.0 }");
+  }
+
+  public void testMissingFieldFunctionBehavior() throws Exception {
+    clearIndex();
+    // add a doc that has no values in any interesting fields
+    assertU(adoc("id", "1"));
+    assertU(commit());
+
+    // it's important that these functions not only use fields that
+    // out doc have no values for, but also that that no other doc ever added
+    // to the index might have ever had a value for, so that the segment
+    // term metadata doesn't exist
+    
+    for (String suffix : new String[] {"s", "b", "dt", "tdt",
+                                       "i", "l", "f", "d", 
+                                       "ti", "tl", "tf", "td"    }) {
+      final String field = "no__vals____" + suffix;
+      assertQ(req("q","id:1",
+                  "fl","noval_if:if("+field+",42,-99)",
+                  "fl","noval_def:def("+field+",-99)",
+                  "fl","noval_not:not("+field+")",
+                  "fl","noval_exists:exists("+field+")"),
+              "//long[@name='noval_if']='-99'",
+              "//long[@name='noval_def']='-99'",
+              "//bool[@name='noval_not']='true'",
+              "//bool[@name='noval_exists']='false'");
+    }
+  }
+
+  @Test
+  public void testNumericComparisons() throws Exception {
+    assertU(adoc("id", "1", "age_i", "35"));
+    assertU(adoc("id", "2", "age_i", "25"));
+    assertU(commit());
+
+    // test weighting of functions
+    assertJQ(req("q", "id:1", "fl", "a:gt(age_i,30),b:lt(age_i,30)")
+        , "/response/docs/[0]=={'a':true,'b':false}");
+
+    assertJQ(req("q", "id:1", "fl", "a:exists(gt(foo_i,30))")
+        , "/response/docs/[0]=={'a':false}");
+
+    singleTest("age_i", "if(gt(age_i,30),5,2)",
+               /*id*/1, /*score*/5,
+               /*id*/2, /*score*/2);
+
+    singleTest("age_i", "if(lt(age_i,30),5,2)",
+               /*id*/1, /*score*/2,
+               /*id*/2, /*score*/5);
+
+    singleTest("age_i", "if(lt(age_i,34.5),5,2)",
+               /*id*/1, /*score*/2,
+               /*id*/2, /*score*/5);
+
+    singleTest("age_i", "if(lte(age_i,35),5,2)",
+               /*id*/1, /*score*/5,
+               /*id*/2, /*score*/5);
+
+    singleTest("age_i", "if(gte(age_i,25),5,2)",
+               /*id*/1, /*score*/5,
+               /*id*/2, /*score*/5);
+
+    singleTest("age_i", "if(lte(age_i,25),5,2)",
+               /*id*/1, /*score*/2,
+               /*id*/2, /*score*/5);
+
+    singleTest("age_i", "if(gte(age_i,35),5,2)",
+               /*id*/1, /*score*/5,
+               /*id*/2, /*score*/2);
+
+
+    singleTest("age_i", "if(eq(age_i,30),5,2)",
+               /*id*/1, /*score*/2,
+               /*id*/2, /*score*/2);
+
+    singleTest("age_i", "if(eq(age_i,35),5,2)",
+               /*id*/1, /*score*/5,
+               /*id*/2, /*score*/2);
+  }
+
+  public void testLongComparisons() {
+    assertU(adoc("id", "1", "number_of_atoms_in_universe_l", Long.toString(Long.MAX_VALUE)));
+    assertU(adoc("id", "2", "number_of_atoms_in_universe_l", Long.toString(Long.MAX_VALUE - 1)));
+    assertU(commit());
+
+    singleTest("number_of_atoms_in_universe_l", "if(gt(number_of_atoms_in_universe_l," + Long.toString(Long.MAX_VALUE - 1) + "),5,2)",
+               /*id*/1, /*score*/5,
+               /*id*/2, /*score*/2);
+
+    singleTest("number_of_atoms_in_universe_l", "if(lt(number_of_atoms_in_universe_l," + Long.toString(Long.MAX_VALUE) + "),5,2)",
+               /*id*/2, /*score*/5,
+               /*id*/1, /*score*/2);
+  }
+
+  }

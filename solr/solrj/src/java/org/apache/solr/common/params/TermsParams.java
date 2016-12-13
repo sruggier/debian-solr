@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
 import java.util.regex.Pattern;
@@ -40,6 +39,18 @@ public interface TermsParams {
   public static final String TERMS_FIELD = TERMS_PREFIX + "fl";
 
   /**
+   * Optional. The list of terms to be retrieved.
+   *
+   */
+  public static final String TERMS_LIST = TERMS_PREFIX + "list";
+
+  /**
+   * Optional. The list of terms to be retrieved.
+   *
+   */
+  public static final String TERMS_STATS = TERMS_PREFIX + "stats";
+
+  /**
    * Optional.  The lower bound term to start at.  The TermEnum will start at the next term after this term in the dictionary.
    *
    * If not specified, the empty string is used
@@ -63,7 +74,7 @@ public interface TermsParams {
   public static final String TERMS_LOWER_INCLUSIVE = TERMS_PREFIX + "lower.incl";
 
   /**
-   * Optional.  The number of results to return.  If not specified, looks for {@link org.apache.solr.common.params.CommonParams#ROWS}.  If that's not specified, uses 10.
+   * Optional.  The number of results to return.  If not specified, looks for {@link org.apache.solr.common.params.CommonParams#ROWS}.  If that's not specified, uses {@link org.apache.solr.common.params.CommonParams#ROWS_DEFAULT}.
    */
   public static final String TERMS_LIMIT = TERMS_PREFIX + "limit";
 

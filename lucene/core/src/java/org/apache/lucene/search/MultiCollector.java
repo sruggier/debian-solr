@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,15 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.Collector;
-import org.apache.lucene.search.Scorer;
+import org.apache.lucene.index.LeafReaderContext;
 
 /**
  * A {@link Collector} which allows running a search with several
@@ -29,7 +30,12 @@ import org.apache.lucene.search.Scorer;
  * list of collectors and wraps them with {@link MultiCollector}, while
  * filtering out the <code>null</code> null ones.
  */
-public class MultiCollector extends Collector {
+public class MultiCollector implements Collector {
+
+  /** See {@link #wrap(Iterable)}. */
+  public static Collector wrap(Collector... collectors) {
+    return wrap(Arrays.asList(collectors));
+  }
 
   /**
    * Wraps a list of {@link Collector}s with a {@link MultiCollector}. This
@@ -47,7 +53,7 @@ public class MultiCollector extends Collector {
    *           if either 0 collectors were input, or all collectors are
    *           <code>null</code>.
    */
-  public static Collector wrap(Collector... collectors) {
+  public static Collector wrap(Iterable<? extends Collector> collectors) {
     // For the user's convenience, we allow null collectors to be passed.
     // However, to improve performance, these null collectors are found
     // and dropped from the array we save for actual collection time.
@@ -70,8 +76,6 @@ public class MultiCollector extends Collector {
         }
       }
       return col;
-    } else if (n == collectors.length) {
-      return new MultiCollector(collectors);
     } else {
       Collector[] colls = new Collector[n];
       n = 0;
@@ -84,41 +88,101 @@ public class MultiCollector extends Collector {
     }
   }
   
+  private final boolean cacheScores;
   private final Collector[] collectors;
 
   private MultiCollector(Collector... collectors) {
     this.collectors = collectors;
-  }
-
-  @Override
-  public boolean acceptsDocsOutOfOrder() {
-    for (Collector c : collectors) {
-      if (!c.acceptsDocsOutOfOrder()) {
-        return false;
+    int numNeedsScores = 0;
+    for (Collector collector : collectors) {
+      if (collector.needsScores()) {
+        numNeedsScores += 1;
       }
     }
-    return true;
+    this.cacheScores = numNeedsScores >= 2;
   }
 
   @Override
-  public void collect(int doc) throws IOException {
-    for (Collector c : collectors) {
-      c.collect(doc);
+  public boolean needsScores() {
+    for (Collector collector : collectors) {
+      if (collector.needsScores()) {
+        return true;
+      }
     }
+    return false;
   }
 
   @Override
-  public void setNextReader(IndexReader reader, int o) throws IOException {
-    for (Collector c : collectors) {
-      c.setNextReader(reader, o);
+  public LeafCollector getLeafCollector(LeafReaderContext context) throws IOException {
+    final List<LeafCollector> leafCollectors = new ArrayList<>();
+    for (Collector collector : collectors) {
+      final LeafCollector leafCollector;
+      try {
+        leafCollector = collector.getLeafCollector(context);
+      } catch (CollectionTerminatedException e) {
+        // this leaf collector does not need this segment
+        continue;
+      }
+      leafCollectors.add(leafCollector);
+    }
+    switch (leafCollectors.size()) {
+      case 0:
+        throw new CollectionTerminatedException();
+      case 1:
+        return leafCollectors.get(0);
+      default:
+        return new MultiLeafCollector(leafCollectors, cacheScores);
     }
   }
 
-  @Override
-  public void setScorer(Scorer s) throws IOException {
-    for (Collector c : collectors) {
-      c.setScorer(s);
+  private static class MultiLeafCollector implements LeafCollector {
+
+    private final boolean cacheScores;
+    private final LeafCollector[] collectors;
+    private int numCollectors;
+
+    private MultiLeafCollector(List<LeafCollector> collectors, boolean cacheScores) {
+      this.collectors = collectors.toArray(new LeafCollector[collectors.size()]);
+      this.cacheScores = cacheScores;
+      this.numCollectors = this.collectors.length;
     }
+
+    @Override
+    public void setScorer(Scorer scorer) throws IOException {
+      if (cacheScores) {
+        scorer = new ScoreCachingWrappingScorer(scorer);
+      }
+      for (int i = 0; i < numCollectors; ++i) {
+        final LeafCollector c = collectors[i];
+        c.setScorer(scorer);
+      }
+    }
+
+    private void removeCollector(int i) {
+      System.arraycopy(collectors, i + 1, collectors, i, numCollectors - i - 1);
+      --numCollectors;
+      collectors[numCollectors] = null;
+    }
+
+    @Override
+    public void collect(int doc) throws IOException {
+      final LeafCollector[] collectors = this.collectors;
+      int numCollectors = this.numCollectors;
+      for (int i = 0; i < numCollectors; ) {
+        final LeafCollector collector = collectors[i];
+        try {
+          collector.collect(doc);
+          ++i;
+        } catch (CollectionTerminatedException e) {
+          removeCollector(i);
+          numCollectors = this.numCollectors;
+          if (numCollectors == 0) {
+            throw new CollectionTerminatedException();
+          }
+        }
+      }
+    }
+
   }
 
 }

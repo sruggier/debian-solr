@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,19 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
 
 import java.io.IOException;
 import java.io.Reader;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
+import org.apache.solr.core.PluginInfo;
 import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.response.SolrQueryResponse;
+
+import static org.apache.solr.common.params.CommonParams.NAME;
 
 public class DumpRequestHandler extends RequestHandlerBase
 {
@@ -35,14 +39,40 @@ public class DumpRequestHandler extends RequestHandlerBase
   {
     // Show params
     rsp.add( "params", req.getParams().toNamedList() );
+    String[] returnParams = req.getParams().getParams("param");
+    if(returnParams !=null) {
+      NamedList params = (NamedList) rsp.getValues().get("params");
+      for (String returnParam : returnParams) {
+        String[] vals = req.getParams().getParams(returnParam);
+        if(vals != null){
+          if (vals.length == 1) {
+            params.add(returnParam, vals[0]);
+          } else {
+            params.add(returnParam, vals);
+          }
+
+        }
+
+      }
+    }
+
+    if(req.getParams().getBool("getdefaults", false)){
+      NamedList def = (NamedList) initArgs.get(PluginInfo.DEFAULTS);
+      rsp.add("getdefaults", def);
+    }
+
+
+    if(req.getParams().getBool("initArgs", false)) {
+      rsp.add("initArgs", initArgs);
+    }
         
     // Write the streams...
     if( req.getContentStreams() != null ) {
-      ArrayList streams = new ArrayList();
+      ArrayList<NamedList<Object>> streams = new ArrayList<>();
       // Cycle through each stream
       for( ContentStream content : req.getContentStreams() ) {
-        NamedList<Object> stream = new SimpleOrderedMap<Object>();
-        stream.add( "name", content.getName() );
+        NamedList<Object> stream = new SimpleOrderedMap<>();
+        stream.add(NAME, content.getName());
         stream.add( "sourceInfo", content.getSourceInfo() );
         stream.add( "size", content.getSize() );
         stream.add( "contentType", content.getContentType() );
@@ -68,17 +98,18 @@ public class DumpRequestHandler extends RequestHandlerBase
   }
 
   @Override
-  public String getVersion() {
-      return "$Revision$";
+  public SolrRequestHandler getSubHandler(String subPath) {
+    if(subpaths !=null && subpaths.contains(subPath)) return this;
+    return null;
   }
+  private List<String> subpaths;
 
   @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
+  public void init(NamedList args) {
+    super.init(args);
+    if(args !=null) {
+      NamedList nl = (NamedList) args.get(PluginInfo.DEFAULTS);
+      if(nl!=null) subpaths = nl.getAll("subpath");
+    }
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,16 +16,12 @@
  */
 package org.apache.solr.analysis;
 
-import java.io.StringReader;
-import java.lang.reflect.Field;
-
-import org.apache.lucene.analysis.standard.StandardTokenizer;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.core.Config;
 import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.schema.FieldType;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.analysis.tr.TurkishAnalyzer;
 import org.apache.lucene.util.Version;
 import org.junit.BeforeClass;
 
@@ -41,41 +37,21 @@ public class TestLuceneMatchVersion extends SolrTestCaseJ4 {
   
   // this must match the solrconfig.xml version for this test
   public static final Version DEFAULT_VERSION =
-    Config.parseLuceneVersionString(System.getProperty("tests.luceneMatchVersion", "LUCENE_CURRENT"));
+    Config.parseLuceneVersionString(System.getProperty("tests.luceneMatchVersion", "LATEST"));
 
   public void testStandardTokenizerVersions() throws Exception {
     assertEquals(DEFAULT_VERSION, solrConfig.luceneMatchVersion);
     
-    final IndexSchema schema = h.getCore().getSchema();
+    final IndexSchema schema = h.getCore().getLatestSchema();
     
     FieldType type = schema.getFieldType("textDefault");
-    TokenizerChain ana = (TokenizerChain) type.getAnalyzer();
-    assertEquals(DEFAULT_VERSION, ((BaseTokenizerFactory) ana.getTokenizerFactory()).luceneMatchVersion);
-    assertEquals(DEFAULT_VERSION, ((BaseTokenFilterFactory) ana.getTokenFilterFactories()[2]).luceneMatchVersion);
-    TokenizerChain.TokenStreamInfo tsi = ana.getStream("textDefault",new StringReader(""));
-    StandardTokenizer tok = (StandardTokenizer) tsi.getTokenizer();
-    assertTrue(tok.isReplaceInvalidAcronym());
-    
-    type = schema.getFieldType("text20");
-    ana = (TokenizerChain) type.getAnalyzer();
-    assertEquals(Version.LUCENE_20, ((BaseTokenizerFactory) ana.getTokenizerFactory()).luceneMatchVersion);
-    assertEquals(Version.LUCENE_24, ((BaseTokenFilterFactory) ana.getTokenFilterFactories()[2]).luceneMatchVersion);
-    tsi = ana.getStream("text20",new StringReader(""));
-    tok = (StandardTokenizer) tsi.getTokenizer();
-    assertFalse(tok.isReplaceInvalidAcronym());
+    TokenizerChain ana = (TokenizerChain) type.getIndexAnalyzer();
+    assertEquals(DEFAULT_VERSION, (ana.getTokenizerFactory()).getLuceneMatchVersion());
+    assertEquals(DEFAULT_VERSION, (ana.getTokenFilterFactories()[2]).getLuceneMatchVersion());
 
-    // this is a hack to get the private matchVersion field in StandardAnalyzer's superclass, may break in later lucene versions - we have no getter :(
-    final Field matchVersionField = StandardAnalyzer.class.getSuperclass().getDeclaredField("matchVersion");
-    matchVersionField.setAccessible(true);
-
-    type = schema.getFieldType("textStandardAnalyzerDefault");
-    Analyzer ana1 = type.getAnalyzer();
-    assertTrue(ana1 instanceof StandardAnalyzer);
-    assertEquals(DEFAULT_VERSION, matchVersionField.get(ana1));
-
-    type = schema.getFieldType("textStandardAnalyzer20");
-    ana1 = type.getAnalyzer();
-    assertTrue(ana1 instanceof StandardAnalyzer);
-    assertEquals(Version.LUCENE_20, matchVersionField.get(ana1));
+    type = schema.getFieldType("textTurkishAnalyzerDefault");
+    Analyzer ana1 = type.getIndexAnalyzer();
+    assertTrue(ana1 instanceof TurkishAnalyzer);
+    assertEquals(DEFAULT_VERSION, ana1.getVersion());
   }
 }

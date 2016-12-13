@@ -1,6 +1,4 @@
-package org.apache.solr.core;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,27 +14,79 @@ package org.apache.solr.core;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.core;
 
 import java.io.File;
 import java.io.IOException;
 
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockFactory;
 import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.store.NRTCachingDirectory;
+import org.apache.lucene.store.NoLockFactory;
+import org.apache.lucene.store.TrackingDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
 
 /**
- * Opens a directory with {@link LuceneTestCase#newFSDirectory(File)}
+ * Opens a directory with {@link LuceneTestCase#newDirectory()}
  */
-public class MockDirectoryFactory extends DirectoryFactory {
+public class MockDirectoryFactory extends EphemeralDirectoryFactory {
+  
+  public static final String SOLR_TESTS_ALLOW_READING_FILES_STILL_OPEN_FOR_WRITE = "solr.tests.allow_reading_files_still_open_for_write";
+  private boolean allowReadingFilesStillOpenForWrite = Boolean.getBoolean(SOLR_TESTS_ALLOW_READING_FILES_STILL_OPEN_FOR_WRITE);
 
   @Override
-  public Directory open(String path) throws IOException {
-    MockDirectoryWrapper dir = LuceneTestCase.newFSDirectory(new File(path));
-    // Somehow removing unref'd files in Solr tests causes
-    // problems... there's some interaction w/
-    // CachingDirectoryFactory.  Once we track down where Solr
-    // isn't closing an IW, we can re-enable this:
-    dir.setAssertNoUnrefencedFilesOnClose(false);
+  protected LockFactory createLockFactory(String rawLockType) throws IOException {
+    return NoLockFactory.INSTANCE; // dummy, actually unused
+  }
+
+  @Override
+  protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) throws IOException {
+    Directory dir = LuceneTestCase.newDirectory(); // we ignore the given lock factory
+    
+    Directory cdir = reduce(dir);
+    cdir = reduce(cdir);
+    cdir = reduce(cdir);
+    
+    if (cdir instanceof MockDirectoryWrapper) {
+      MockDirectoryWrapper mockDirWrapper = (MockDirectoryWrapper) cdir;
+      
+      // we can't currently do this check because of how
+      // Solr has to reboot a new Directory sometimes when replicating
+      // or rolling back - the old directory is closed and the following
+      // test assumes it can open an IndexWriter when that happens - we
+      // have a new Directory for the same dir and still an open IW at 
+      // this point
+      mockDirWrapper.setAssertNoUnrefencedFilesOnClose(false);
+      
+      // ram dirs in cores that are restarted end up empty
+      // and check index fails
+      mockDirWrapper.setCheckIndexOnClose(false);
+      
+      if (allowReadingFilesStillOpenForWrite) {
+        mockDirWrapper.setAllowReadingFilesStillOpenForWrite(true);
+      }
+    }
+    
     return dir;
   }
+
+  private Directory reduce(Directory dir) {
+    Directory cdir = dir;
+    if (dir instanceof NRTCachingDirectory) {
+      cdir = ((NRTCachingDirectory)dir).getDelegate();
+    }
+    if (cdir instanceof TrackingDirectoryWrapper) {
+      cdir = ((TrackingDirectoryWrapper)dir).getDelegate();
+    }
+    return cdir;
+  }
+  
+  @Override
+  public boolean isAbsolute(String path) {
+    // TODO: kind of a hack - we don't know what the delegate is, so
+    // we treat it as file based since this works on most ephem impls
+    return new File(path).isAbsolute();
+  }
+
 }

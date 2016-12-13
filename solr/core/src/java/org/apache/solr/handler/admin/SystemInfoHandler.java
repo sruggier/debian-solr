@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,27 +14,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.admin;
 
-import java.io.BufferedReader;
-import java.io.DataInputStream;
+import java.beans.BeanInfo;
+import java.beans.IntrospectionException;
+import java.beans.Introspector;
+import java.beans.PropertyDescriptor;
 import java.io.File;
-import java.io.StringWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.lang.invoke.MethodHandles;
 import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
+import java.lang.management.PlatformManagedObject;
 import java.lang.management.RuntimeMXBean;
-import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.nio.charset.Charset;
 import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.lucene.LucenePackage;
+import org.apache.lucene.util.Constants;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
-import org.apache.solr.common.util.XML;
+import org.apache.solr.core.CoreContainer;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.request.SolrQueryRequest;
@@ -43,56 +53,109 @@ import org.apache.solr.schema.IndexSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.apache.solr.common.params.CommonParams.NAME;
+
 
 /**
  * This handler returns system info
  * 
- * NOTE: the response format is still likely to change.  It should be designed so
- * that it works nicely with an XSLT transformation.  Until we have a nice
- * XSLT front end for /admin, the format is still open to change.
- * 
- * @version $Id$
  * @since solr 1.2
  */
 public class SystemInfoHandler extends RequestHandlerBase 
 {
-  private static Logger log = LoggerFactory.getLogger(SystemInfoHandler.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   
+
+  // on some platforms, resolving canonical hostname can cause the thread
+  // to block for several seconds if nameservices aren't available
+  // so resolve this once per handler instance 
+  //(ie: not static, so core reload will refresh)
+  private String hostname = null;
+
+  private CoreContainer cc;
+
+  public SystemInfoHandler() {
+    super();
+    init();
+  }
+
+  public SystemInfoHandler(CoreContainer cc) {
+    super();
+    this.cc = cc;
+    init();
+  }
+  
+  private void init() {
+    try {
+      InetAddress addr = InetAddress.getLocalHost();
+      hostname = addr.getCanonicalHostName();
+    } catch (UnknownHostException e) {
+      //default to null
+    }
+  }
+
   @Override
   public void handleRequestBody(SolrQueryRequest req, SolrQueryResponse rsp) throws Exception
   {
-    rsp.add( "core", getCoreInfo( req.getCore() ) );
+    SolrCore core = req.getCore();
+    if (core != null) rsp.add( "core", getCoreInfo( core, req.getSchema() ) );
+    boolean solrCloudMode =  getCoreContainer(req, core).isZooKeeperAware();
+    rsp.add( "mode", solrCloudMode ? "solrcloud" : "std");
+    if (solrCloudMode) {
+      rsp.add("zkHost", getCoreContainer(req, core).getZkController().getZkServerAddress());
+    }
+    if (cc != null)
+      rsp.add( "solr_home", cc.getSolrHome());
     rsp.add( "lucene", getLuceneInfo() );
     rsp.add( "jvm", getJvmInfo() );
     rsp.add( "system", getSystemInfo() );
     rsp.setHttpCaching(false);
   }
+
+  private CoreContainer getCoreContainer(SolrQueryRequest req, SolrCore core) {
+    CoreContainer coreContainer;
+    if (core != null) {
+       coreContainer = req.getCore().getCoreDescriptor().getCoreContainer();
+    } else {
+      coreContainer = cc;
+    }
+    return coreContainer;
+  }
   
   /**
    * Get system info
    */
-  private static SimpleOrderedMap<Object> getCoreInfo( SolrCore core ) throws Exception 
-  {
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
+  private SimpleOrderedMap<Object> getCoreInfo( SolrCore core, IndexSchema schema ) {
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
     
-    IndexSchema schema = core.getSchema();
     info.add( "schema", schema != null ? schema.getSchemaName():"no schema!" );
     
     // Host
-    InetAddress addr = InetAddress.getLocalHost();
-    info.add( "host", addr.getCanonicalHostName() );
+    info.add( "host", hostname );
 
     // Now
     info.add( "now", new Date() );
     
     // Start Time
-    info.add( "start", new Date(core.getStartTime()) );
+    info.add( "start", core.getStartTimeStamp() );
 
     // Solr Home
-    SimpleOrderedMap<Object> dirs = new SimpleOrderedMap<Object>();
-    dirs.add( "instance", new File( core.getResourceLoader().getInstanceDir() ).getAbsolutePath() );
-    dirs.add( "data", new File( core.getDataDir() ).getAbsolutePath() );
-    dirs.add( "index", new File( core.getIndexDir() ).getAbsolutePath() );
+    SimpleOrderedMap<Object> dirs = new SimpleOrderedMap<>();
+    dirs.add( "cwd" , new File( System.getProperty("user.dir")).getAbsolutePath() );
+    dirs.add("instance", core.getResourceLoader().getInstancePath().toString());
+    try {
+      dirs.add( "data", core.getDirectoryFactory().normalize(core.getDataDir()));
+    } catch (IOException e) {
+      log.warn("Problem getting the normalized data directory path", e);
+      dirs.add( "data", "N/A" );
+    }
+    dirs.add( "dirimpl", core.getDirectoryFactory().getClass().getName());
+    try {
+      dirs.add( "index", core.getDirectoryFactory().normalize(core.getIndexDir()) );
+    } catch (IOException e) {
+      log.warn("Problem getting the normalized index directory path", e);
+      dirs.add( "index", "N/A" );
+    }
     info.add( "directory", dirs );
     return info;
   }
@@ -100,65 +163,72 @@ public class SystemInfoHandler extends RequestHandlerBase
   /**
    * Get system info
    */
-  public static SimpleOrderedMap<Object> getSystemInfo() throws Exception 
-  {
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
+  public static SimpleOrderedMap<Object> getSystemInfo() {
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
     
     OperatingSystemMXBean os = ManagementFactory.getOperatingSystemMXBean();
-    info.add( "name", os.getName() );
-    info.add( "version", os.getVersion() );
-    info.add( "arch", os.getArch() );
+    info.add(NAME, os.getName()); // add at least this one
+    try {
+      // add remaining ones dynamically using Java Beans API
+      addMXBeanProperties(os, OperatingSystemMXBean.class, info);
+    } catch (IntrospectionException | ReflectiveOperationException e) {
+      log.warn("Unable to fetch properties of OperatingSystemMXBean.", e);
+    }
 
-    // Java 1.6
-    addGetterIfAvaliable( os, "systemLoadAverage", info );
+    // There are some additional beans we want to add (not available on all JVMs):
+    for (String clazz : Arrays.asList(
+        "com.sun.management.OperatingSystemMXBean",
+        "com.sun.management.UnixOperatingSystemMXBean", 
+        "com.ibm.lang.management.OperatingSystemMXBean"
+    )) {
+      try {
+        final Class<? extends PlatformManagedObject> intf = Class.forName(clazz)
+            .asSubclass(PlatformManagedObject.class);
+        addMXBeanProperties(os, intf, info);
+      } catch (ClassNotFoundException e) {
+        // ignore
+      } catch (IntrospectionException | ReflectiveOperationException e) {
+        log.warn("Unable to fetch properties of JVM-specific OperatingSystemMXBean.", e);
+      }
+    }
 
-   // com.sun.management.OperatingSystemMXBean
-    addGetterIfAvaliable( os, "committedVirtualMemorySize", info);
-    addGetterIfAvaliable( os, "freePhysicalMemorySize", info);
-    addGetterIfAvaliable( os, "freeSwapSpaceSize", info);
-    addGetterIfAvaliable( os, "processCpuTime", info);
-    addGetterIfAvaliable( os, "totalPhysicalMemorySize", info);
-    addGetterIfAvaliable( os, "totalSwapSpaceSize", info);
-
-    // com.sun.management.UnixOperatingSystemMXBean
-    addGetterIfAvaliable( os, "openFileDescriptorCount", info );
-    addGetterIfAvaliable( os, "maxFileDescriptorCount", info );
-
+    // Try some command line things:
     try { 
-      if( !os.getName().toLowerCase(Locale.ENGLISH).startsWith( "windows" ) ) {
-        // Try some command line things
+      if (!Constants.WINDOWS) {
         info.add( "uname",  execute( "uname -a" ) );
         info.add( "uptime", execute( "uptime" ) );
       }
-    }
-    catch( Throwable ex ) {
-      ex.printStackTrace();
+    } catch( Exception ex ) {
+      log.warn("Unable to execute command line tools to get operating system properties.", ex);
     } 
     return info;
   }
   
   /**
-   * Try to run a getter function.  This is useful because java 1.6 has a few extra
-   * useful functions on the <code>OperatingSystemMXBean</code>
-   * 
-   * If you are running a sun jvm, there are nice functions in:
-   * UnixOperatingSystemMXBean and com.sun.management.OperatingSystemMXBean
-   * 
-   * it is package protected so it can be tested...
+   * Add all bean properties of a {@link PlatformManagedObject} to the given {@link NamedList}.
+   * <p>
+   * If you are running a OpenJDK/Oracle JVM, there are nice properties in:
+   * {@code com.sun.management.UnixOperatingSystemMXBean} and
+   * {@code com.sun.management.OperatingSystemMXBean}
    */
-  static void addGetterIfAvaliable( Object obj, String getter, NamedList<Object> info )
-  {
-    // This is a 1.6 function, so lets do a little magic to *try* to make it work
-    try {
-      String n = Character.toUpperCase( getter.charAt(0) ) + getter.substring( 1 );
-      Method m = obj.getClass().getMethod( "get" + n );
-      m.setAccessible(true);
-      Object v = m.invoke( obj, (Object[])null );
-      if( v != null ) {
-        info.add( getter, v );
+  static <T extends PlatformManagedObject> void addMXBeanProperties(T obj, Class<? extends T> intf, NamedList<Object> info)
+      throws IntrospectionException, ReflectiveOperationException {
+    if (intf.isInstance(obj)) {
+      final BeanInfo beanInfo = Introspector.getBeanInfo(intf, intf.getSuperclass(), Introspector.IGNORE_ALL_BEANINFO);
+      for (final PropertyDescriptor desc : beanInfo.getPropertyDescriptors()) {
+        final String name = desc.getName();
+        if (info.get(name) == null) {
+          try {
+            final Object v = desc.getReadMethod().invoke(obj);
+            if(v != null) {
+              info.add(name, v);
+            }
+          } catch (InvocationTargetException ite) {
+            // ignore (some properties throw UOE)
+          }
+        }
       }
     }
-    catch( Exception ex ) {} // don't worry, this only works for 1.6
   }
   
   
@@ -167,20 +237,24 @@ public class SystemInfoHandler extends RequestHandlerBase
    */
   private static String execute( String cmd )
   {
-    DataInputStream in = null;
+    InputStream in = null;
     Process process = null;
     
     try {
       process = Runtime.getRuntime().exec(cmd);
-      in = new DataInputStream( process.getInputStream() );
+      in = process.getInputStream();
       // use default charset from locale here, because the command invoked also uses the default locale:
-      return IOUtils.toString(in);
-    }
-    catch( Exception ex ) {
+      return IOUtils.toString(new InputStreamReader(in, Charset.defaultCharset()));
+    } catch( Exception ex ) {
       // ignore - log.warn("Error executing command", ex);
       return "(error executing: " + cmd + ")";
-    }
-    finally {
+    } catch (Error err) {
+      if (err.getMessage() != null && (err.getMessage().contains("posix_spawn") || err.getMessage().contains("UNIXProcess"))) {
+        log.warn("Error forking command due to JVM locale bug (see https://issues.apache.org/jira/browse/SOLR-6387): " + err.getMessage());
+        return "(error executing: " + cmd + ")";
+      }
+      throw err;
+    } finally {
       if (process != null) {
         IOUtils.closeQuietly( process.getOutputStream() );
         IOUtils.closeQuietly( process.getInputStream() );
@@ -194,40 +268,81 @@ public class SystemInfoHandler extends RequestHandlerBase
    */
   public static SimpleOrderedMap<Object> getJvmInfo()
   {
-    SimpleOrderedMap<Object> jvm = new SimpleOrderedMap<Object>();
-    jvm.add( "version", System.getProperty("java.vm.version") );
-    jvm.add( "name", System.getProperty("java.vm.name") );
+    SimpleOrderedMap<Object> jvm = new SimpleOrderedMap<>();
+
+    final String javaVersion = System.getProperty("java.specification.version", "unknown"); 
+    final String javaVendor = System.getProperty("java.specification.vendor", "unknown"); 
+    final String javaName = System.getProperty("java.specification.name", "unknown"); 
+    final String jreVersion = System.getProperty("java.version", "unknown");
+    final String jreVendor = System.getProperty("java.vendor", "unknown");
+    final String vmVersion = System.getProperty("java.vm.version", "unknown"); 
+    final String vmVendor = System.getProperty("java.vm.vendor", "unknown"); 
+    final String vmName = System.getProperty("java.vm.name", "unknown"); 
+
+    // Summary Info
+    jvm.add( "version", jreVersion + " " + vmVersion);
+    jvm.add(NAME, jreVendor + " " + vmName);
+    
+    // details
+    SimpleOrderedMap<Object> java = new SimpleOrderedMap<>();
+    java.add( "vendor", javaVendor );
+    java.add(NAME, javaName);
+    java.add( "version", javaVersion );
+    jvm.add( "spec", java );
+    SimpleOrderedMap<Object> jre = new SimpleOrderedMap<>();
+    jre.add( "vendor", jreVendor );
+    jre.add( "version", jreVersion );
+    jvm.add( "jre", jre );
+    SimpleOrderedMap<Object> vm = new SimpleOrderedMap<>();
+    vm.add( "vendor", vmVendor );
+    vm.add(NAME, vmName);
+    vm.add( "version", vmVersion );
+    jvm.add( "vm", vm );
+           
     
     Runtime runtime = Runtime.getRuntime();
     jvm.add( "processors", runtime.availableProcessors() );
     
-    long used = runtime.totalMemory() - runtime.freeMemory();
     // not thread safe, but could be thread local
-    DecimalFormat df = new DecimalFormat("#.#");
-    double percentUsed = ((double)(used)/(double)runtime.maxMemory())*100;
+    DecimalFormat df = new DecimalFormat("#.#", DecimalFormatSymbols.getInstance(Locale.ROOT));
 
-    SimpleOrderedMap<Object> mem = new SimpleOrderedMap<Object>();
-    mem.add("free", humanReadableUnits(runtime.freeMemory(), df));
-    mem.add("total", humanReadableUnits(runtime.totalMemory(), df));
-    mem.add("max", humanReadableUnits(runtime.maxMemory(), df));
-    mem.add("used", humanReadableUnits(used, df) + " (%" + df.format(percentUsed) + ")");
+    SimpleOrderedMap<Object> mem = new SimpleOrderedMap<>();
+    SimpleOrderedMap<Object> raw = new SimpleOrderedMap<>();
+    long free = runtime.freeMemory();
+    long max = runtime.maxMemory();
+    long total = runtime.totalMemory();
+    long used = total - free;
+    double percentUsed = ((double)(used)/(double)max)*100;
+    raw.add("free",  free );
+    mem.add("free",  humanReadableUnits(free, df));
+    raw.add("total", total );
+    mem.add("total", humanReadableUnits(total, df));
+    raw.add("max",   max );
+    mem.add("max",   humanReadableUnits(max, df));
+    raw.add("used",  used );
+    mem.add("used",  humanReadableUnits(used, df) + 
+            " (%" + df.format(percentUsed) + ")");
+    raw.add("used%", percentUsed);
+
+    mem.add("raw", raw);
     jvm.add("memory", mem);
 
     // JMX properties -- probably should be moved to a different handler
-    SimpleOrderedMap<Object> jmx = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> jmx = new SimpleOrderedMap<>();
     try{
       RuntimeMXBean mx = ManagementFactory.getRuntimeMXBean();
-      jmx.add( "bootclasspath", mx.getBootClassPath());
+      if (mx.isBootClassPathSupported()) {
+        jmx.add( "bootclasspath", mx.getBootClassPath());
+      }
       jmx.add( "classpath", mx.getClassPath() );
 
       // the input arguments passed to the Java virtual machine
       // which does not include the arguments to the main method.
       jmx.add( "commandLineArgs", mx.getInputArguments());
-      // a map of names and values of all system properties.
-      //jmx.add( "SYSTEM PROPERTIES", mx.getSystemProperties());
 
       jmx.add( "startTime", new Date(mx.getStartTime()));
       jmx.add( "upTimeMS",  mx.getUptime() );
+
     }
     catch (Exception e) {
       log.warn("Error getting JMX properties", e);
@@ -236,49 +351,19 @@ public class SystemInfoHandler extends RequestHandlerBase
     return jvm;
   }
   
-  private static SimpleOrderedMap<Object> getLuceneInfo() throws Exception 
-  {
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
-    
-    String solrImplVersion = "";
-    String solrSpecVersion = "";
-    String luceneImplVersion = "";
-    String luceneSpecVersion = "";
+  private static SimpleOrderedMap<Object> getLuceneInfo() {
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
 
-    // ---
     Package p = SolrCore.class.getPackage();
-    StringWriter tmp = new StringWriter();
-    solrImplVersion = p.getImplementationVersion();
-    if (null != solrImplVersion) {
-      XML.escapeCharData(solrImplVersion, tmp);
-      solrImplVersion = tmp.toString();
-    }
-    tmp = new StringWriter();
-    solrSpecVersion = p.getSpecificationVersion() ;
-    if (null != solrSpecVersion) {
-      XML.escapeCharData(solrSpecVersion, tmp);
-      solrSpecVersion = tmp.toString();
-    }
+
+    info.add( "solr-spec-version", p.getSpecificationVersion() );
+    info.add( "solr-impl-version", p.getImplementationVersion() );
   
     p = LucenePackage.class.getPackage();
-    tmp = new StringWriter();
-    luceneImplVersion = p.getImplementationVersion();
-    if (null != luceneImplVersion) {
-      XML.escapeCharData(luceneImplVersion, tmp);
-      luceneImplVersion = tmp.toString();
-    }
-    tmp = new StringWriter();
-    luceneSpecVersion = p.getSpecificationVersion() ;
-    if (null != luceneSpecVersion) {
-      XML.escapeCharData(luceneSpecVersion, tmp);
-      luceneSpecVersion = tmp.toString();
-    }
-    
-    // Add it to the list
-    info.add( "solr-spec-version",   solrSpecVersion   );
-    info.add( "solr-impl-version",   solrImplVersion   );
-    info.add( "lucene-spec-version", luceneSpecVersion );
-    info.add( "lucene-impl-version", luceneImplVersion );
+
+    info.add( "lucene-spec-version", p.getSpecificationVersion() );
+    info.add( "lucene-impl-version", p.getImplementationVersion() );
+
     return info;
   }
   
@@ -287,21 +372,6 @@ public class SystemInfoHandler extends RequestHandlerBase
   @Override
   public String getDescription() {
     return "Get System Info";
-  }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
   
   private static final long ONE_KB = 1024;

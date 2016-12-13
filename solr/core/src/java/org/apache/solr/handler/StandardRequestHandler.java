@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
 
 import org.apache.solr.handler.component.*;
@@ -23,13 +22,12 @@ import java.net.MalformedURLException;
 import java.net.URL;
 
 /**
- * @version $Id$
+ *
  *
  * All of the following options may be configured for this handler
- * in the solrconfig as defaults, and may be overriden as request parameters.
+ * in the solrconfig as defaults, and may be overridden as request parameters.
  * (TODO: complete documentation of request parameters here, rather than only
  * on the wiki).
- * </p>
  *
  * <ul>
  * <li> highlight - Set to any value not .equal() to "false" to enable highlight
@@ -46,23 +44,8 @@ public class StandardRequestHandler extends SearchHandler
   //////////////////////// SolrInfoMBeans methods //////////////////////
 
   @Override
-  public String getVersion() {
-    return "$Revision$";
-  }
-
-  @Override
   public String getDescription() {
     return "The standard Solr request handler";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
 
   @Override

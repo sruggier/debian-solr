@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,20 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.response;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.solr.common.luke.FieldFlag;
 import org.apache.solr.common.util.NamedList;
-
-import java.io.Serializable;
-import java.util.*;
 
 
 /**
  * This is an incomplete representation of the data returned from Luke
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class LukeResponse extends SolrResponseBase {
@@ -91,7 +95,7 @@ public class LukeResponse extends SolrResponseBase {
         String key = entry.getKey();
         if ("fields".equals(key) && entry.getValue() != null) {
           List<String> theFields = (List<String>) entry.getValue();
-          fields = new ArrayList<String>(theFields);
+          fields = new ArrayList<>(theFields);
         } else if ("tokenized".equals(key) == true) {
           tokenized = Boolean.parseBoolean(entry.getValue().toString());
         } else if ("analyzer".equals(key) == true) {
@@ -179,6 +183,10 @@ public class LukeResponse extends SolrResponseBase {
       return schema;
     }
 
+    public EnumSet<FieldFlag> getSchemaFlags() {
+      return flags;
+    }
+
     public NamedList<Integer> getTopTerms() {
       return topTerms;
     }
@@ -202,7 +210,7 @@ public class LukeResponse extends SolrResponseBase {
       flds = (NamedList<Object>) schema.get("fields");
     }
     if (flds != null) {
-      fieldInfo = new HashMap<String, FieldInfo>();
+      fieldInfo = new HashMap<>();
       for (Map.Entry<String, Object> field : flds) {
         FieldInfo f = new FieldInfo(field.getKey());
         f.read((NamedList<Object>) field.getValue());
@@ -213,7 +221,7 @@ public class LukeResponse extends SolrResponseBase {
     if( schema != null ) {
       NamedList<Object> fldTypes = (NamedList<Object>) schema.get("types");
       if (fldTypes != null) {
-        fieldTypeInfo = new HashMap<String, FieldTypeInfo>();
+        fieldTypeInfo = new HashMap<>();
         for (Map.Entry<String, Object> fieldType : fldTypes) {
           FieldTypeInfo ft = new FieldTypeInfo(fieldType.getKey());
           ft.read((NamedList<Object>) fieldType.getValue());

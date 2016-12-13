@@ -1,6 +1,4 @@
-package org.apache.solr.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,14 +14,14 @@ package org.apache.solr.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.analysis;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Arrays;
-import java.util.List;
+import java.nio.charset.StandardCharsets;
 
-import org.apache.solr.common.ResourceLoader;
+import org.apache.lucene.analysis.util.ResourceLoader;
 
 class StringMockSolrResourceLoader implements ResourceLoader {
   String text;
@@ -32,15 +30,27 @@ class StringMockSolrResourceLoader implements ResourceLoader {
     this.text = text;
   }
 
-  public List<String> getLines(String resource) throws IOException {
-    return Arrays.asList(text.split("\n"));
+  @Override
+  public <T> Class<? extends T> findClass(String cname, Class<T> expectedType) {
+    try {
+      return Class.forName(cname).asSubclass(expectedType);
+    } catch (Exception e) {
+      throw new RuntimeException("Cannot load class: " + cname, e);
+    }
   }
 
-  public Object newInstance(String cname, String... subpackages) {
-    return null;
+  @Override
+  public <T> T newInstance(String cname, Class<T> expectedType) {
+    Class<? extends T> clazz = findClass(cname, expectedType);
+    try {
+      return clazz.newInstance();
+    } catch (Exception e) {
+      throw new RuntimeException("Cannot create instance: " + cname, e);
+    }
   }
 
+  @Override
   public InputStream openResource(String resource) throws IOException {
-    return new ByteArrayInputStream(text.getBytes("UTF-8"));
+    return new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8));
   }
 }

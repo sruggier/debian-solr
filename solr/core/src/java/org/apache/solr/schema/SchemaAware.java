@@ -1,5 +1,4 @@
-package org.apache.solr.schema;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,8 +14,7 @@ package org.apache.solr.schema;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
+package org.apache.solr.schema;
 /**
 * An interface that can be extended to provide a callback mechanism for
 * informing an {@link IndexSchema} instance of changes to it, dynamically

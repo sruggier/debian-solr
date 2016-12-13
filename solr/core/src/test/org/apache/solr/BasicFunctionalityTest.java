@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,24 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr;
-
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.StringWriter;
-import java.util.HashMap;
-import java.util.Map;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 
+import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.document.Fieldable;
-import org.apache.lucene.index.LogMergePolicy;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.Query;
-
+import org.apache.lucene.document.LazyDocument;
+import org.apache.lucene.index.IndexableField;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.MapSolrParams;
@@ -42,16 +41,14 @@ import org.apache.solr.handler.RequestHandlerBase;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.request.SolrRequestHandler;
+import org.apache.solr.response.ResultContext;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.response.XMLWriter;
 import org.apache.solr.schema.IndexSchema;
+import org.apache.solr.schema.IndexSchemaFactory;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.search.DocIterator;
 import org.apache.solr.search.DocList;
-import org.apache.solr.search.QueryParsing;
-import org.apache.solr.update.SolrIndexWriter;
-
-
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -70,7 +67,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
   }
   // tests the performance of dynamic field creation and
   // field property testing.
-  /***
+  /*
   public void testFieldPerf() {
     IndexSchema schema = h.getCore().getSchema();
     SchemaField[] fields = schema.getDynamicFieldPrototypes();
@@ -101,7 +98,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
   
   @Test
   public void testIgnoredFields() throws Exception {
-    lrf.args.put("version","2.0");
+    lrf.args.put(CommonParams.VERSION,"2.2");
     assertU("adding doc with ignored field",
             adoc("id", "42", "foo_ignored", "blah blah"));
     assertU("commit",
@@ -117,14 +114,19 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
   
   @Test
   public void testSomeStuff() throws Exception {
-    // test merge factor picked up
+    clearIndex();
+
     SolrCore core = h.getCore();
 
-    SolrIndexWriter writer = new SolrIndexWriter("testWriter",core.getNewIndexDir(), core.getDirectoryFactory(), false, core.getSchema(), core.getSolrConfig().indexConfig, core.getDeletionPolicy());
-    assertEquals("Mergefactor was not picked up", ((LogMergePolicy) writer.getConfig().getMergePolicy()).getMergeFactor(), 8);
-    writer.close();
+    // test that we got the expected config, not just hardcoded defaults
+    assertNotNull(core.getRequestHandler("mock"));
 
-    lrf.args.put("version","2.0");
+    // test stats call
+    NamedList stats = core.getStatistics();
+    assertEquals("collection1", stats.get("coreName"));
+    assertTrue(stats.get("refCount") != null);
+    
+    lrf.args.put(CommonParams.VERSION,"2.2");
     assertQ("test query on empty index",
             req("qlkciyopsbgzyvkylsjhchghjrdf")
             ,"//result[@numFound='0']"
@@ -161,7 +163,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
             ,"//*[@numFound='0']"
             );
 
-    // test allowDups default of false
+    // test overwrite default of true
 
     assertU(adoc("id", "42", "val_s", "AAA"));
     assertU(adoc("id", "42", "val_s", "BBB"));
@@ -180,12 +182,12 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
 
     // test deletes
     String [] adds = new String[] {
-      add( doc("id","101"), "allowDups", "false" ),
-      add( doc("id","101"), "allowDups", "false" ),
-      add( doc("id","105"), "allowDups", "true"  ),
-      add( doc("id","102"), "allowDups", "false" ),
-      add( doc("id","103"), "allowDups", "true"  ),
-      add( doc("id","101"), "allowDups", "false" ),
+      add( doc("id","101"), "overwrite", "true" ),
+      add( doc("id","101"), "overwrite", "true" ),
+      add( doc("id","105"), "overwrite", "false"  ),
+      add( doc("id","102"), "overwrite", "true" ),
+      add( doc("id","103"), "overwrite", "false"  ),
+      add( doc("id","101"), "overwrite", "true" ),
     };
     for (String a : adds) {
       assertU(a, a);
@@ -220,6 +222,103 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
     assertQ(req("id:[100 TO 110]")
             ,"//*[@numFound='0']"
             );
+    
+    assertU(h.simpleTag("rollback"));
+    assertU(commit());
+  }
+
+
+  /**
+   * verify that delete by query works with the QParser framework and
+   * pure negative queries
+   */
+  public void testNonTrivialDeleteByQuery() throws Exception {
+    clearIndex();
+    
+    // setup
+    assertU( add(doc("id","101", "text", "red apple" )) );
+    assertU( add(doc("id","102", "text", "purple grape" )) );
+    assertU( add(doc("id","103", "text", "green grape" )) );
+    assertU( add(doc("id","104", "text", "green pear" )) );
+    assertU( add(doc("id","105", "text", "yellow banana" )) );
+    assertU( add(doc("id","106", "text", "red cherry" )) );
+
+    // sanity checks
+    assertU(commit());
+    assertQ(req("id:[100 TO 110]")
+            ,"//*[@numFound='6']"
+            );
+    assertQ(req("*:*")
+            ,"//*[@numFound='6']"
+            );
+    assertQ(req("text:red")
+            ,"//*[@numFound='2']"
+            );
+    assertQ(req("-text:red")
+            ,"//*[@numFound='4']"
+            );
+    assertQ(req("text:grape")
+            ,"//*[@numFound='2']"
+            );
+    assertQ(req("-text:grape")
+            ,"//*[@numFound='4']"
+            );
+    assertQ(req("-text:red -text:grape")
+            ,"//*[@numFound='2']"
+            );
+    assertQ(req("{!lucene q.op=AND df=text}grape green")
+            ,"//*[@numFound='1']"
+            ,"//int[@name='id'][.='103']"
+             );
+    assertQ(req("-_val_:\"{!lucene q.op=AND df=text}grape green\"")
+            ,"//*[@numFound='5']"
+            ,"//int[@name='id'][.='101']"
+            ,"//int[@name='id'][.='102']"
+            ,"//int[@name='id'][.='104']"
+            ,"//int[@name='id'][.='105']"
+            ,"//int[@name='id'][.='106']"
+            );
+
+    // tests
+
+    assertU(delQ("-*:*")); // NOOP
+    assertU(commit());
+    assertQ(req("*:*")
+            ,"//*[@numFound='6']"
+            );
+
+    assertU(delQ("-text:grape -text:red"));
+    assertU(commit());
+    assertQ(req("*:*")
+            ,"//*[@numFound='4']"
+            ,"//int[@name='id'][.='101']"
+            ,"//int[@name='id'][.='102']"
+            ,"//int[@name='id'][.='103']"
+            ,"//int[@name='id'][.='106']"
+            );
+
+    assertU(delQ("{!term f=id}106"));
+    assertU(commit());
+    assertQ(req("*:*")
+            ,"//*[@numFound='3']"
+            ,"//int[@name='id'][.='101']"
+            ,"//int[@name='id'][.='102']"
+            ,"//int[@name='id'][.='103']"
+            );
+
+    assertU(delQ("-_val_:\"{!lucene q.op=AND df=text}grape green\""));
+    assertU(commit());
+    assertQ(req("*:*")
+            ,"//*[@numFound='1']"
+            ,"//int[@name='id'][.='103']"
+            );
+
+    assertU(delQ("-text:doesnotexist"));
+    assertU(commit());
+    assertQ(req("*:*")
+            ,"//*[@numFound='0']"
+            );
+
   }
 
   @Test
@@ -234,7 +333,44 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
         ,"//*[@numFound='2']"
     );
   }
-    
+
+
+  @Test
+  public void testClientErrorOnMalformedNumbers() throws Exception {
+
+    final String BAD_VALUE = "NOT_A_NUMBER";
+    ignoreException(BAD_VALUE);
+
+    final List<String> FIELDS = new LinkedList<>();
+    for (String type : new String[] { "ti", "tf", "td", "tl" }) {
+      FIELDS.add("malformed_" + type);
+    }
+
+    // test that malformed numerics cause client error not server error
+    for (String field : FIELDS) {
+      try {
+        h.update(add( doc("id","100", field, BAD_VALUE)));
+        fail("Didn't encounter an error trying to add a non-number: " + field);
+      } catch (SolrException e) {
+        String msg = e.toString();
+        assertTrue("not an (update) client error on field: " + field +" : "+ msg,
+                   400 <= e.code() && e.code() < 500);
+        assertTrue("(update) client error does not mention bad value: " + msg,
+                   msg.contains(BAD_VALUE));
+      }
+      try {
+        h.query(req("q",field + ":" + BAD_VALUE));
+        fail("Didn't encounter an error trying to query a non-number: " + field);
+      } catch (SolrException e) {
+        String msg = e.toString();
+        assertTrue("not a (search) client error on field: " + field +" : "+ msg,
+                   400 <= e.code() && e.code() < 500);
+        assertTrue("(search) client error does not mention bad value: " + msg,
+                   msg.contains(BAD_VALUE));
+      }
+    }
+  }
+  
   @Test
   public void testRequestHandlerBaseException() {
     final String tmp = "BOO! ignore_exception";
@@ -242,11 +378,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
         @Override
         public String getDescription() { return tmp; }
         @Override
-        public String getSourceId() { return tmp; }
-        @Override
         public String getSource() { return tmp; }
-        @Override
-        public String getVersion() { return tmp; }
         @Override
         public void handleRequestBody
           ( SolrQueryRequest req, SolrQueryResponse rsp ) {
@@ -268,7 +400,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
     clearIndex();
     // big freaking kludge since the response is currently not well formed.
     String res = h.update("<add><doc><field name=\"id\">1</field></doc><doc><field name=\"id\">2</field></doc></add>");
-    assertEquals("<result status=\"0\"></result>", res);
+    // assertEquals("<result status=\"0\"></result>", res);
     assertU("<commit/>");
     assertQ(req("id:[0 TO 99]")
             ,"//*[@numFound='2']"
@@ -284,12 +416,12 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
                                           "<field name=\"text\">hello</field></doc>" + 
                           "</add>");
 
-    assertEquals("<result status=\"0\"></result>", res);
+    // assertEquals("<result status=\"0\"></result>", res);
     assertU("<commit/>");
     assertQ(req("text:hello")
             ,"//*[@numFound='2']"
             );
-    String resp = h.query(lrf.makeRequest("q", "text:hello", "debugQuery", "true"));
+    String resp = h.query(lrf.makeRequest("q", "text:hello", CommonParams.DEBUG_QUERY, "true"));
     //System.out.println(resp);
     // second doc ranked first
     assertTrue( resp.indexOf("\"2\"") < resp.indexOf("\"1\"") );
@@ -303,12 +435,12 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
                                       "<field boost=\"2.0\" name=\"text\">hello</field></doc>" + 
                           "</add>");
 
-    assertEquals("<result status=\"0\"></result>", res);
+    // assertEquals("<result status=\"0\"></result>", res);
     assertU("<commit/>");
     assertQ(req("text:hello"),
             "//*[@numFound='2']"
             );
-    String resp = h.query(lrf.makeRequest("q", "text:hello", "debugQuery", "true"));
+    String resp = h.query(lrf.makeRequest("q", "text:hello", CommonParams.DEBUG_QUERY, "true"));
     //System.out.println(resp);
     // second doc ranked first
     assertTrue( resp.indexOf("\"2\"") < resp.indexOf("\"1\"") );
@@ -326,7 +458,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
 
     DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
     builder.parse(new ByteArrayInputStream
-                  (writer.toString().getBytes("UTF-8")));
+                  (writer.toString().getBytes(StandardCharsets.UTF_8)));
     req.close();
   }
 
@@ -366,47 +498,42 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
             );
   }
 
-  /** @see org.apache.solr.analysis.TestRemoveDuplicatesTokenFilter */
-  @Test
-  public void testRemoveDuplicatesTokenFilter() {
-    Query q = QueryParsing.parseQuery("TV", "dedup",
-                                      h.getCore().getSchema());
-    assertTrue("not boolean?", q instanceof BooleanQuery);
-    assertEquals("unexpected number of stemmed synonym tokens",
-                 2, ((BooleanQuery) q).clauses().size());
-  }
-
   @Test
   public void testTermVectorFields() {
     
-    IndexSchema ischema = new IndexSchema(solrConfig, getSchemaFile(), null);
+    IndexSchema ischema = IndexSchemaFactory.buildIndexSchema(getSchemaFile(), solrConfig);
     SchemaField f; // Solr field type
-    Fieldable luf; // Lucene field
+    IndexableField luf; // Lucene field
 
     f = ischema.getField("test_basictv");
     luf = f.createField("test", 0f);
     assertTrue(f.storeTermVector());
-    assertTrue(luf.isTermVectorStored());
+    assertTrue(luf.fieldType().storeTermVectors());
 
     f = ischema.getField("test_notv");
     luf = f.createField("test", 0f);
     assertTrue(!f.storeTermVector());
-    assertTrue(!luf.isTermVectorStored());    
+    assertTrue(!luf.fieldType().storeTermVectors());
 
     f = ischema.getField("test_postv");
     luf = f.createField("test", 0f);
     assertTrue(f.storeTermVector() && f.storeTermPositions());
-    assertTrue(luf.isStorePositionWithTermVector());
+    assertTrue(luf.fieldType().storeTermVectorPositions());
 
     f = ischema.getField("test_offtv");
     luf = f.createField("test", 0f);
     assertTrue(f.storeTermVector() && f.storeTermOffsets());
-    assertTrue(luf.isStoreOffsetWithTermVector());
+    assertTrue(luf.fieldType().storeTermVectorOffsets());
 
     f = ischema.getField("test_posofftv");
     luf = f.createField("test", 0f);
     assertTrue(f.storeTermVector() && f.storeTermPositions() && f.storeTermOffsets());
-    assertTrue(luf.isStoreOffsetWithTermVector() && luf.isStorePositionWithTermVector());
+    assertTrue(luf.fieldType().storeTermVectorOffsets() && luf.fieldType().storeTermVectorPositions());
+
+    f = ischema.getField("test_posoffpaytv");
+    luf = f.createField("test", 0f);
+    assertTrue(f.storeTermVector() && f.storeTermPositions() && f.storeTermOffsets() && f.storeTermPayloads());
+    assertTrue(luf.fieldType().storeTermVectorOffsets() && luf.fieldType().storeTermVectorPositions() && luf.fieldType().storeTermVectorPayloads());
 
   }
 
@@ -418,7 +545,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
     nl.add("bt","true");
     nl.add("bf","false");
 
-    Map<String,String> m = new HashMap<String,String>();
+    Map<String,String> m = new HashMap<>();
     m.put("f.field1.i", "1000");
     m.put("s", "BBB");
     m.put("ss", "SSS");
@@ -469,7 +596,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
   @Test
   public void testDefaultFieldValues() {
     clearIndex();
-    lrf.args.put("version","2.1");
+    lrf.args.put(CommonParams.VERSION,"2.2");
     assertU(adoc("id",  "4055",
                  "subject", "Hoss the Hoss man Hostetter"));
     assertU(adoc("id",  "4056",
@@ -492,7 +619,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
             ,"*[count(//doc)=2]"
             ,"//arr[@name='multiDefault']"
             );
-    assertQ("1 doc should have it's explicit multiDefault",
+    assertQ("1 doc should have its explicit multiDefault",
             req("multiDefault:a")
             ,"*[count(//doc)=1]"
             );
@@ -501,7 +628,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
             req("intDefault:42")
             ,"*[count(//doc)=2]"
             );
-    assertQ("1 doc should have it's explicit intDefault",
+    assertQ("1 doc should have its explicit intDefault",
             req("intDefault:[3 TO 5]")
             ,"*[count(//doc)=1]"
             );
@@ -570,46 +697,87 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
 
   @Test
   public void testNotLazyField() throws IOException {
-    for(int i = 0; i < 10; i++) {
-      assertU(adoc("id", new Integer(i).toString(), 
-                   "title", "keyword",
-                   "test_hlt", mkstr(20000)));
-    }
+
+    assertU(adoc("id", "7777",
+                 "title", "keyword",
+                 "test_hlt", mkstr(20000)));
+
     assertU(commit());
     SolrCore core = h.getCore();
    
-    SolrQueryRequest req = req("q", "title:keyword", "fl", "id,title,test_hlt");
+    SolrQueryRequest req = req("q", "id:7777", "fl", "id,title,test_hlt");
     SolrQueryResponse rsp = new SolrQueryResponse();
     core.execute(core.getRequestHandler(req.getParams().get(CommonParams.QT)), req, rsp);
 
-    DocList dl = (DocList) rsp.getValues().get("response");
-    org.apache.lucene.document.Document d = req.getSearcher().doc(dl.iterator().nextDoc());
-    // ensure field is not lazy, only works for Non-Numeric fields currently (if you change schema behind test, this may fail)
-    assertTrue( d.getFieldable("test_hlt") instanceof Field );
-    assertTrue( d.getFieldable("title") instanceof Field );
+    DocList dl = ((ResultContext) rsp.getResponse()).getDocList();
+    Document d = req.getSearcher().doc(dl.iterator().nextDoc());
+    // ensure field in fl is not lazy
+    assertFalse( ((Field) d.getField("test_hlt")).getClass().getSimpleName().equals("LazyField"));
+    assertFalse( ((Field) d.getField("title")).getClass().getSimpleName().equals("LazyField"));
     req.close();
   }
 
   @Test
   public void testLazyField() throws IOException {
-    for(int i = 0; i < 10; i++) {
-      assertU(adoc("id", new Integer(i).toString(), 
-                   "title", "keyword",
-                   "test_hlt", mkstr(20000)));
-    }
+    assertU(adoc("id", "7777",
+                 "title", "keyword",
+                 "test_hlt", mkstr(10000),
+                 "test_hlt", mkstr(20000),
+                 "test_hlt", mkstr(30000),
+                 "test_hlt", mkstr(40000)));
+
     assertU(commit());
     SolrCore core = h.getCore();
     
-    SolrQueryRequest req = req("q", "title:keyword", "fl", "id,title");
+    // initial request
+    SolrQueryRequest req = req("q", "id:7777", "fl", "id,title");
     SolrQueryResponse rsp = new SolrQueryResponse();
     core.execute(core.getRequestHandler(req.getParams().get(CommonParams.QT)), req, rsp);
 
-    DocList dl = (DocList) rsp.getValues().get("response");
+    DocList dl = ((ResultContext) rsp.getResponse()).getDocList();
     DocIterator di = dl.iterator();    
-    org.apache.lucene.document.Document d = req.getSearcher().doc(di.nextDoc());
-    // ensure field is lazy
-    assertTrue( !( d.getFieldable("test_hlt") instanceof Field ) );
-    assertTrue( d.getFieldable("title") instanceof Field );
+    Document d1 = req.getSearcher().doc(di.nextDoc());
+    IndexableField[] values1 = null;
+
+    // ensure fl field is non lazy, and non-fl field is lazy
+    assertFalse( d1.getField("title") instanceof LazyDocument.LazyField);
+    assertFalse( d1.getField("id") instanceof LazyDocument.LazyField);
+    values1 = d1.getFields("test_hlt");
+    assertEquals(4, values1.length);
+    for (int i = 0; i < values1.length; i++) {
+      assertTrue( values1[i] instanceof LazyDocument.LazyField );
+      LazyDocument.LazyField f = (LazyDocument.LazyField) values1[i];
+      assertFalse( f.hasBeenLoaded() );
+    }
+    req.close();
+
+    // followup request, different fl
+    req = req("q", "id:7777", "fl", "id,test_hlt");
+    rsp = new SolrQueryResponse();
+    core.execute(core.getRequestHandler(req.getParams().get(CommonParams.QT)), req, rsp);
+
+    dl = ((ResultContext) rsp.getResponse()).getDocList();
+    di = dl.iterator();    
+    Document d2 = req.getSearcher().doc(di.nextDoc());
+    // ensure same doc, same lazy field now
+    assertTrue("Doc was not cached", d1 == d2);
+    IndexableField[] values2 = d2.getFields("test_hlt");
+    assertEquals(values1.length, values2.length);
+    for (int i = 0; i < values1.length; i++) {
+      assertSame("LazyField wasn't reused", 
+                 values1[i], values2[i]);
+      LazyDocument.LazyField f = (LazyDocument.LazyField) values1[i];
+      // still not a real boy, no response writer in play
+      assertFalse(f.hasBeenLoaded()); 
+    }
+
+    assertNotNull(values2[0].stringValue()); // actuallize one value
+    for (int i = 0; i < values2.length; i++) {
+      // now all values for this field should be loaded & cached
+      LazyDocument.LazyField f = (LazyDocument.LazyField) values2[i];
+      assertTrue(f.hasBeenLoaded());
+    }
+
     req.close();
   } 
             
@@ -621,7 +789,7 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
 
     // testing everything from query level is hard because
     // time marches on ... and there is no easy way to reach into the
-    // bowels of DateField and muck with the definition of "now"
+    // bowels of TrieDateField and muck with the definition of "now"
     //    ...
     // BUT: we can test that crazy combinations of "NOW" all work correctly,
     // assuming the test doesn't take too long to run...
@@ -634,7 +802,35 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
     assertU(adoc("id", "5",  "bday", "NOW+30MINUTES"));
     assertU(adoc("id", "6",  "bday", "NOW+2YEARS"));
     assertU(commit());
+    
+    // a ridiculoulsy long date math expression that's still equivilent to july4
+    final StringBuilder july4Long = new StringBuilder(july4);
+    final int iters = atLeast(10);
+    for (int i = 0; i < iters; i++) {
+      final String val = String.valueOf(atLeast(1));
+      july4Long.append("+" + val + "SECONDS-" + val + "SECONDS");
+    }
 
+    // term queries using date math (all of these should match doc#1)
+    for (String q : 
+           new String[] {
+             "bday:1976-07-04T12\\:08\\:56.45Z/SECOND+235MILLIS",
+             "bday:1976-07-04T12\\:08\\:56.123Z/MINUTE+56SECONDS+235MILLIS",
+             "bday:\"1976-07-04T12:08:56.45Z/SECOND+235MILLIS\"",
+             "bday:\"1976-07-04T12:08:56.123Z/MINUTE+56SECONDS+235MILLIS\"",
+             "{!term f=bday}1976-07-04T12:08:56.45Z/SECOND+235MILLIS",
+             "{!term f=bday}1976-07-04T12:08:56.123Z/MINUTE+56SECONDS+235MILLIS",             
+             "{!term f=bday}"+july4,
+             "{!term f=bday}"+july4Long,
+             "bday:\"" + july4Long + "\""
+           }) {
+      assertQ("check math on field query: " + q,
+              req("q", q),
+              "*[count(//doc)=1]",
+              "//int[@name='id'][.='1']");
+    }
+
+    // range queries using date math
     assertQ("check math on absolute date#1",
             req("q", "bday:[* TO "+july4+"/SECOND]"),
             "*[count(//doc)=0]");
@@ -663,20 +859,34 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
     assertQ("check count for near stuff",
             req("q", "bday:[NOW-1MONTH TO NOW+2HOURS]"), "*[count(//doc)=4]");
     
+    assertQ("check counts using fixed NOW",
+            req("q", "bday:[NOW/DAY TO NOW/DAY+1DAY]",
+                "NOW", "205369736000" // 1976-07-04T23:08:56.235Z
+                ),
+            "*[count(//doc)=1]");
+                
+    assertQ("check counts using fixed NOW and TZ rounding",
+            req("q", "bday:[NOW/DAY TO NOW/DAY+1DAY]",
+                "TZ", "GMT+01",
+                "NOW", "205369736000" // 1976-07-04T23:08:56.235Z
+                ),
+            "*[count(//doc)=0]");
+
   }
 
-  public void testDateRoundtrip() {
-    assertU(adoc("id", "99",  "bday", "99-01-01T12:34:56.789Z"));
-    assertU(commit());
-    assertQ("year should be canonicallized to 4 digits",
-            req("q", "id:99"),
-            "//date[@name='bday'][.='0099-01-01T12:34:56.789Z']");
-    assertU(adoc("id", "99",  "bday", "1999-01-01T12:34:56.900Z"));
-    assertU(commit());
-    assertQ("millis should be canonicallized to no trailing zeros",
-            req("q", "id:99"),
-            "//date[@name='bday'][.='1999-01-01T12:34:56.9Z']");
-  }
+  // commented after SOLR-8904; both are false
+//  public void testDateRoundtrip() {
+//    assertU(adoc("id", "99",  "bday", "99-01-01T12:34:56.789Z"));
+//    assertU(commit());
+//    assertQ("year should be canonicallized to 4 digits",
+//            req("q", "id:99"),
+//            "//date[@name='bday'][.='0099-01-01T12:34:56.789Z']");
+//    assertU(adoc("id", "99",  "bday", "1999-01-01T12:34:56.900Z"));
+//    assertU(commit());
+//    assertQ("millis should be canonicallized to no trailing zeros",
+//            req("q", "id:99"),
+//            "//date[@name='bday'][.='1999-01-01T12:34:56.9Z']");
+//  }
   
   @Test
   public void testPatternReplaceFilter() {
@@ -732,7 +942,6 @@ public class BasicFunctionalityTest extends SolrTestCaseJ4 {
                  -1 != e.getMessage().indexOf("sortabuse_t"));
     }
   }
-
 
 //   /** this doesn't work, but if it did, this is how we'd test it. */
 //   public void testOverwriteFalse() {

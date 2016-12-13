@@ -13,166 +13,240 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import datetime
 import re
+import time
 import shutil
 import os
 import sys
-
-# Usage: python -u buildRelease.py /path/to/checkout version(eg: 3.4.0) gpgKey(eg: 6E68DA61) rcNum user [-prepare] [-push]
-#
-# EG: python -u buildRelease.py -prepare -push /lucene/34x 3.4.0 6E68DA61 1 mikemccand
-# 
-
-# TODO: also run smokeTestRelease.py?
-
-# NOTE: you have to type in your gpg password at some point while this
-# runs; it's VERY confusing because the output is directed to
-# /tmp/release.log, so, you have to tail that and when GPG wants your
-# password, type it!
+import subprocess
+import textwrap
 
 LOG = '/tmp/release.log'
 
 def log(msg):
-  f = open(LOG, 'ab')
-  f.write(msg)
+  f = open(LOG, mode='ab')
+  f.write(msg.encode('utf-8'))
   f.close()
   
 def run(command):
   log('\n\n%s: RUN: %s\n' % (datetime.datetime.now(), command))
   if os.system('%s >> %s 2>&1' % (command, LOG)):
     msg = '    FAILED: %s [see log %s]' % (command, LOG)
-    print msg
+    print(msg)
     raise RuntimeError(msg)
 
-def scrubCheckout():
-  # removes any files not checked into svn
+def runAndSendGPGPassword(command, password):
+  p = subprocess.Popen(command, shell=True, bufsize=0, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
+  f = open(LOG, 'ab')
+  while True:
+    p.stdout.flush()
+    line = p.stdout.readline()
+    if len(line) == 0:
+      break
+    f.write(line)
+    if line.find(b'Enter GPG keystore password:') != -1:
+      time.sleep(1.0)
+      p.stdin.write((password + '\n').encode('UTF-8'))
+      p.stdin.write('\n'.encode('UTF-8'))
 
-  unversionedRex = re.compile('^ ?[\?ID] *[1-9 ]*[a-zA-Z]* +(.*)')
+  result = p.poll()
+  if result != 0:
+    msg = '    FAILED: %s [see log %s]' % (command, LOG)
+    print(msg)
+    raise RuntimeError(msg)
 
-  for l in os.popen('svn status --no-ignore -v').readlines():
-    match = unversionedRex.match(l)
-    if match:
-      s = match.group(1)
-      if os.path.exists(s):
-        print '    delete %s' % s
-        if os.path.isdir(s) and not os.path.islink(s):
-          shutil.rmtree(s)
-        else:
-          os.remove(s)
+def getGitRev():
+  status = os.popen('git status').read().strip()
+  if 'nothing to commit, working directory clean' not in status:
+    raise RuntimeError('git clone is dirty:\n\n%s' % status)
+  branch = os.popen('git rev-parse --abbrev-ref HEAD').read().strip()
+  command = 'git log origin/%s..' % branch
+  unpushedCommits = os.popen(command).read().strip()
+  if len(unpushedCommits) > 0:
+    raise RuntimeError('There are unpushed commits - "%s" output is:\n\n%s' % (command, unpushedCommits))
 
-def getSVNRev():
-  rev = os.popen('svnversion').read().strip()
-  try:
-    int(rev)
-  except (TypeError, ValueError):
-    raise RuntimeError('svn version is not clean: %s' % rev)
-  return rev
-  
+  print('  git clone is clean')
+  return os.popen('git rev-parse HEAD').read().strip()
 
-def prepare(root, version, gpgKeyID):
-  print
-  print 'Prepare release...'
+def prepare(root, version, gpgKeyID, gpgPassword):
+  print()
+  print('Prepare release...')
   if os.path.exists(LOG):
     os.remove(LOG)
 
   os.chdir(root)
-  print '  svn up...'
-  run('svn up')
+  print('  git pull...')
+  run('git pull')
 
-  rev = getSVNRev()
-  print '  svn rev: %s' % rev
-  log('\nSVN rev: %s\n' % rev)
+  rev = getGitRev()
+  print('  git rev: %s' % rev)
+  log('\nGIT rev: %s\n' % rev)
 
-  print '  ant clean test'
+  print('  ant clean test')
   run('ant clean test')
 
-  print '  clean checkout'
-  scrubCheckout()
-  open('rev.txt', 'wb').write(rev)
+  open('rev.txt', mode='wb').write(rev.encode('UTF-8'))
   
-  print '  lucene prepare-release'
+  print('  lucene prepare-release')
   os.chdir('lucene')
-  run('ant -Dversion=%s -Dspecversion=%s -Dgpg.key=%s prepare-release' % (version, version, gpgKeyID))
-  print '  solr prepare-release'
+  cmd = 'ant -Dversion=%s' % version
+  if gpgKeyID is not None:
+    cmd += ' -Dgpg.key=%s prepare-release' % gpgKeyID
+  else:
+    cmd += ' prepare-release-no-sign'
+
+  if gpgPassword is not None:
+    runAndSendGPGPassword(cmd, gpgPassword)
+  else:
+    run(cmd)
+  
+  print('  solr prepare-release')
   os.chdir('../solr')
-  run('ant -Dversion=%s -Dspecversion=%s -Dgpg.key=%s prepare-release' % (version, version, gpgKeyID))
-  print '  done!'
-  print
+  cmd = 'ant -Dversion=%s' % version
+  if gpgKeyID is not None:
+    cmd += ' -Dgpg.key=%s prepare-release' % gpgKeyID
+  else:
+    cmd += ' prepare-release-no-sign'
+
+  if gpgPassword is not None:
+    runAndSendGPGPassword(cmd, gpgPassword)
+  else:
+    run(cmd)
+    
+  print('  done!')
+  print()
   return rev
 
-def push(version, root, rev, rcNum, username):
-  print 'Push...'
+def pushLocal(version, root, rev, rcNum, localDir):
+  print('Push local [%s]...' % localDir)
+  os.makedirs(localDir)
+
   dir = 'lucene-solr-%s-RC%d-rev%s' % (version, rcNum, rev)
-  s = os.popen('ssh %s@people.apache.org "ls -ld public_html/staging_area/%s" 2>&1' % (username, dir)).read()
-  if s.lower().find('no such file or directory') == -1:
-    print '  Remove old dir...'
-    run('ssh %s@people.apache.org "chmod -R u+rwX public_html/staging_area/%s; rm -rf public_html/staging_area/%s"' % 
-        (username, dir, dir))
-  run('ssh %s@people.apache.org "mkdir -p public_html/staging_area/%s/lucene public_html/staging_area/%s/solr"' % \
-      (username, dir, dir))
-  print '  Lucene'
+  os.makedirs('%s/%s/lucene' % (localDir, dir))
+  os.makedirs('%s/%s/solr' % (localDir, dir))
+  print('  Lucene')
   os.chdir('%s/lucene/dist' % root)
-  print '    zip...'
+  print('    zip...')
   if os.path.exists('lucene.tar.bz2'):
     os.remove('lucene.tar.bz2')
   run('tar cjf lucene.tar.bz2 *')
-  print '    copy...'
-  run('scp lucene.tar.bz2 %s@people.apache.org:public_html/staging_area/%s/lucene' % (username, dir))
-  print '    unzip...'
-  run('ssh %s@people.apache.org "cd public_html/staging_area/%s/lucene; tar xjf lucene.tar.bz2; rm -f lucene.tar.bz2"' % (username, dir))
-  os.remove('lucene.tar.bz2')
-  print '    copy changes...'
-  os.chdir('..')
-  run('scp -r build/docs/changes %s@people.apache.org:public_html/staging_area/%s/lucene/changes-%s' % (username, dir, version))
 
-  print '  Solr'
+  os.chdir('%s/%s/lucene' % (localDir, dir))
+  print('    unzip...')
+  run('tar xjf "%s/lucene/dist/lucene.tar.bz2"' % root)
+  os.remove('%s/lucene/dist/lucene.tar.bz2' % root)
+
+  print('  Solr')
   os.chdir('%s/solr/package' % root)
-  print '    zip...'
+  print('    zip...')
   if os.path.exists('solr.tar.bz2'):
     os.remove('solr.tar.bz2')
   run('tar cjf solr.tar.bz2 *')
-  print '    copy...'
-  run('scp solr.tar.bz2 %s@people.apache.org:public_html/staging_area/%s/solr' % (username, dir))
-  print '    unzip...'
-  run('ssh %s@people.apache.org "cd public_html/staging_area/%s/solr; tar xjf solr.tar.bz2; rm -f solr.tar.bz2"' % (username, dir))
-  os.remove('solr.tar.bz2')
+  print('    unzip...')
+  os.chdir('%s/%s/solr' % (localDir, dir))
+  run('tar xjf "%s/solr/package/solr.tar.bz2"' % root)
+  os.remove('%s/solr/package/solr.tar.bz2' % root)
 
-  print '  KEYS'
-  run('wget http://people.apache.org/keys/group/lucene.asc')
+  print('  KEYS')
+  run('wget http://home.apache.org/keys/group/lucene.asc')
   os.rename('lucene.asc', 'KEYS')
   run('chmod a+r-w KEYS')
-  run('scp KEYS %s@people.apache.org:public_html/staging_area/%s/lucene' % (username, dir))
-  run('scp KEYS %s@people.apache.org:public_html/staging_area/%s/solr' % (username, dir))
-  os.remove('KEYS')
+  run('cp KEYS ../lucene')
 
-  print '  chmod...'
-  run('ssh %s@people.apache.org "chmod -R a+rX-w public_html/staging_area/%s"' % (username, dir))
+  print('  chmod...')
+  os.chdir('..')
+  run('chmod -R a+rX-w .')
 
-  print '  done!  URL: https://people.apache.org/~%s/staging_area/%s' % (username, dir)
+  print('  done!')
+  return 'file://%s/%s' % (os.path.abspath(localDir), dir)
 
+def read_version(path):
+  version_props_file = os.path.join(path, 'lucene', 'version.properties')
+  return re.search(r'version\.base=(.*)', open(version_props_file).read()).group(1)
+
+def parse_config():
+  epilogue = textwrap.dedent('''
+    Example usage for a Release Manager:
+    python3 -u dev-tools/scripts/buildAndPushRelease.py --push-local /tmp/releases/6.0.1 --sign 6E68DA61 --rc-num 1
+  ''')
+  description = 'Utility to build, push, and test a release.'
+  parser = argparse.ArgumentParser(description=description, epilog=epilogue,
+                                   formatter_class=argparse.RawDescriptionHelpFormatter)
+  parser.add_argument('--no-prepare', dest='prepare', default=True, action='store_false',
+                      help='Use the already built release in the provided checkout')
+  parser.add_argument('--push-local', metavar='PATH',
+                      help='Push the release to the local path')
+  parser.add_argument('--sign', metavar='KEYID',
+                      help='Sign the release with the given gpg key')
+  parser.add_argument('--rc-num', metavar='NUM', type=int, default=1,
+                      help='Release Candidate number.  Default: 1')
+  parser.add_argument('--root', metavar='PATH', default='.',
+                      help='Root of Git working tree for lucene-solr.  Default: "." (the current directory)')
+  config = parser.parse_args()
+
+  if not config.prepare and config.sign:
+    parser.error('Cannot sign already built release')
+  if config.push_local is not None and os.path.exists(config.push_local):
+    parser.error('Cannot push to local path that already exists')
+  if config.rc_num <= 0:
+    parser.error('Release Candidate number must be a positive integer')
+  if not os.path.isdir(config.root):
+    parser.error('Root path "%s" is not a directory' % config.root)
+  cwd = os.getcwd()
+  os.chdir(config.root)
+  config.root = os.getcwd() # Absolutize root dir
+  if os.system('git rev-parse') or 3 != len([d for d in ('dev-tools','lucene','solr') if os.path.isdir(d)]):
+    parser.error('Root path "%s" is not a valid lucene-solr checkout' % config.root)
+  os.chdir(cwd)
+
+  config.version = read_version(config.root)
+  print('Building version: %s' % config.version)
+
+  if config.sign:
+    sys.stdout.flush()
+    import getpass
+    config.key_id = config.sign
+    config.key_password = getpass.getpass('Enter GPG keystore password: ')
+  else:
+    config.gpg_password = None
+
+  return config
+
+def check_cmdline_tools():  # Fail fast if there are cmdline tool problems
+  if os.system('git --version >/dev/null 2>/dev/null'):
+    raise RuntimeError('"git --version" returned a non-zero exit code.')
+  antVersion = os.popen('ant -version').read().strip()
+  if not antVersion.startswith('Apache Ant(TM) version 1.8') and not antVersion.startswith('Apache Ant(TM) version 1.9'):
+    raise RuntimeError('ant version is not 1.8.X: "%s"' % antVersion)
   
 def main():
-  doPrepare = '-prepare' in sys.argv
-  if doPrepare:
-    sys.argv.remove('-prepare')
-  doPush = '-push' in sys.argv
-  if doPush:
-    sys.argv.remove('-push')
-  root = os.path.abspath(sys.argv[1])
-  version = sys.argv[2]
-  gpgKeyID = sys.argv[3]
-  rcNum = int(sys.argv[4])
-  username = sys.argv[5]
+  check_cmdline_tools()
 
-  if doPrepare:
-    rev = prepare(root, version, gpgKeyID)
+  c = parse_config()
+
+  if c.prepare:
+    rev = prepare(c.root, c.version, c.key_id, c.key_password)
   else:
     os.chdir(root)
-    rev = open('rev.txt').read()
+    rev = open('rev.txt', encoding='UTF-8').read()
 
-  if doPush:
-    push(version, root, rev, rcNum, username)
-    
+  if c.push_local:
+    url = pushLocal(c.version, c.root, rev, c.rc_num, c.push_local)
+  else:
+    url = None
+
+  if url is not None:
+    print('  URL: %s' % url)
+    print('Next run the smoker tester:')
+    p = re.compile(".*/")
+    m = p.match(sys.argv[0])
+    print('%s -u %ssmokeTestRelease.py %s' % (sys.executable, m.group(), url))
+
 if __name__ == '__main__':
-  main()
+  try:
+    main()
+  except KeyboardInterrupt:
+    print('Keyboard interrupt...exiting')
+

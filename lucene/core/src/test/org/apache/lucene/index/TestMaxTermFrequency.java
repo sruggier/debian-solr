@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,10 +26,11 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.search.DefaultSimilarity;
+import org.apache.lucene.search.similarities.TFIDFSimilarity;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Tests the maxTermFrequency statistic in FieldInvertState
@@ -38,21 +39,21 @@ public class TestMaxTermFrequency extends LuceneTestCase {
   Directory dir;
   IndexReader reader;
   /* expected maxTermFrequency values for our documents */
-  ArrayList<Integer> expected = new ArrayList<Integer>();
+  ArrayList<Integer> expected = new ArrayList<>();
   
   @Override
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT, 
-               new MockAnalyzer(random, MockTokenizer.SIMPLE, true)).setMergePolicy(newLogMergePolicy());
+    IndexWriterConfig config = newIndexWriterConfig(new MockAnalyzer(random(), MockTokenizer.SIMPLE, true))
+                                 .setMergePolicy(newLogMergePolicy());
     config.setSimilarity(new TestSimilarity());
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir, config);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir, config);
     Document doc = new Document();
-    Field foo = newField("foo", "", Field.Store.NO, Field.Index.ANALYZED);
+    Field foo = newTextField("foo", "", Field.Store.NO);
     doc.add(foo);
     for (int i = 0; i < 100; i++) {
-      foo.setValue(addValue());
+      foo.setStringValue(addValue());
       writer.addDocument(doc);
     }
     reader = writer.getReader();
@@ -67,9 +68,10 @@ public class TestMaxTermFrequency extends LuceneTestCase {
   }
   
   public void test() throws Exception {
-    byte fooNorms[] = reader.norms("foo");
-    for (int i = 0; i < reader.maxDoc(); i++)
-      assertEquals(expected.get(i).intValue(), fooNorms[i] & 0xff);
+    NumericDocValues fooNorms = MultiDocValues.getNormValues(reader, "foo");
+    for (int i = 0; i < reader.maxDoc(); i++) {
+      assertEquals(expected.get(i).intValue(), fooNorms.get(i) & 0xff);
+    }
   }
 
   /**
@@ -79,38 +81,45 @@ public class TestMaxTermFrequency extends LuceneTestCase {
    * puts the max-frequency term into expected, to be checked against the norm.
    */
   private String addValue() {
-    List<String> terms = new ArrayList<String>();
-    int maxCeiling = _TestUtil.nextInt(random, 0, 255);
+    List<String> terms = new ArrayList<>();
+    int maxCeiling = TestUtil.nextInt(random(), 0, 255);
     int max = 0;
     for (char ch = 'a'; ch <= 'z'; ch++) {
-      int num = _TestUtil.nextInt(random, 0, maxCeiling);
+      int num = TestUtil.nextInt(random(), 0, maxCeiling);
       for (int i = 0; i < num; i++)
         terms.add(Character.toString(ch));
       max = Math.max(max, num);
     }
     expected.add(max);
-    Collections.shuffle(terms, random);
+    Collections.shuffle(terms, random());
     return Arrays.toString(terms.toArray(new String[terms.size()]));
   }
   
   /**
    * Simple similarity that encodes maxTermFrequency directly as a byte
    */
-  class TestSimilarity extends DefaultSimilarity {
+  class TestSimilarity extends TFIDFSimilarity {
 
     @Override
-    public byte encodeNormValue(float f) {
+    public float lengthNorm(FieldInvertState state) {
+      return state.getMaxTermFrequency();
+    }
+
+    @Override
+    public long encodeNormValue(float f) {
       return (byte) f;
     }
-    
-    @Override
-    public float decodeNormValue(byte b) {
-      return (float) b;
-    }
 
     @Override
-    public float computeNorm(String field, FieldInvertState state) {
-      return (float) state.getMaxTermFrequency();
+    public float decodeNormValue(long norm) {
+      return norm;
     }
+
+    @Override public float coord(int overlap, int maxOverlap) { return 0; }
+    @Override public float queryNorm(float sumOfSquaredWeights) { return 0; }
+    @Override public float tf(float freq) { return 0; }
+    @Override public float idf(long docFreq, long docCount) { return 0; }
+    @Override public float sloppyFreq(int distance) { return 0; }
+    @Override public float scorePayload(int doc, int start, int end, BytesRef payload) { return 0; }
   }
 }

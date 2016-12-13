@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -28,15 +28,15 @@ import java.util.Map;
  * Test for EntityProcessorBase
  * </p>
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TestEntityProcessorBase extends AbstractDataImportHandlerTestCase {
 
   @Test
   public void multiTransformer() {
-    List<Map<String, String>> fields = new ArrayList<Map<String, String>>();
-    Map<String, String> entity = new HashMap<String, String>();
+    List<Map<String, String>> fields = new ArrayList<>();
+    Map<String, String> entity = new HashMap<>();
     entity.put("transformer", T1.class.getName() + "," + T2.class.getName()
             + "," + T3.class.getName());
     fields.add(getField("A", null, null, null, null));
@@ -44,10 +44,10 @@ public class TestEntityProcessorBase extends AbstractDataImportHandlerTestCase {
 
     Context context = getContext(null, null, new MockDataSource(), Context.FULL_DUMP,
             fields, entity);
-    Map<String, Object> src = new HashMap<String, Object>();
+    Map<String, Object> src = new HashMap<>();
     src.put("A", "NA");
     src.put("B", "NA");
-    EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null);
+    EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null, null);
     sep.init(context);
     Map<String, Object> res = sep.applyTransformer(src);
     assertNotNull(res.get("T1"));

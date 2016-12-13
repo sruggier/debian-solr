@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,21 +14,25 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.util.LuceneTestCase;
+
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.util.Locale;
+import java.util.Random;
+
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.DefaultSimilarity;
-import org.apache.lucene.search.Similarity;
+import org.apache.lucene.search.similarities.ClassicSimilarity;
+import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.LuceneTestCase;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
-
-import java.text.DecimalFormat;
-import java.util.Random;
 
 /** Test that BooleanQuery.setMinimumNumberShouldMatch works.
  */
@@ -54,14 +56,14 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
         };
 
         index = newDirectory();
-        RandomIndexWriter w = new RandomIndexWriter(random, index);
+        RandomIndexWriter w = new RandomIndexWriter(random(), index);
 
         for (int i = 0; i < data.length; i++) {
             Document doc = new Document();
-            doc.add(newField("id", String.valueOf(i), Field.Store.YES, Field.Index.NOT_ANALYZED));//Field.Keyword("id",String.valueOf(i)));
-            doc.add(newField("all", "all", Field.Store.YES, Field.Index.NOT_ANALYZED));//Field.Keyword("all","all"));
+            doc.add(newStringField("id", String.valueOf(i), Field.Store.YES));//Field.Keyword("id",String.valueOf(i)));
+            doc.add(newStringField("all", "all", Field.Store.YES));//Field.Keyword("all","all"));
             if (null != data[i]) {
-                doc.add(newField("data", data[i], Field.Store.YES, Field.Index.ANALYZED));//Field.Text("data",data[i]));
+                doc.add(newTextField("data", data[i], Field.Store.YES));//Field.Text("data",data[i]));
             }
             w.addDocument(doc);
         }
@@ -74,7 +76,6 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
     
     @AfterClass
     public static void afterClass() throws Exception {
-      s.close();
       s = null;
       r.close();
       r = null;
@@ -84,28 +85,39 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
 
     public void verifyNrHits(Query q, int expected) throws Exception {
-        ScoreDoc[] h = s.search(q, null, 1000).scoreDocs;
+        // bs1
+        ScoreDoc[] h = s.search(q, 1000).scoreDocs;
         if (expected != h.length) {
-            printHits(getName(), h, s);
+            printHits(getTestName(), h, s);
         }
         assertEquals("result count", expected, h.length);
-        QueryUtils.check(random, q,s);
+        //System.out.println("TEST: now check");
+        // bs2
+        TopScoreDocCollector collector = TopScoreDocCollector.create(1000);
+        s.search(q, collector);
+        ScoreDoc[] h2 = collector.topDocs().scoreDocs;
+        if (expected != h2.length) {
+          printHits(getTestName(), h2, s);
+        }
+        assertEquals("result count (bs2)", expected, h2.length);
+
+        QueryUtils.check(random(), q,s);
     }
 
     public void testAllOptional() throws Exception {
 
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         for (int i = 1; i <=4; i++) {
             q.add(new TermQuery(new Term("data",""+i)), BooleanClause.Occur.SHOULD);//false, false);
         }
         q.setMinimumNumberShouldMatch(2); // match at least two of 4
-        verifyNrHits(q, 2);
+        verifyNrHits(q.build(), 2);
     }
 
     public void testOneReqAndSomeOptional() throws Exception {
 
         /* one required, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all", "all" )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "5"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "4"  )), BooleanClause.Occur.SHOULD);//false, false);
@@ -113,13 +125,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(2); // 2 of 3 optional 
 
-        verifyNrHits(q, 5);
+        verifyNrHits(q.build(), 5);
     }
 
     public void testSomeReqAndSomeOptional() throws Exception {
 
         /* two required, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all", "all" )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "6"  )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "5"  )), BooleanClause.Occur.SHOULD);//false, false);
@@ -128,13 +140,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(2); // 2 of 3 optional 
 
-        verifyNrHits(q, 5);
+        verifyNrHits(q.build(), 5);
     }
 
     public void testOneProhibAndSomeOptional() throws Exception {
 
         /* one prohibited, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("data", "1"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "2"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "3"  )), BooleanClause.Occur.MUST_NOT);//false, true );
@@ -142,13 +154,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(2); // 2 of 3 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testSomeProhibAndSomeOptional() throws Exception {
 
         /* two prohibited, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("data", "1"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "2"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "3"  )), BooleanClause.Occur.MUST_NOT);//false, true );
@@ -157,13 +169,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(2); // 2 of 3 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testOneReqOneProhibAndSomeOptional() throws Exception {
 
         /* one required, one prohibited, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("data", "6"  )), BooleanClause.Occur.MUST);// true,  false);
         q.add(new TermQuery(new Term("data", "5"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "4"  )), BooleanClause.Occur.SHOULD);//false, false);
@@ -173,13 +185,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(3); // 3 of 4 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testSomeReqOneProhibAndSomeOptional() throws Exception {
 
         /* two required, one prohibited, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all",  "all")), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "6"  )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "5"  )), BooleanClause.Occur.SHOULD);//false, false);
@@ -190,13 +202,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(3); // 3 of 4 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testOneReqSomeProhibAndSomeOptional() throws Exception {
 
         /* one required, two prohibited, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("data", "6"  )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "5"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "4"  )), BooleanClause.Occur.SHOULD);//false, false);
@@ -207,13 +219,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(3); // 3 of 4 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testSomeReqSomeProhibAndSomeOptional() throws Exception {
 
         /* two required, two prohibited, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all",  "all")), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "6"  )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "5"  )), BooleanClause.Occur.SHOULD);//false, false);
@@ -225,13 +237,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(3); // 3 of 4 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testMinHigherThenNumOptional() throws Exception {
 
         /* two required, two prohibited, some optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all",  "all")), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "6"  )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "5"  )), BooleanClause.Occur.SHOULD);//false, false);
@@ -243,13 +255,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(90); // 90 of 4 optional ?!?!?!
 
-        verifyNrHits(q, 0);
+        verifyNrHits(q.build(), 0);
     }
 
     public void testMinEqualToNumOptional() throws Exception {
 
         /* two required, two optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all", "all" )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "6"  )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "3"  )), BooleanClause.Occur.MUST);//true,  false);
@@ -257,43 +269,43 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
         q.setMinimumNumberShouldMatch(2); // 2 of 2 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testOneOptionalEqualToMin() throws Exception {
 
         /* two required, one optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all", "all" )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "3"  )), BooleanClause.Occur.SHOULD);//false, false);
         q.add(new TermQuery(new Term("data", "2"  )), BooleanClause.Occur.MUST);//true,  false);
 
         q.setMinimumNumberShouldMatch(1); // 1 of 1 optional 
 
-        verifyNrHits(q, 1);
+        verifyNrHits(q.build(), 1);
     }
 
     public void testNoOptionalButMin() throws Exception {
 
         /* two required, no optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all", "all" )), BooleanClause.Occur.MUST);//true,  false);
         q.add(new TermQuery(new Term("data", "2"  )), BooleanClause.Occur.MUST);//true,  false);
 
         q.setMinimumNumberShouldMatch(1); // 1 of 0 optional 
 
-        verifyNrHits(q, 0);
+        verifyNrHits(q.build(), 0);
     }
 
     public void testNoOptionalButMin2() throws Exception {
 
         /* one required, no optional */
-        BooleanQuery q = new BooleanQuery();
+        BooleanQuery.Builder q = new BooleanQuery.Builder();
         q.add(new TermQuery(new Term("all", "all" )), BooleanClause.Occur.MUST);//true,  false);
 
         q.setMinimumNumberShouldMatch(1); // 1 of 0 optional 
 
-        verifyNrHits(q, 0);
+        verifyNrHits(q.build(), 0);
     }
 
     public void testRandomQueries() throws Exception {
@@ -303,16 +315,16 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
       // callback object to set a random setMinimumNumberShouldMatch
       TestBoolean2.Callback minNrCB = new TestBoolean2.Callback() {
-        public void postCreate(BooleanQuery q) {
-          BooleanClause[] c =q.getClauses();
+        @Override
+        public void postCreate(BooleanQuery.Builder q) {
           int opt=0;
-          for (int i=0; i<c.length;i++) {
-            if (c[i].getOccur() == BooleanClause.Occur.SHOULD) opt++;
+          for (BooleanClause clause : q.build().clauses()) {
+            if (clause.getOccur() == BooleanClause.Occur.SHOULD) opt++;
           }
-          q.setMinimumNumberShouldMatch(random.nextInt(opt+2));
-          if (random.nextBoolean()) {
+          q.setMinimumNumberShouldMatch(random().nextInt(opt+2));
+          if (random().nextBoolean()) {
             // also add a random negation
-            Term randomTerm = new Term(field, vals[random.nextInt(vals.length)]);
+            Term randomTerm = new Term(field, vals[random().nextInt(vals.length)]);
             q.add(new TermQuery(randomTerm), BooleanClause.Occur.MUST_NOT);
           }
         }
@@ -322,12 +334,12 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
 
       // increase number of iterations for more complete testing      
       int num = atLeast(20);
-      for (int i = 0; i < num; i++) {
-        int lev = random.nextInt(maxLev);
-        final long seed = random.nextLong();
-        BooleanQuery q1 = TestBoolean2.randBoolQuery(new Random(seed), true, lev, field, vals, null);
+      for (int i=0; i<num; i++) {
+        int lev = random().nextInt(maxLev);
+        final long seed = random().nextLong();
+        BooleanQuery.Builder q1 = TestBoolean2.randBoolQuery(new Random(seed), true, lev, field, vals, null);
         // BooleanQuery q2 = TestBoolean2.randBoolQuery(new Random(seed), lev, field, vals, minNrCB);
-        BooleanQuery q2 = TestBoolean2.randBoolQuery(new Random(seed), true, lev, field, vals, null);
+        BooleanQuery.Builder q2 = TestBoolean2.randBoolQuery(new Random(seed), true, lev, field, vals, null);
         // only set minimumNumberShouldMatch on the top level query since setting
         // at a lower level can change the score.
         minNrCB.postCreate(q2);
@@ -335,13 +347,13 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
         // Can't use Hits because normalized scores will mess things
         // up.  The non-sorting version of search() that returns TopDocs
         // will not normalize scores.
-        TopDocs top1 = s.search(q1,null,100);
-        TopDocs top2 = s.search(q2,null,100);
+        TopDocs top1 = s.search(q1.build(),100);
+        TopDocs top2 = s.search(q2.build(),100);
         if (i < 100) {
-          QueryUtils.check(random, q1,s);
-          QueryUtils.check(random, q2,s);
+          QueryUtils.check(random(), q1.build(),s);
+          QueryUtils.check(random(), q2.build(),s);
         }
-        assertSubsetOfSameScores(q2, top1, top2);
+        assertSubsetOfSameScores(q2.build(), top1, top2);
       }
       // System.out.println("Total hits:"+tot);
     }
@@ -370,7 +382,7 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
                 + CheckHits.topdocsString(top1,0,0)
                 + CheckHits.topdocsString(top2,0,0)
                 + "for query:" + q.toString(),
-                score, otherScore, CheckHits.EXPLAIN_SCORE_TOLERANCE_DELTA);
+                score, otherScore, CheckHits.explainToleranceDelta(score, otherScore));
           }
         }
 
@@ -383,54 +395,54 @@ public class TestBooleanMinShouldMatch extends LuceneTestCase {
     }
 
     public void testRewriteCoord1() throws Exception {
-      final Similarity oldSimilarity = s.getSimilarity();
+      final Similarity oldSimilarity = s.getSimilarity(true);
       try {
-        s.setSimilarity(new DefaultSimilarity() {
+        s.setSimilarity(new ClassicSimilarity() {
           @Override
           public float coord(int overlap, int maxOverlap) {
             return overlap / ((float)maxOverlap + 1);
           }
         });
-        BooleanQuery q1 = new BooleanQuery();
+        BooleanQuery.Builder q1 = new BooleanQuery.Builder();
         q1.add(new TermQuery(new Term("data", "1")), BooleanClause.Occur.SHOULD);
-        BooleanQuery q2 = new BooleanQuery();
+        BooleanQuery.Builder q2 = new BooleanQuery.Builder();
         q2.add(new TermQuery(new Term("data", "1")), BooleanClause.Occur.SHOULD);
         q2.setMinimumNumberShouldMatch(1);
-        TopDocs top1 = s.search(q1,null,100);
-        TopDocs top2 = s.search(q2,null,100);
-        assertSubsetOfSameScores(q2, top1, top2);
+        TopDocs top1 = s.search(q1.build(),100);
+        TopDocs top2 = s.search(q2.build(),100);
+        assertSubsetOfSameScores(q2.build(), top1, top2);
       } finally {
         s.setSimilarity(oldSimilarity);
       }
     }
     
     public void testRewriteNegate() throws Exception {
-      final Similarity oldSimilarity = s.getSimilarity();
+      final Similarity oldSimilarity = s.getSimilarity(true);
       try {
-        s.setSimilarity(new DefaultSimilarity() {
+        s.setSimilarity(new ClassicSimilarity() {
           @Override
           public float coord(int overlap, int maxOverlap) {
             return overlap / ((float)maxOverlap + 1);
           }
         });
-        BooleanQuery q1 = new BooleanQuery();
+        BooleanQuery.Builder q1 = new BooleanQuery.Builder();
         q1.add(new TermQuery(new Term("data", "1")), BooleanClause.Occur.SHOULD);
-        BooleanQuery q2 = new BooleanQuery();
+        BooleanQuery.Builder q2 = new BooleanQuery.Builder();
         q2.add(new TermQuery(new Term("data", "1")), BooleanClause.Occur.SHOULD);
         q2.add(new TermQuery(new Term("data", "Z")), BooleanClause.Occur.MUST_NOT);
-        TopDocs top1 = s.search(q1,null,100);
-        TopDocs top2 = s.search(q2,null,100);
-        assertSubsetOfSameScores(q2, top1, top2);
+        TopDocs top1 = s.search(q1.build(),100);
+        TopDocs top2 = s.search(q2.build(),100);
+        assertSubsetOfSameScores(q2.build(), top1, top2);
       } finally {
         s.setSimilarity(oldSimilarity);
       }
     }
 
-    protected void printHits(String test, ScoreDoc[] h, Searcher searcher) throws Exception {
+    protected void printHits(String test, ScoreDoc[] h, IndexSearcher searcher) throws Exception {
 
         System.err.println("------- " + test + " -------");
 
-        DecimalFormat f = new DecimalFormat("0.000000");
+        DecimalFormat f = new DecimalFormat("0.000000", DecimalFormatSymbols.getInstance(Locale.ROOT));
 
         for (int i = 0; i < h.length; i++) {
             Document d = searcher.doc(h[i].doc);

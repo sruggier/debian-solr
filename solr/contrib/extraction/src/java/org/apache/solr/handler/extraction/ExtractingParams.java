@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -36,7 +36,7 @@ public interface ExtractingParams {
 
   /**
    * The param prefix for mapping Tika metadata to Solr fields.
-   * <p/>
+   * <p>
    * To map a field, add a name like:
    * <pre>fmap.title=solr.title</pre>
    *
@@ -48,7 +48,7 @@ public interface ExtractingParams {
 
   /**
    * The boost value for the name of the field.  The boost can be specified by a name mapping.
-   * <p/>
+   * <p>
    * For example
    * <pre>
    * map.title=solr.title
@@ -73,9 +73,8 @@ public interface ExtractingParams {
    * Restrict the extracted parts of a document to be indexed
    *  by passing in an XPath expression.  All content that satisfies the XPath expr.
    * will be passed to the {@link SolrContentHandler}.
-   * <p/>
+   * <p>
    * See Tika's docs for what the extracted document looks like.
-   * <p/>
    * @see #CAPTURE_ELEMENTS
    */
   public static final String XPATH_EXPRESSION = "xpath";
@@ -96,15 +95,19 @@ public interface ExtractingParams {
    */
   public static final String CAPTURE_ATTRIBUTES = "captureAttr";
 
+  /**
+   * Literal field values will by default override other values such as metadata and content. Set this to false to revert to pre-4.0 behaviour
+   */
+  public static final String LITERALS_OVERRIDE = "literalsOverride";
 
   /**
    * Capture the specified fields (and everything included below it that isn't capture by some other capture field) separately from the default.  This is different
    * then the case of passing in an XPath expression.
-   * <p/>
+   * <p>
    * The Capture field is based on the localName returned to the {@link SolrContentHandler}
    * by Tika, not to be confused by the mapped field.  The field name can then
    * be mapped into the index schema.
-   * <p/>
+   * <p>
    * For instance, a Tika document may look like:
    * <pre>
    *  &lt;html&gt;
@@ -132,6 +135,10 @@ public interface ExtractingParams {
    */
   public static final String RESOURCE_NAME = "resource.name";
 
+  /**
+   * Optional. The password for this resource. Will be used instead of the rule based password lookup mechanisms 
+   */
+  public static final String RESOURCE_PASSWORD = "resource.password";
 
   /**
    * Optional.  If specified, the prefix will be prepended to all Metadata, such that it would be possible
@@ -144,4 +151,14 @@ public interface ExtractingParams {
    * will be used instead.
    */
   public static final String DEFAULT_FIELD = "defaultField";
+
+  /**
+   * Optional. If specified, loads the file as a source for password lookups for Tika encrypted documents.
+   * <p>
+   * File format is Java properties format with one key=value per line.
+   * The key is evaluated as a regex against the file name, and the value is the password
+   * The rules are evaluated top-bottom, i.e. the first match will be used
+   * If you want a fallback password to be always used, supply a .*=&lt;defaultmypassword&gt; at the end  
+   */
+  public static final String PASSWORD_MAP_FILE = "passwordsFile";
 }

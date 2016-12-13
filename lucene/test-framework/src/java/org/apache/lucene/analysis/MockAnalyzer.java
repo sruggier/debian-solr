@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,21 +14,21 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
 
-import java.io.IOException;
-import java.io.Reader;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
 
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.automaton.CharacterRunAutomaton;
 
 /**
  * Analyzer for testing
  * <p>
  * This analyzer is a replacement for Whitespace/Simple/KeywordAnalyzers
  * for unit tests. If you are testing a custom component such as a queryparser
- * or analyzer-wrapper that consumes analysis streams, its a great idea to test
+ * or analyzer-wrapper that consumes analysis streams, it's a great idea to test
  * it with this analyzer instead. MockAnalyzer has the following behavior:
  * <ul>
  *   <li>By default, the assertions in {@link MockTokenizer} are turned on for extra
@@ -41,14 +39,14 @@ import org.apache.lucene.util.LuceneTestCase;
  * </ul>
  * @see MockTokenizer
  */
-public final class MockAnalyzer extends Analyzer { 
-  private final int pattern;
+public final class MockAnalyzer extends Analyzer {
+  private final CharacterRunAutomaton runAutomaton;
   private final boolean lowerCase;
-  private final CharArraySet filter;
-  private final boolean enablePositionIncrements;
+  private final CharacterRunAutomaton filter;
   private int positionIncrementGap;
+  private Integer offsetGap;
   private final Random random;
-  private Map<String,Integer> previousMappings = new HashMap<String,Integer>();
+  private Map<String,Integer> previousMappings = new HashMap<>();
   private boolean enableChecks = true;
   private int maxTokenLength = MockTokenizer.DEFAULT_MAX_TOKEN_LENGTH;
 
@@ -56,77 +54,54 @@ public final class MockAnalyzer extends Analyzer {
    * Creates a new MockAnalyzer.
    * 
    * @param random Random for payloads behavior
-   * @param pattern pattern constant describing how tokenization should happen
+   * @param runAutomaton DFA describing how tokenization should happen (e.g. [a-zA-Z]+)
    * @param lowerCase true if the tokenizer should lowercase terms
-   * @param filter CharArraySet describing how terms should be filtered (set of stopwords, etc)
-   * @param enablePositionIncrements true if position increments should reflect filtered terms.
+   * @param filter DFA describing how terms should be filtered (set of stopwords, etc)
    */
-  public MockAnalyzer(Random random, int pattern, boolean lowerCase, CharArraySet filter, boolean enablePositionIncrements) {
-    this.random = random;
-    this.pattern = pattern;
+  public MockAnalyzer(Random random, CharacterRunAutomaton runAutomaton, boolean lowerCase, CharacterRunAutomaton filter) {
+    super(PER_FIELD_REUSE_STRATEGY);
+    // TODO: this should be solved in a different way; Random should not be shared (!).
+    this.random = new Random(random.nextLong());
+    this.runAutomaton = runAutomaton;
     this.lowerCase = lowerCase;
     this.filter = filter;
-    this.enablePositionIncrements = enablePositionIncrements;
   }
 
   /**
-   * Calls {@link #MockAnalyzer(Random, int, boolean, CharArraySet, boolean) 
-   * MockAnalyzer(random, pattern, lowerCase, CharArraySet.EMPTY_STOPSET, true}).
+   * Calls {@link #MockAnalyzer(Random, CharacterRunAutomaton, boolean, CharacterRunAutomaton) 
+   * MockAnalyzer(random, runAutomaton, lowerCase, MockTokenFilter.EMPTY_STOPSET, false}).
    */
-  public MockAnalyzer(Random random, int pattern, boolean lowerCase) {
-    this(random, pattern, lowerCase, CharArraySet.EMPTY_SET, true);
+  public MockAnalyzer(Random random, CharacterRunAutomaton runAutomaton, boolean lowerCase) {
+    this(random, runAutomaton, lowerCase, MockTokenFilter.EMPTY_STOPSET);
   }
 
   /** 
    * Create a Whitespace-lowercasing analyzer with no stopwords removal.
    * <p>
-   * Calls {@link #MockAnalyzer(Random, int, boolean) 
-   * MockAnalyzer(random, MockTokenizer.WHITESPACE, true)}.
+   * Calls {@link #MockAnalyzer(Random, CharacterRunAutomaton, boolean, CharacterRunAutomaton) 
+   * MockAnalyzer(random, MockTokenizer.WHITESPACE, true, MockTokenFilter.EMPTY_STOPSET, false}).
    */
   public MockAnalyzer(Random random) {
     this(random, MockTokenizer.WHITESPACE, true);
   }
 
   @Override
-  public TokenStream tokenStream(String fieldName, Reader reader) {
-    MockTokenizer tokenizer = new MockTokenizer(reader, pattern, lowerCase, maxTokenLength);
+  public TokenStreamComponents createComponents(String fieldName) {
+    MockTokenizer tokenizer = new MockTokenizer(runAutomaton, lowerCase, maxTokenLength);
     tokenizer.setEnableChecks(enableChecks);
-    StopFilter filt = new StopFilter(LuceneTestCase.TEST_VERSION_CURRENT, tokenizer, filter);
-    filt.setEnablePositionIncrements(enablePositionIncrements);
-    return maybePayload(filt, fieldName);
-  }
-
-  private class SavedStreams {
-    MockTokenizer tokenizer;
-    TokenFilter filter;
+    MockTokenFilter filt = new MockTokenFilter(tokenizer, filter);
+    return new TokenStreamComponents(tokenizer, maybePayload(filt, fieldName));
   }
 
   @Override
-  public TokenStream reusableTokenStream(String fieldName, Reader reader)
-      throws IOException {
-    @SuppressWarnings("unchecked") Map<String,SavedStreams> map = (Map) getPreviousTokenStream();
-    if (map == null) {
-      map = new HashMap<String,SavedStreams>();
-      setPreviousTokenStream(map);
+  protected TokenStream normalize(String fieldName, TokenStream in) {
+    TokenStream result = in;
+    if (lowerCase) {
+      result = new MockLowerCaseFilter(result);
     }
-    
-    SavedStreams saved = map.get(fieldName);
-    if (saved == null) {
-      saved = new SavedStreams();
-      saved.tokenizer = new MockTokenizer(reader, pattern, lowerCase, maxTokenLength);
-      saved.tokenizer.setEnableChecks(enableChecks);
-      StopFilter filt = new StopFilter(LuceneTestCase.TEST_VERSION_CURRENT, saved.tokenizer, filter);
-      filt.setEnablePositionIncrements(enablePositionIncrements);
-      saved.filter = filt;
-      saved.filter = maybePayload(saved.filter, fieldName);
-      map.put(fieldName, saved);
-      return saved.filter;
-    } else {
-      saved.tokenizer.reset(reader);
-      return saved.filter;
-    }
+    return result;
   }
-  
+
   private synchronized TokenFilter maybePayload(TokenFilter stream, String fieldName) {
     Integer val = previousMappings.get(fieldName);
     if (val == null) {
@@ -139,6 +114,13 @@ public final class MockAnalyzer extends Analyzer {
                   break;
           case 2: val = random.nextInt(12); // fixed length payload
                   break;
+        }
+      }
+      if (LuceneTestCase.VERBOSE) {
+        if (val == Integer.MAX_VALUE) {
+          System.out.println("MockAnalyzer: field=" + fieldName + " gets variable length payloads");
+        } else if (val != -1) {
+          System.out.println("MockAnalyzer: field=" + fieldName + " gets fixed length=" + val + " payloads");
         }
       }
       previousMappings.put(fieldName, val); // save it so we are consistent for this field
@@ -159,6 +141,23 @@ public final class MockAnalyzer extends Analyzer {
   @Override
   public int getPositionIncrementGap(String fieldName){
     return positionIncrementGap;
+  }
+
+  /**
+   * Set a new offset gap which will then be added to the offset when several fields with the same name are indexed
+   * @param offsetGap The offset gap that should be used.
+   */
+  public void setOffsetGap(int offsetGap){
+    this.offsetGap = offsetGap;
+  }
+
+  /**
+   * Get the offset gap between tokens in fields if several fields with the same name were added.
+   * @param fieldName Currently not used, the same offset gap is returned for each field.
+   */
+  @Override
+  public int getOffsetGap(String fieldName){
+    return offsetGap == null ? super.getOffsetGap(fieldName) : offsetGap;
   }
   
   /** 

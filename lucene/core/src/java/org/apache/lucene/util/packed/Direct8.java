@@ -1,6 +1,6 @@
-package org.apache.lucene.util.packed;
+// This file has been automatically generated, DO NOT EDIT
 
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +16,7 @@ package org.apache.lucene.util.packed;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.packed;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -24,75 +25,80 @@ import java.io.IOException;
 import java.util.Arrays;
 
 /**
- * Direct wrapping of 8 bit values to a backing array of bytes.
+ * Direct wrapping of 8-bits values to a backing array.
  * @lucene.internal
  */
+final class Direct8 extends PackedInts.MutableImpl {
+  final byte[] values;
 
-class Direct8 extends PackedInts.ReaderImpl
-        implements PackedInts.Mutable {
-  private byte[] values;
-  private static final int BITS_PER_VALUE = 8;
-
-  public Direct8(int valueCount) {
-    super(valueCount, BITS_PER_VALUE);
+  Direct8(int valueCount) {
+    super(valueCount, 8);
     values = new byte[valueCount];
   }
 
-  public Direct8(DataInput in, int valueCount)
-          throws IOException {
-    super(valueCount, BITS_PER_VALUE);
-    byte[] values = new byte[valueCount];
-    for(int i=0;i<valueCount;i++) {
-      values[i] = in.readByte();
+  Direct8(int packedIntsVersion, DataInput in, int valueCount) throws IOException {
+    this(valueCount);
+    in.readBytes(values, 0, valueCount);
+    // because packed ints have not always been byte-aligned
+    final int remaining = (int) (PackedInts.Format.PACKED.byteCount(packedIntsVersion, valueCount, 8) - 1L * valueCount);
+    for (int i = 0; i < remaining; ++i) {
+      in.readByte();
     }
-    final int mod = valueCount % 8;
-    if (mod != 0) {
-      final int pad = 8-mod;
-      // round out long
-      for(int i=0;i<pad;i++) {
-        in.readByte();
-      }
-    }
-
-    this.values = values;
   }
 
-  /**
-   * Creates an array backed by the given values.
-   * </p><p>
-   * Note: The values are used directly, so changes to the given values will
-   * affect the structure.
-   * @param values used as the internal backing array.
-   */
-  public Direct8(byte[] values) {
-    super(values.length, BITS_PER_VALUE);
-    this.values = values;
-  }
-
+  @Override
   public long get(final int index) {
-    assert index >= 0 && index < size();
-    return 0xFFL & values[index];
+    return values[index] & 0xFFL;
   }
 
+  @Override
   public void set(final int index, final long value) {
-    values[index] = (byte)(value & 0xFF);
+    values[index] = (byte) (value);
   }
 
+  @Override
   public long ramBytesUsed() {
-    return RamUsageEstimator.sizeOf(values);
+    return RamUsageEstimator.alignObjectSize(
+        RamUsageEstimator.NUM_BYTES_OBJECT_HEADER
+        + 2 * RamUsageEstimator.NUM_BYTES_INT     // valueCount,bitsPerValue
+        + RamUsageEstimator.NUM_BYTES_OBJECT_REF) // values ref
+        + RamUsageEstimator.sizeOf(values);
   }
 
+  @Override
   public void clear() {
-    Arrays.fill(values, (byte)0);
+    Arrays.fill(values, (byte) 0L);
   }
 
   @Override
-  public Object getArray() {
-    return values;
+  public int get(int index, long[] arr, int off, int len) {
+    assert len > 0 : "len must be > 0 (got " + len + ")";
+    assert index >= 0 && index < valueCount;
+    assert off + len <= arr.length;
+
+    final int gets = Math.min(valueCount - index, len);
+    for (int i = index, o = off, end = index + gets; i < end; ++i, ++o) {
+      arr[o] = values[i] & 0xFFL;
+    }
+    return gets;
   }
 
   @Override
-  public boolean hasArray() {
-    return true;
+  public int set(int index, long[] arr, int off, int len) {
+    assert len > 0 : "len must be > 0 (got " + len + ")";
+    assert index >= 0 && index < valueCount;
+    assert off + len <= arr.length;
+
+    final int sets = Math.min(valueCount - index, len);
+    for (int i = index, o = off, end = index + sets; i < end; ++i, ++o) {
+      values[i] = (byte) arr[o];
+    }
+    return sets;
+  }
+
+  @Override
+  public void fill(int fromIndex, int toIndex, long val) {
+    assert val == (val & 0xFFL);
+    Arrays.fill(values, fromIndex, toIndex, (byte) val);
   }
 }

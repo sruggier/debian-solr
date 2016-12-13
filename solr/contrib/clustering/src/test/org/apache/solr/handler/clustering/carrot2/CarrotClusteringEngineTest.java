@@ -1,6 +1,4 @@
-package org.apache.solr.handler.clustering.carrot2;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.handler.clustering.carrot2;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.clustering.carrot2;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -34,16 +33,20 @@ import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.handler.clustering.AbstractClusteringTestCase;
 import org.apache.solr.handler.clustering.ClusteringComponent;
+import org.apache.solr.handler.clustering.ClusteringEngine;
+import org.apache.solr.handler.clustering.SearchClusteringEngine;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.search.DocList;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.util.RefCounted;
 import org.apache.solr.util.SolrPluginUtils;
+import org.carrot2.clustering.lingo.LingoClusteringAlgorithm;
 import org.carrot2.core.LanguageCode;
 import org.carrot2.util.attribute.AttributeUtils;
 import org.junit.Test;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 
 /**
  *
@@ -116,13 +119,20 @@ public class CarrotClusteringEngineTest extends AbstractClusteringTestCase {
 
   @Test
   public void testCarrotStc() throws Exception {
-    checkEngine(getClusteringEngine("stc"), 1);
+    checkEngine(getClusteringEngine("stc"), 3);
   }
 
   @Test
   public void testWithoutSubclusters() throws Exception {
     checkClusters(checkEngine(getClusteringEngine("mock"), AbstractClusteringTestCase.numberOfDocs),
-            1, 1, 0);
+        1, 1, 0);
+  }
+
+  @Test
+  public void testExternalXmlAttributesFile() throws Exception {
+    checkClusters(
+        checkEngine(getClusteringEngine("mock-external-attrs"), 13),
+        1, 4, 0);
   }
 
   @Test
@@ -359,7 +369,7 @@ public class CarrotClusteringEngineTest extends AbstractClusteringTestCase {
     params.add(CarrotParams.SNIPPET_FIELD_NAME, "snippet");
 
     final List<String> labels = getLabels(checkEngine(
-        getClusteringEngine("custom-duplicating-tokenizer"), 1, 16, new TermQuery(new Term("title",
+        getClusteringEngine("custom-duplicating-tokenizer"), 1, 15, new TermQuery(new Term("title",
             "field")), params).get(0));
     
     // The custom test tokenizer duplicates each token's text
@@ -380,12 +390,48 @@ public class CarrotClusteringEngineTest extends AbstractClusteringTestCase {
     assertTrue("First token", labels.get(0).contains("titletitle"));
   }
 
+  @Test
+  public void testDefaultEngineOrder() throws Exception {
+    ClusteringComponent comp = (ClusteringComponent) h.getCore().getSearchComponent("clustering-name-default");
+    Map<String,SearchClusteringEngine> engines = getSearchClusteringEngines(comp);
+    assertEquals(
+        Lists.newArrayList("stc", "default", "mock"),
+        Lists.newArrayList(engines.keySet()));
+    assertEquals(
+        LingoClusteringAlgorithm.class,
+        ((CarrotClusteringEngine) engines.get(ClusteringEngine.DEFAULT_ENGINE_NAME)).getClusteringAlgorithmClass());
+  }
+
+  @Test
+  public void testDeclarationEngineOrder() throws Exception {
+    ClusteringComponent comp = (ClusteringComponent) h.getCore().getSearchComponent("clustering-name-decl-order");
+    Map<String,SearchClusteringEngine> engines = getSearchClusteringEngines(comp);
+    assertEquals(
+        Lists.newArrayList("unavailable", "lingo", "stc", "mock", "default"),
+        Lists.newArrayList(engines.keySet()));
+    assertEquals(
+        LingoClusteringAlgorithm.class,
+        ((CarrotClusteringEngine) engines.get(ClusteringEngine.DEFAULT_ENGINE_NAME)).getClusteringAlgorithmClass());
+  }
+
+  @Test
+  public void testDeclarationNameDuplicates() throws Exception {
+    ClusteringComponent comp = (ClusteringComponent) h.getCore().getSearchComponent("clustering-name-dups");
+    Map<String,SearchClusteringEngine> engines = getSearchClusteringEngines(comp);
+    assertEquals(
+        Lists.newArrayList("", "default"),
+        Lists.newArrayList(engines.keySet()));
+    assertEquals(
+        MockClusteringAlgorithm.class,
+        ((CarrotClusteringEngine) engines.get(ClusteringEngine.DEFAULT_ENGINE_NAME)).getClusteringAlgorithmClass());
+  }
+
   private CarrotClusteringEngine getClusteringEngine(String engineName) {
     ClusteringComponent comp = (ClusteringComponent) h.getCore()
             .getSearchComponent("clustering");
     assertNotNull("clustering component should not be null", comp);
-    CarrotClusteringEngine engine = (CarrotClusteringEngine) comp
-            .getSearchClusteringEngines().get(engineName);
+    CarrotClusteringEngine engine = 
+        (CarrotClusteringEngine) getSearchClusteringEngines(comp).get(engineName);
     assertNotNull("clustering engine for name: " + engineName
             + " should not be null", engine);
     return engine;
@@ -419,9 +465,9 @@ public class CarrotClusteringEngineTest extends AbstractClusteringTestCase {
 
       // Perform clustering
       LocalSolrQueryRequest req = new LocalSolrQueryRequest(h.getCore(), solrParams);
-      Map<SolrDocument,Integer> docIds = new HashMap<SolrDocument, Integer>(docList.size());
+      Map<SolrDocument,Integer> docIds = new HashMap<>(docList.size());
       SolrDocumentList solrDocList = SolrPluginUtils.docListToSolrDocumentList( docList, searcher, engine.getFieldsToLoad(req), docIds );
-      
+
       @SuppressWarnings("unchecked")
       List<NamedList<Object>> results = (List<NamedList<Object>>) engine.cluster(query, solrDocList, docIds, req);
       req.close();

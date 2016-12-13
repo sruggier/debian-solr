@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,23 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.dataimport;
 
 import org.apache.solr.common.SolrException;
-import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.core.SolrConfig;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.schema.IndexSchema;
-import org.apache.solr.schema.SchemaField;
-import org.apache.solr.common.util.ContentStream;
+import org.apache.solr.util.SystemIdResolver;
 import org.apache.solr.common.util.NamedList;
-import org.apache.solr.common.util.StrUtils;
-import org.apache.solr.common.util.SystemIdResolver;
 import org.apache.solr.common.util.XMLErrorLogger;
+import org.apache.solr.handler.dataimport.config.ConfigNameConstants;
+import org.apache.solr.handler.dataimport.config.ConfigParseUtil;
+import org.apache.solr.handler.dataimport.config.DIHConfiguration;
+import org.apache.solr.handler.dataimport.config.Entity;
+import org.apache.solr.handler.dataimport.config.PropertyWriter;
+import org.apache.solr.handler.dataimport.config.Script;
 
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrapAndThrow;
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVERE;
+import static org.apache.solr.handler.dataimport.DocBuilder.loadClass;
+import static org.apache.solr.handler.dataimport.config.ConfigNameConstants.CLASS;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,19 +44,27 @@ import org.apache.commons.io.IOUtils;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+
+import java.io.IOException;
 import java.io.StringReader;
-import java.text.SimpleDateFormat;
-import java.util.*;
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * <p> Stores all configuration information for pulling and indexing data. </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public class DataImporter {
@@ -63,137 +73,122 @@ public class DataImporter {
     IDLE, RUNNING_FULL_DUMP, RUNNING_DELTA_DUMP, JOB_FAILED
   }
 
-  private static final Logger LOG = LoggerFactory.getLogger(DataImporter.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final XMLErrorLogger XMLLOG = new XMLErrorLogger(LOG);
 
   private Status status = Status.IDLE;
-
-  private DataConfig config;
-
+  private DIHConfiguration config;
   private Date indexStartTime;
-
   private Properties store = new Properties();
-
-  private Map<String, Properties> dataSourceProps = new HashMap<String, Properties>();
-
+  private Map<String, Map<String,String>> requestLevelDataSourceProps = new HashMap<>();
   private IndexSchema schema;
-
   public DocBuilder docBuilder;
-
   public DocBuilder.Statistics cumulativeStatistics = new DocBuilder.Statistics();
-
-  private SolrCore core;
-  
-  private DIHPropertiesWriter propWriter;
-
+  private SolrCore core;  
+  private Map<String, Object> coreScopeSession = new ConcurrentHashMap<>();
   private ReentrantLock importLock = new ReentrantLock();
-
-  private final Map<String , Object> coreScopeSession;
-
-  private boolean isDeltaImportSupported = false;
-  private final String handlerName;
+  private boolean isDeltaImportSupported = false;  
+  private final String handlerName;  
 
   /**
    * Only for testing purposes
    */
   DataImporter() {
-    coreScopeSession = new ConcurrentHashMap<String, Object>();
-    this.propWriter = new SimplePropertiesWriter();
-    propWriter.init(this);
     this.handlerName = "dataimport" ;
   }
-
-  DataImporter(InputSource dataConfig, SolrCore core, Map<String, Properties> ds, Map<String, Object> session, String handlerName) {
-      this.handlerName = handlerName;
-    if (dataConfig == null)
-      throw new DataImportHandlerException(SEVERE,
-              "Configuration not found");
+  
+  DataImporter(SolrCore core, String handlerName) {
+    this.handlerName = handlerName;
     this.core = core;
-    this.schema = core.getSchema();
-    this.propWriter = new SimplePropertiesWriter();
-    propWriter.init(this);
-    dataSourceProps = ds;
-    if (session == null)
-      session = new HashMap<String, Object>();
-    coreScopeSession = session;
-    loadDataConfig(dataConfig);
+    this.schema = core.getLatestSchema();
+  }
+  
+  
 
-    for (Map.Entry<String, SchemaField> entry : schema.getFields().entrySet()) {
-      config.lowerNameVsSchemaField.put(entry.getKey().toLowerCase(Locale.ENGLISH), entry.getValue());
-    }
-
-    for (DataConfig.Entity e : config.document.entities) {
-      Map<String, DataConfig.Field> fields = new HashMap<String, DataConfig.Field>();
-      initEntity(e, fields, false);
-      verifyWithSchema(fields);
-      identifyPk(e);
-      if (e.allAttributes.containsKey(SqlEntityProcessor.DELTA_QUERY))
-        isDeltaImportSupported = true;
+  
+  boolean maybeReloadConfiguration(RequestInfo params,
+      NamedList<?> defaultParams) throws IOException {
+  if (importLock.tryLock()) {
+      boolean success = false;
+      try {        
+        if (null != params.getRequest()) {
+          if (schema != params.getRequest().getSchema()) {
+            schema = params.getRequest().getSchema();
+          }
+        }
+        String dataConfigText = params.getDataConfig();
+        String dataconfigFile = params.getConfigFile();        
+        InputSource is = null;
+        if(dataConfigText!=null && dataConfigText.length()>0) {
+          is = new InputSource(new StringReader(dataConfigText));
+        } else if(dataconfigFile!=null) {
+          is = new InputSource(core.getResourceLoader().openResource(dataconfigFile));
+          is.setSystemId(SystemIdResolver.createSystemIdFromResourceName(dataconfigFile));
+          LOG.info("Loading DIH Configuration: " + dataconfigFile);
+        }
+        if(is!=null) {          
+          config = loadDataConfig(is);
+          success = true;
+        }      
+        
+        Map<String,Map<String,String>> dsProps = new HashMap<>();
+        if(defaultParams!=null) {
+          int position = 0;
+          while (position < defaultParams.size()) {
+            if (defaultParams.getName(position) == null) {
+              break;
+            }
+            String name = defaultParams.getName(position);            
+            if (name.equals("datasource")) {
+              success = true;
+              NamedList dsConfig = (NamedList) defaultParams.getVal(position);
+              LOG.info("Getting configuration for Global Datasource...");              
+              Map<String,String> props = new HashMap<>();
+              for (int i = 0; i < dsConfig.size(); i++) {
+                props.put(dsConfig.getName(i), dsConfig.getVal(i).toString());
+              }
+              LOG.info("Adding properties to datasource: " + props);
+              dsProps.put((String) dsConfig.get("name"), props);
+            }
+            position++;
+          }
+        }
+        requestLevelDataSourceProps = Collections.unmodifiableMap(dsProps);
+      } catch(IOException ioe) {
+        throw ioe;
+      } finally {
+        importLock.unlock();
+      }
+      return success;
+    } else {
+      return false;
     }
   }
+  
+  
+  
+  public String getHandlerName() {
+    return handlerName;
+  }
 
-   public String getHandlerName() {
-        return handlerName;
-    }
-
-    private void verifyWithSchema(Map<String, DataConfig.Field> fields) {
-    Map<String, SchemaField> schemaFields = schema.getFields();
-    for (Map.Entry<String, SchemaField> entry : schemaFields.entrySet()) {
-      SchemaField sf = entry.getValue();
-      if (!fields.containsKey(sf.getName())) {
-        if (sf.isRequired()) {
-          LOG
-                  .info(sf.getName()
-                          + " is a required field in SolrSchema . But not found in DataConfig");
-        }
-      }
-    }
-    for (Map.Entry<String, DataConfig.Field> entry : fields.entrySet()) {
-      DataConfig.Field fld = entry.getValue();
-      SchemaField field = schema.getFieldOrNull(fld.getName());
-      if (field == null) {
-        field = config.lowerNameVsSchemaField.get(fld.getName().toLowerCase(Locale.ENGLISH));
-        if (field == null) {
-          LOG.info("The field :" + fld.getName() + " present in DataConfig does not have a counterpart in Solr Schema");
-        }
-      }
-    }
-
+  public IndexSchema getSchema() {
+    return schema;
   }
 
   /**
    * Used by tests
    */
-  void loadAndInit(String configStr) {
-    loadDataConfig(new InputSource(new StringReader(configStr)));
-    Map<String, DataConfig.Field> fields = new HashMap<String, DataConfig.Field>();
-    for (DataConfig.Entity entity : config.document.entities) {
-      initEntity(entity, fields, false);
-    }
+  public void loadAndInit(String configStr) {
+    config = loadDataConfig(new InputSource(new StringReader(configStr)));
   }
 
-  private void identifyPk(DataConfig.Entity entity) {
-    SchemaField uniqueKey = schema.getUniqueKeyField();
-    String schemaPk = "";
-    if (uniqueKey != null)
-      schemaPk = uniqueKey.getName();
-    else return;
-    //if no fields are mentioned . solr uniqueKey is same as dih 'pk'
-    entity.pkMappingFromSchema = schemaPk;
-    for (DataConfig.Field field : entity.fields) {
-      if(field.getName().equals(schemaPk)) {
-        entity.pkMappingFromSchema = field.column;
-        //get the corresponding column mapping for the solr uniqueKey
-        // But if there are multiple columns mapping to the solr uniqueKey, it will fail
-        // so , in one off cases we may need pk
-        break;
-      }
-    } 
-
+  public void loadAndInit(InputSource configFile) {
+    config = loadDataConfig(configFile);
   }
 
-  private void loadDataConfig(InputSource configFile) {
+  public DIHConfiguration loadDataConfig(InputSource configFile) {
 
+    DIHConfiguration dihcfg = null;
     try {
       DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
       
@@ -219,78 +214,126 @@ public class DataImporter {
         IOUtils.closeQuietly(configFile.getByteStream());
       }
 
-      config = new DataConfig();
-      NodeList elems = document.getElementsByTagName("dataConfig");
-      if(elems == null || elems.getLength() == 0) {
-        throw new DataImportHandlerException(SEVERE, "the root node '<dataConfig>' is missing");
-      }
-      config.readFromXml((Element) elems.item(0));
+      dihcfg = readFromXml(document);
       LOG.info("Data Configuration loaded successfully");
     } catch (Exception e) {
-      SolrConfig.severeErrors.add(e);
       throw new DataImportHandlerException(SEVERE,
-              "Exception occurred while initializing context", e);
+              "Data Config problem: " + e.getMessage(), e);
     }
-  }
-
-  private void initEntity(DataConfig.Entity e,
-                          Map<String, DataConfig.Field> fields, boolean docRootFound) {
-    e.allAttributes.put(DATA_SRC, e.dataSource);
-
-    if (!docRootFound && !"false".equals(e.docRoot)) {
-      // if in this chain no document root is found()
-      e.isDocRoot = true;
-    }
-    if (e.allAttributes.get("threads") != null) {
-      if(docRootFound) throw new DataImportHandlerException(DataImportHandlerException.SEVERE, "'threads' not allowed below rootEntity ");
-      LOG.warn("The DataImportHandler 'threads' parameter is deprecated and will be removed in a future release.");
-      config.isMultiThreaded = true;      
-    }
-
-    if (e.fields != null) {
-      for (DataConfig.Field f : e.fields) {
-        if (schema != null) {
-          if(f.name != null && f.name.contains("${")){
-            f.dynamicName = true;
-            continue;
-          }
-          SchemaField schemaField = schema.getFieldOrNull(f.getName());
-          if (schemaField == null) {
-            schemaField = config.lowerNameVsSchemaField.get(f.getName().toLowerCase(Locale.ENGLISH));
-            if (schemaField != null) f.name = schemaField.getName();
-          }
-          if (schemaField != null) {
-            f.multiValued = schemaField.multiValued();
-            f.allAttributes.put(MULTI_VALUED, Boolean.toString(schemaField
-                    .multiValued()));
-            f.allAttributes.put(TYPE, schemaField.getType().getTypeName());
-            f.allAttributes.put("indexed", Boolean.toString(schemaField.indexed()));
-            f.allAttributes.put("stored", Boolean.toString(schemaField.stored()));
-            f.allAttributes.put("defaultValue", schemaField.getDefaultValue());
-          } else {
-            f.toWrite = false;
-          }
-        }
-        fields.put(f.getName(), f);
-        f.entity = e;
-        f.allAttributes.put("boost", f.boost.toString());
-        f.allAttributes.put("toWrite", Boolean.toString(f.toWrite));
-        e.allFieldsList.add(Collections.unmodifiableMap(f.allAttributes));
+    for (Entity e : dihcfg.getEntities()) {
+      if (e.getAllAttributes().containsKey(SqlEntityProcessor.DELTA_QUERY)) {
+        isDeltaImportSupported = true;
+        break;
       }
     }
-    e.allFieldsList = Collections.unmodifiableList(e.allFieldsList);
-    e.allAttributes = Collections.unmodifiableMap(e.allAttributes);
-
-    if (e.entities == null)
-      return;
-    for (DataConfig.Entity e1 : e.entities) {
-      e1.parentEntity = e;
-      initEntity(e1, fields, e.isDocRoot || docRootFound);
+    return dihcfg;
+  }
+  
+  public DIHConfiguration readFromXml(Document xmlDocument) {
+    DIHConfiguration config;
+    List<Map<String, String >> functions = new ArrayList<>();
+    Script script = null;
+    Map<String, Map<String,String>> dataSources = new HashMap<>();
+    
+    NodeList dataConfigTags = xmlDocument.getElementsByTagName("dataConfig");
+    if(dataConfigTags == null || dataConfigTags.getLength() == 0) {
+      throw new DataImportHandlerException(SEVERE, "the root node '<dataConfig>' is missing");
+    }
+    Element e = (Element) dataConfigTags.item(0);
+    List<Element> documentTags = ConfigParseUtil.getChildNodes(e, "document");
+    if (documentTags.isEmpty()) {
+      throw new DataImportHandlerException(SEVERE, "DataImportHandler " +
+              "configuration file must have one <document> node.");
     }
 
+    List<Element> scriptTags = ConfigParseUtil.getChildNodes(e, ConfigNameConstants.SCRIPT);
+    if (!scriptTags.isEmpty()) {
+      script = new Script(scriptTags.get(0));
+    }
+
+    // Add the provided evaluators
+    List<Element> functionTags = ConfigParseUtil.getChildNodes(e, ConfigNameConstants.FUNCTION);
+    if (!functionTags.isEmpty()) {
+      for (Element element : functionTags) {
+        String func = ConfigParseUtil.getStringAttribute(element, NAME, null);
+        String clz = ConfigParseUtil.getStringAttribute(element, ConfigNameConstants.CLASS, null);
+        if (func == null || clz == null){
+          throw new DataImportHandlerException(
+                  SEVERE,
+                  "<function> must have a 'name' and 'class' attributes");
+        } else {
+          functions.add(ConfigParseUtil.getAllAttributes(element));
+        }
+      }
+    }
+    List<Element> dataSourceTags = ConfigParseUtil.getChildNodes(e, ConfigNameConstants.DATA_SRC);
+    if (!dataSourceTags.isEmpty()) {
+      for (Element element : dataSourceTags) {
+        Map<String,String> p = new HashMap<>();
+        HashMap<String, String> attrs = ConfigParseUtil.getAllAttributes(element);
+        for (Map.Entry<String, String> entry : attrs.entrySet()) {
+          p.put(entry.getKey(), entry.getValue());
+        }
+        dataSources.put(p.get("name"), p);
+      }
+    }
+    if(dataSources.get(null) == null){
+      for (Map<String,String> properties : dataSources.values()) {
+        dataSources.put(null,properties);
+        break;        
+      } 
+    }
+    PropertyWriter pw = null;
+    List<Element> propertyWriterTags = ConfigParseUtil.getChildNodes(e, ConfigNameConstants.PROPERTY_WRITER);
+    if (propertyWriterTags.isEmpty()) {
+      boolean zookeeper = false;
+      if (this.core != null
+          && this.core.getCoreDescriptor().getCoreContainer()
+              .isZooKeeperAware()) {
+        zookeeper = true;
+      }
+      pw = new PropertyWriter(zookeeper ? "ZKPropertiesWriter"
+          : "SimplePropertiesWriter", Collections.<String,String> emptyMap());
+    } else if (propertyWriterTags.size() > 1) {
+      throw new DataImportHandlerException(SEVERE, "Only one "
+          + ConfigNameConstants.PROPERTY_WRITER + " can be configured.");
+    } else {
+      Element pwElement = propertyWriterTags.get(0);
+      String type = null;
+      Map<String,String> params = new HashMap<>();
+      for (Map.Entry<String,String> entry : ConfigParseUtil.getAllAttributes(
+          pwElement).entrySet()) {
+        if (TYPE.equals(entry.getKey())) {
+          type = entry.getValue();
+        } else {
+          params.put(entry.getKey(), entry.getValue());
+        }
+      }
+      if (type == null) {
+        throw new DataImportHandlerException(SEVERE, "The "
+            + ConfigNameConstants.PROPERTY_WRITER + " element must specify "
+            + TYPE);
+      }
+      pw = new PropertyWriter(type, params);
+    }
+    return new DIHConfiguration(documentTags.get(0), this, functions, script, dataSources, pw);
+  }
+    
+  @SuppressWarnings("unchecked")
+  private DIHProperties createPropertyWriter() {
+    DIHProperties propWriter = null;
+    PropertyWriter configPw = config.getPropertyWriter();
+    try {
+      Class<DIHProperties> writerClass = DocBuilder.loadClass(configPw.getType(), this.core);
+      propWriter = writerClass.newInstance();
+      propWriter.init(this, configPw.getParameters());
+    } catch (Exception e) {
+      throw new DataImportHandlerException(DataImportHandlerException.SEVERE, "Unable to PropertyWriter implementation:" + configPw.getType(), e);
+    }
+    return propWriter;
   }
 
-  DataConfig getConfig() {
+  public DIHConfiguration getConfig() {
     return config;
   }
 
@@ -310,19 +353,18 @@ public class DataImporter {
     return store.get(key);
   }
 
-  DataSource getDataSourceInstance(DataConfig.Entity key, String name, Context ctx) {
-    Properties p = dataSourceProps.get(name);
+  public DataSource getDataSourceInstance(Entity key, String name, Context ctx) {
+    Map<String,String> p = requestLevelDataSourceProps.get(name);
     if (p == null)
-      p = config.dataSources.get(name);
+      p = config.getDataSources().get(name);
     if (p == null)
-      p = dataSourceProps.get(null);// for default data source
+      p = requestLevelDataSourceProps.get(null);// for default data source
     if (p == null)
-      p = config.dataSources.get(null);
+      p = config.getDataSources().get(null);
     if (p == null)  
       throw new DataImportHandlerException(SEVERE,
-              "No dataSource :" + name + " available for entity :"
-                      + key.name);
-    String type = p.getProperty(TYPE);
+              "No dataSource :" + name + " available for entity :" + key.getName());
+    String type = p.get(TYPE);
     DataSource dataSrc = null;
     if (type == null) {
       dataSrc = new JdbcDataSource();
@@ -346,7 +388,7 @@ public class DataImporter {
       }
       dataSrc.init(ctx, copyProps);
     } catch (Exception e) {
-      wrapAndThrow(SEVERE, e, "Failed to initialize DataSource: " + key.dataSource);
+      wrapAndThrow(SEVERE, e, "Failed to initialize DataSource: " + key.getDataSourceName());
     }
     return dataSrc;
   }
@@ -363,73 +405,61 @@ public class DataImporter {
     return importLock.isLocked();
   }
 
-  public void doFullImport(SolrWriter writer, RequestParams requestParams) {
+  public void doFullImport(DIHWriter writer, RequestInfo requestParams) {
     LOG.info("Starting Full Import");
     setStatus(Status.RUNNING_FULL_DUMP);
-
-    setIndexStartTime(new Date());
-
     try {
-      docBuilder = new DocBuilder(this, writer, propWriter, requestParams);
-      checkWritablePersistFile(writer);
+      DIHProperties dihPropWriter = createPropertyWriter();
+      setIndexStartTime(dihPropWriter.getCurrentTimestamp());
+      docBuilder = new DocBuilder(this, writer, dihPropWriter, requestParams);
+      checkWritablePersistFile(writer, dihPropWriter);
       docBuilder.execute();
-      if (!requestParams.debug)
+      if (!requestParams.isDebug())
         cumulativeStatistics.add(docBuilder.importStatistics);
-    } catch (Throwable t) {
-      SolrException.log(LOG, "Full Import failed", t);
-      docBuilder.rollback();
+    } catch (Exception e) {
+      SolrException.log(LOG, "Full Import failed", e);
+      docBuilder.handleError("Full Import failed", e);
     } finally {
       setStatus(Status.IDLE);
-      config.clearCaches();
       DocBuilder.INSTANCE.set(null);
-      docBuilder.destroy();
     }
 
   }
 
-  private void checkWritablePersistFile(SolrWriter writer) {
-//  	File persistFile = propWriter.getPersistFile();
-//    boolean isWritable = persistFile.exists() ? persistFile.canWrite() : persistFile.getParentFile().canWrite();
-    if (isDeltaImportSupported && !propWriter.isWritable()) {
+  private void checkWritablePersistFile(DIHWriter writer, DIHProperties dihPropWriter) {
+   if (isDeltaImportSupported && !dihPropWriter.isWritable()) {
       throw new DataImportHandlerException(SEVERE,
           "Properties is not writable. Delta imports are supported by data config but will not work.");
     }
   }
 
-  public void doDeltaImport(SolrWriter writer, RequestParams requestParams) {
+  public void doDeltaImport(DIHWriter writer, RequestInfo requestParams) {
     LOG.info("Starting Delta Import");
     setStatus(Status.RUNNING_DELTA_DUMP);
-
     try {
-      setIndexStartTime(new Date());
-      docBuilder = new DocBuilder(this, writer, propWriter, requestParams);
-      checkWritablePersistFile(writer);
+      DIHProperties dihPropWriter = createPropertyWriter();
+      setIndexStartTime(dihPropWriter.getCurrentTimestamp());
+      docBuilder = new DocBuilder(this, writer, dihPropWriter, requestParams);
+      checkWritablePersistFile(writer, dihPropWriter);
       docBuilder.execute();
-      if (!requestParams.debug)
+      if (!requestParams.isDebug())
         cumulativeStatistics.add(docBuilder.importStatistics);
-    } catch (Throwable t) {
-      LOG.error("Delta Import Failed", t);
-      docBuilder.rollback();
+    } catch (Exception e) {
+      LOG.error("Delta Import Failed", e);
+      docBuilder.handleError("Delta Import Failed", e);
     } finally {
       setStatus(Status.IDLE);
-      config.clearCaches();
       DocBuilder.INSTANCE.set(null);
-      docBuilder.destroy();
     }
 
   }
 
-  public void runAsync(final RequestParams reqParams, final SolrWriter sw) {
-    new Thread() {
-      @Override
-      public void run() {
-        runCmd(reqParams, sw);
-      }
-    }.start();
+  public void runAsync(final RequestInfo reqParams, final DIHWriter sw) {
+    new Thread(() -> runCmd(reqParams, sw)).start();
   }
 
-  void runCmd(RequestParams reqParams, SolrWriter sw) {
-    String command = reqParams.command;
+  void runCmd(RequestInfo reqParams, DIHWriter sw) {
+    String command = reqParams.getCommand();
     if (command.equals(ABORT_CMD)) {
       if (docBuilder != null) {
         docBuilder.abort();
@@ -456,7 +486,7 @@ public class DataImporter {
     //this map object is a Collections.synchronizedMap(new LinkedHashMap()). if we
     // synchronize on the object it must be safe to iterate through the map
     Map statusMessages = (Map) retrieve(STATUS_MSGS);
-    Map<String, String> result = new LinkedHashMap<String, String>();
+    Map<String, String> result = new LinkedHashMap<>();
     if (statusMessages != null) {
       synchronized (statusMessages) {
         for (Object o : statusMessages.entrySet()) {
@@ -470,8 +500,37 @@ public class DataImporter {
 
   }
 
-  DocBuilder getDocBuilder() {
+  public DocBuilder getDocBuilder() {
     return docBuilder;
+  }
+
+  public DocBuilder getDocBuilder(DIHWriter writer, RequestInfo requestParams) {
+    DIHProperties dihPropWriter = createPropertyWriter();
+    return new DocBuilder(this, writer, dihPropWriter, requestParams);
+  }
+
+  Map<String, Evaluator> getEvaluators() {
+    return getEvaluators(config.getFunctions());
+  }
+  
+  /**
+   * used by tests.
+   */
+  Map<String, Evaluator> getEvaluators(List<Map<String,String>> fn) {
+    Map<String, Evaluator> evaluators = new HashMap<>();
+    evaluators.put(Evaluator.DATE_FORMAT_EVALUATOR, new DateFormatEvaluator());
+    evaluators.put(Evaluator.SQL_ESCAPE_EVALUATOR, new SqlEscapingEvaluator());
+    evaluators.put(Evaluator.URL_ENCODE_EVALUATOR, new UrlEvaluator());
+    evaluators.put(Evaluator.ESCAPE_SOLR_QUERY_CHARS, new SolrQueryEscapingEvaluator());
+    SolrCore core = docBuilder == null ? null : docBuilder.dataImporter.getCore();
+    for (Map<String, String> map : fn) {
+      try {
+        evaluators.put(map.get(NAME), (Evaluator) loadClass(map.get(CLASS), core).newInstance());
+      } catch (Exception e) {
+        wrapAndThrow(SEVERE, e, "Unable to instantiate evaluator: " + map.get(CLASS));
+      }
+    }
+    return evaluators;    
   }
 
   static final ThreadLocal<AtomicLong> QUERY_COUNT = new ThreadLocal<AtomicLong>() {
@@ -481,12 +540,7 @@ public class DataImporter {
     }
   };
 
-  static final ThreadLocal<SimpleDateFormat> DATE_TIME_FORMAT = new ThreadLocal<SimpleDateFormat>() {
-    @Override
-    protected SimpleDateFormat initialValue() {
-      return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-    }
-  };
+  
 
   static final class MSG {
     public static final String NO_CONFIG_FOUND = "Configuration not found";
@@ -504,6 +558,8 @@ public class DataImporter {
     public static final String DEBUG_NOT_ENABLED = "Debug not enabled. Add a tag <str name=\"enableDebug\">true</str> in solrconfig.xml";
 
     public static final String CONFIG_RELOADED = "Configuration Re-loaded sucessfully";
+    
+    public static final String CONFIG_NOT_RELOADED = "Configuration NOT Re-loaded...Data Importer is busy.";
 
     public static final String TOTAL_DOC_PROCESSED = "Total Documents Processed";
 
@@ -518,99 +574,15 @@ public class DataImporter {
     public static final String TOTAL_DOCS_SKIPPED = "Total Documents Skipped";
   }
 
-  static final class RequestParams {
-    public String command = null;
-
-    public boolean debug = false;
-    
-    public boolean verbose = false;
-
-    public boolean syncMode = false;
-
-    public boolean commit = true;
-
-    public boolean optimize = false;
-
-    public int start = 0;
-
-    public long rows = Integer.MAX_VALUE;
-
-    public boolean clean = true;
-
-    public List<String> entities;
-
-    public Map<String, Object> requestParams;
-
-    public String dataConfig;
-
-    public ContentStream contentStream;
-    
-    public List<SolrInputDocument> debugDocuments = new ArrayList<SolrInputDocument>(0);
-    
-    public NamedList debugVerboseOutput = null;
-
-    public RequestParams() {
-    }
-
-    public RequestParams(Map<String, Object> requestParams) {
-      if (requestParams.containsKey("command"))
-        command = (String) requestParams.get("command");
-
-      if (StrUtils.parseBool((String)requestParams.get("debug"),false)) {
-        debug = true;
-        rows = 10;
-        // Set default values suitable for debug mode
-        commit = false;
-        clean = false;
-        verbose = StrUtils.parseBool((String)requestParams.get("verbose"),false);
-      }
-      syncMode = StrUtils.parseBool((String)requestParams.get("synchronous"),false);
-      if (DELTA_IMPORT_CMD.equals(command) || IMPORT_CMD.equals(command)) {
-        clean = false;
-      }
-      if (requestParams.containsKey("commit"))
-        commit = StrUtils.parseBool((String) requestParams.get("commit"),true);
-      if (requestParams.containsKey("start"))
-        start = Integer.parseInt((String) requestParams.get("start"));
-      if (requestParams.containsKey("rows"))
-        rows = Integer.parseInt((String) requestParams.get("rows"));
-      if (requestParams.containsKey("clean"))
-        clean = StrUtils.parseBool((String) requestParams.get("clean"),true);
-      if (requestParams.containsKey("optimize")) {
-        optimize = StrUtils.parseBool((String) requestParams.get("optimize"),false);
-        if (optimize)
-          commit = true;
-      }
-
-      Object o = requestParams.get("entity");
-
-      if (o != null && o instanceof String) {
-        entities = new ArrayList<String>();
-        entities.add((String) o);
-      } else if (o != null && o instanceof List) {
-        entities = (List<String>) requestParams.get("entity");
-      }
-
-      dataConfig = (String) requestParams.get("dataConfig");
-      if (dataConfig != null && dataConfig.trim().length() == 0) {
-        // Empty data-config param is not valid, change it to null
-        dataConfig = null;
-      }
-
-      this.requestParams = requestParams;
-    }
-  }
-
-  IndexSchema getSchema() {
-    return schema;
-  }
-
-  Map<String, Object> getCoreScopeSession() {
-    return coreScopeSession;
-  }
-
-  SolrCore getCore() {
+  public SolrCore getCore() {
     return core;
+  }
+  
+  void putToCoreScopeSession(String key, Object val) {
+    coreScopeSession.put(key, val);
+  }
+  Object getFromCoreScopeSession(String key) {
+    return coreScopeSession.get(key);
   }
 
   public static final String COLUMN = "column";
@@ -638,4 +610,5 @@ public class DataImporter {
   public static final String RELOAD_CONF_CMD = "reload-config";
 
   public static final String SHOW_CONF_CMD = "show-config";
+  
 }

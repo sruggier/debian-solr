@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.collector;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,49 +14,44 @@ package org.apache.solr.search.grouping.collector;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.Collector;
-import org.apache.lucene.search.Scorer;
-import org.apache.solr.search.DocSet;
+package org.apache.solr.search.grouping.collector;
 
 import java.io.IOException;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.LeafCollector;
+import org.apache.lucene.search.Collector;
+import org.apache.lucene.search.FilterLeafCollector;
+import org.apache.solr.search.DocSet;
 
 /**
  * A collector that filters incoming doc ids that are not in the filter.
  *
  * @lucene.experimental
  */
-public class FilterCollector extends Collector {
+public class FilterCollector extends org.apache.lucene.search.FilterCollector {
 
   private final DocSet filter;
-  private final Collector delegate;
-  private int docBase;
   private int matches;
 
-  public FilterCollector(DocSet filter, Collector delegate) throws IOException {
+  public FilterCollector(DocSet filter, Collector delegate) {
+    super(delegate);
     this.filter = filter;
-    this.delegate = delegate;
   }
 
-  public void setScorer(Scorer scorer) throws IOException {
-    delegate.setScorer(scorer);
-  }
-
-  public void collect(int doc) throws IOException {
-    matches++;
-    if (filter.exists(doc + docBase)) {
-      delegate.collect(doc);
-    }
-  }
-
-  public void setNextReader(IndexReader indexReader, int docBase) throws IOException {
-    this.docBase = docBase;
-    delegate.setNextReader(indexReader, docBase);
-  }
-
-  public boolean acceptsDocsOutOfOrder() {
-    return delegate.acceptsDocsOutOfOrder();
+  @Override
+  public LeafCollector getLeafCollector(LeafReaderContext context)
+      throws IOException {
+    final int docBase = context.docBase;
+    return new FilterLeafCollector(super.getLeafCollector(context)) {
+      @Override
+      public void collect(int doc) throws IOException {
+        matches++;
+        if (filter.exists(doc + docBase)) {
+          super.collect(doc);
+        }
+      }
+    };
   }
 
   public int getMatches() {
@@ -71,6 +64,6 @@ public class FilterCollector extends Collector {
    * @return the delegate collector
    */
   public Collector getDelegate() {
-    return delegate;
+    return in;
   }
 }

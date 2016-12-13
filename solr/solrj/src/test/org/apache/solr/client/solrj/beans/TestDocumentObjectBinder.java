@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -20,141 +20,145 @@ import org.apache.lucene.util.LuceneTestCase;
 
 import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.client.solrj.response.QueryResponse;
-import org.apache.solr.client.solrj.util.ClientUtils;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.SolrInputField;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.util.NamedList;
-import org.junit.Assert;
+import org.junit.Test;
 
 import java.io.StringReader;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class TestDocumentObjectBinder extends LuceneTestCase 
-{
+
+public class TestDocumentObjectBinder extends LuceneTestCase {
+
   public void testSimple() throws Exception {
     DocumentObjectBinder binder = new DocumentObjectBinder();
     XMLResponseParser parser = new XMLResponseParser();
-    NamedList<Object> nl = null;
-    nl = parser.processResponse(new StringReader(xml));
+    NamedList<Object> nl = parser.processResponse(new StringReader(xml));
     QueryResponse res = new QueryResponse(nl, null);
+
     SolrDocumentList solDocList = res.getResults();
     List<Item> l = binder.getBeans(Item.class,res.getResults());
-    Assert.assertEquals(solDocList.size(), l.size());
-    Assert.assertEquals(solDocList.get(0).getFieldValue("features"), l.get(0).features);
+    assertEquals(solDocList.size(), l.size());
+    assertEquals(solDocList.get(0).getFieldValue("features"), l.get(0).features);
 
     Item item = new Item();
     item.id = "aaa";
-    item.categories = new String[] { "aaa", "bbb", "ccc" };
-    SolrInputDocument out = binder.toSolrInputDocument( item );
+    item.categories = new String[] {"aaa", "bbb", "ccc"};
+    SolrInputDocument out = binder.toSolrInputDocument(item);
 
-    Assert.assertEquals( item.id, out.getFieldValue( "id" ) );
-    SolrInputField catfield = out.getField( "cat" );
-    Assert.assertEquals( 3, catfield.getValueCount() );
-    Assert.assertEquals( "[aaa, bbb, ccc]", catfield.getValue().toString() );
+    assertEquals(item.id, out.getFieldValue("id"));
+    SolrInputField catfield = out.getField("cat");
+    assertEquals(3, catfield.getValueCount());
 
-    // Test the error on not settable stuff...
-    NotGettableItem ng = new NotGettableItem();
-    ng.setInStock( false );
-    try {
-      out = binder.toSolrInputDocument( ng );
-      Assert.fail( "Should throw an error" );
-    }
-    catch( RuntimeException ex ) {
-      // ok -- this should happen...
-    }
+    List<String> catValues = (List<String>) catfield.getValue();
+    assertEquals("aaa", catValues.get(0));
+    assertEquals("bbb", catValues.get(1));
+    assertEquals("ccc", catValues.get(2));
   }
-  public void testSingleVal4Array(){
+
+  @Test(expected = BindingException.class)
+  public void testNoGetterError() {
+    NotGettableItem notGettableItem = new NotGettableItem();
+    notGettableItem.setInStock(false);
+    new DocumentObjectBinder().toSolrInputDocument(notGettableItem);
+  }
+
+  public void testSingleVal4Array() {
     DocumentObjectBinder binder = new DocumentObjectBinder();
     SolrDocumentList solDocList = new SolrDocumentList();
     SolrDocument d = new SolrDocument();
     solDocList.add(d);
-    d.setField("cat","hello");
-    List<Item> l = binder.getBeans(Item.class,solDocList);
-    Assert.assertEquals("hello", l.get(0).categories[0]);
-
+    d.setField("cat", "hello");
+    List<Item> l = binder.getBeans(Item.class, solDocList);
+    assertEquals("hello", l.get(0).categories[0]);
   }
 
-  public void testDynamicFieldBinding(){
+  public void testDynamicFieldBinding() {
     DocumentObjectBinder binder = new DocumentObjectBinder();
     XMLResponseParser parser = new XMLResponseParser();
     NamedList<Object> nl = parser.processResponse(new StringReader(xml));
     QueryResponse res = new QueryResponse(nl, null);
     List<Item> l = binder.getBeans(Item.class,res.getResults());
-    Assert.assertArrayEquals(new String[]{"Mobile Store","iPod Store","CCTV Store"}, l.get(3).getAllSuppliers());
-    Assert.assertTrue(l.get(3).supplier.containsKey("supplier_1"));
-    Assert.assertTrue(l.get(3).supplier.containsKey("supplier_2"));
-    Assert.assertEquals(2, l.get(3).supplier.size());
-    Assert.assertEquals("[Mobile Store, iPod Store]", l.get(3).supplier.get("supplier_1").toString());
-    Assert.assertEquals("[CCTV Store]", l.get(3).supplier.get("supplier_2").toString());
+
+    assertArrayEquals(new String[]{"Mobile Store", "iPod Store", "CCTV Store"}, l.get(3).getAllSuppliers());
+    assertTrue(l.get(3).supplier.containsKey("supplier_1"));
+    assertTrue(l.get(3).supplier.containsKey("supplier_2"));
+    assertEquals(2, l.get(3).supplier.size());
+
+    List<String> supplierOne = l.get(3).supplier.get("supplier_1");
+    assertEquals("Mobile Store", supplierOne.get(0));
+    assertEquals("iPod Store", supplierOne.get(1));
+
+    List<String> supplierTwo = l.get(3).supplier.get("supplier_2");
+    assertEquals("CCTV Store", supplierTwo.get(0));
   }
 
-  public void testToAndFromSolrDocument()
-  {
-    Item item = new Item();
-    item.id = "one";
-    item.inStock = false;
-    item.categories =  new String[] { "aaa", "bbb", "ccc" };
-    item.features = Arrays.asList( item.categories );
-    List<String> supA =  Arrays.asList("supA1", "supA2", "supA3");
-    List<String> supB =  Arrays.asList("supB1", "supB2", "supB3");
-    item.supplier = new HashMap<String, List<String>>();
-    item.supplier.put("supplier_supA", supA);
-    item.supplier.put("supplier_supB", supB);
-    
-    item.supplier_simple = new HashMap<String, String>();
-    item.supplier_simple.put("sup_simple_supA", "supA_val");
-    item.supplier_simple.put("sup_simple_supB", "supB_val");
-    
+  public void testChild() throws Exception {
+    SingleValueChild in = new SingleValueChild();
+    in.id = "1";
+    in.child = new Child();
+    in.child.id = "1.0";
+    in.child.name = "Name One";
     DocumentObjectBinder binder = new DocumentObjectBinder();
-    SolrInputDocument doc = binder.toSolrInputDocument( item );
-    SolrDocumentList docs = new SolrDocumentList();
-    docs.add( ClientUtils.toSolrDocument(doc) );
-    Item out = binder.getBeans( Item.class, docs ).get( 0 );
-    Item singleOut = binder.getBean(Item.class, ClientUtils.toSolrDocument(doc));
-    
-    // make sure it came out the same
-    Assert.assertEquals( item.id, out.id );
-    Assert.assertEquals( item.inStock, out.inStock );
-    Assert.assertEquals( item.categories.length, out.categories.length );
-    Assert.assertEquals( item.features, out.features );
-    Assert.assertEquals( supA,out.supplier.get("supplier_supA"));
-    Assert.assertEquals( supB, out.supplier.get("supplier_supB"));
-    Assert.assertEquals( item.supplier_simple.get("sup_simple_supB"), out.supplier_simple.get("sup_simple_supB"));
-    
-    Assert.assertEquals( item.id, singleOut.id );
-    Assert.assertEquals( item.inStock, singleOut.inStock );
-    Assert.assertEquals( item.categories.length, singleOut.categories.length );
-    Assert.assertEquals( item.features, singleOut.features );
-    Assert.assertEquals( supA, singleOut.supplier.get("supplier_supA"));
-    Assert.assertEquals( supB, singleOut.supplier.get("supplier_supB"));
-    Assert.assertEquals( item.supplier_simple.get("sup_simple_supB"), out.supplier_simple.get("sup_simple_supB"));
-    
-//    put back "out" as Bean, to see if both ways work as you would expect
-//    but the Field that "allSuppliers" need to be cleared, as it is just for 
-//    retrieving data, not to post data
-    out.allSuppliers = null;
-    SolrInputDocument doc1 = binder.toSolrInputDocument( out );
-    
-    SolrDocumentList docs1 = new SolrDocumentList();
-    docs1.add( ClientUtils.toSolrDocument(doc1) );
-    Item out1 = binder.getBeans( Item.class, docs1 ).get( 0 );
-    
-    Assert.assertEquals( item.id, out1.id );
-    Assert.assertEquals( item.inStock, out1.inStock );
-    Assert.assertEquals( item.categories.length, out1.categories.length );
-    Assert.assertEquals( item.features, out1.features );
+    SolrInputDocument solrInputDoc = binder.toSolrInputDocument(in);
+    SolrDocument solrDoc = toSolrDocument(solrInputDoc);
+    assertEquals(1, solrInputDoc.getChildDocuments().size());
+    assertEquals(1, solrDoc.getChildDocuments().size());
+    SingleValueChild out = binder.getBean(SingleValueChild.class, solrDoc);
+    assertEquals(in.id, out.id);
+    assertEquals(in.child.id, out.child.id);
+    assertEquals(in.child.name, out.child.name);
 
-    Assert.assertEquals( item.supplier_simple.get("sup_simple_supB"), out1.supplier_simple.get("sup_simple_supB"));
-    
-    Assert.assertEquals( supA,out1.supplier.get("supplier_supA"));
-    Assert.assertEquals( supB, out1.supplier.get("supplier_supB"));
-    
+    ListChild listIn = new ListChild();
+    listIn.id = "2";
+    Child child = new Child();
+    child.id = "1.1";
+    child.name = "Name Two";
+    listIn.child = Arrays.asList(in.child, child);
+    solrInputDoc = binder.toSolrInputDocument(listIn);
+    solrDoc = toSolrDocument(solrInputDoc);
+    assertEquals(2, solrInputDoc.getChildDocuments().size());
+    assertEquals(2, solrDoc.getChildDocuments().size());
+    ListChild listOut = binder.getBean(ListChild.class, solrDoc);
+    assertEquals(listIn.id, listOut.id);
+    assertEquals(listIn.child.get(0).id, listOut.child.get(0).id);
+    assertEquals(listIn.child.get(0).name, listOut.child.get(0).name);
+    assertEquals(listIn.child.get(1).id, listOut.child.get(1).id);
+    assertEquals(listIn.child.get(1).name, listOut.child.get(1).name);
+
+    ArrayChild arrIn = new ArrayChild();
+    arrIn.id = "3";
+    arrIn.child = new Child[]{in.child, child};
+    solrInputDoc = binder.toSolrInputDocument(arrIn);
+    solrDoc = toSolrDocument(solrInputDoc);
+    assertEquals(2, solrInputDoc.getChildDocuments().size());
+    assertEquals(2, solrDoc.getChildDocuments().size());
+    ArrayChild arrOut = binder.getBean(ArrayChild.class, solrDoc);
+    assertEquals(arrIn.id, arrOut.id);
+    assertEquals(arrIn.child[0].id, arrOut.child[0].id);
+    assertEquals(arrIn.child[0].name, arrOut.child[0].name);
+    assertEquals(arrIn.child[1].id, arrOut.child[1].id);
+    assertEquals(arrIn.child[1].name, arrOut.child[1].name);
+
+  }
+
+  private static SolrDocument toSolrDocument(SolrInputDocument d) {
+    SolrDocument doc = new SolrDocument();
+    for (SolrInputField field : d) {
+      doc.setField(field.getName(), field.getValue());
+    }
+    if (d.getChildDocuments() != null) {
+      for (SolrInputDocument in : d.getChildDocuments()) {
+        doc.addChildDocument(toSolrDocument(in));
+      }
+    }
+    return doc;
   }
 
   public static class Item {
@@ -173,22 +177,22 @@ public class TestDocumentObjectBinder extends LuceneTestCase
     @Field("highway_mileage")
     int mwyMileage;
 
-    boolean inStock = false;
+    boolean inStock;
 
     @Field("supplier_*")
     Map<String, List<String>> supplier;
-    
+
     @Field("sup_simple_*")
     Map<String, String> supplier_simple;
 
     private String[] allSuppliers;
 
     @Field("supplier_*")
-    public void setAllSuppliers(String[] allSuppliers){
-      this.allSuppliers = allSuppliers;  
+    public void setAllSuppliers(String[] allSuppliers) {
+      this.allSuppliers = allSuppliers;
     }
 
-    public String[] getAllSuppliers(){
+    public String[] getAllSuppliers() {
       return this.allSuppliers;
     }
 
@@ -196,12 +200,46 @@ public class TestDocumentObjectBinder extends LuceneTestCase
     public void setInStock(Boolean b) {
       inStock = b;
     }
-    
+
     // required if you want to fill SolrDocuments with the same annotaion...
-    public boolean isInStock()
-    {
+    public boolean isInStock() {
       return inStock;
     }
+  }
+
+  public static class Child {
+    @Field
+    String id;
+
+    @Field
+    String name;
+
+  }
+
+  public static class SingleValueChild {
+    @Field
+    String id;
+
+    @Field(child = true)
+    Child child;
+  }
+
+  public static class ListChild {
+    @Field
+    String id;
+
+    @Field(child = true)
+    List<Child> child;
+
+  }
+
+  public static class ArrayChild {
+
+    @Field
+    String id;
+
+    @Field(child = true)
+    Child[] child;
   }
   
 

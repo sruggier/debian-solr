@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,6 +17,7 @@
 package org.apache.solr.core;
 
 import org.apache.lucene.index.IndexCommit;
+import org.apache.lucene.util.Constants;
 import org.apache.solr.SolrTestCaseJ4;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -25,7 +26,7 @@ import org.junit.Test;
 import java.util.Map;
 
 /**
- * @version $Id$
+ *
  */
 public class TestSolrDeletionPolicy1 extends SolrTestCaseJ4 {
 
@@ -92,10 +93,10 @@ public class TestSolrDeletionPolicy1 extends SolrTestCaseJ4 {
     addDocs();
     Map<Long, IndexCommit> commits = delPolicy.getCommits();
     IndexCommit latest = delPolicy.getLatestCommit();
-    for (Long version : commits.keySet()) {
-      if (commits.get(version) == latest)
+    for (Long gen : commits.keySet()) {
+      if (commits.get(gen) == latest)
         continue;
-      assertEquals(1, commits.get(version).getSegmentCount());
+      assertEquals(1, commits.get(gen).getSegmentCount());
     }
   }
 
@@ -109,6 +110,9 @@ public class TestSolrDeletionPolicy1 extends SolrTestCaseJ4 {
 
   @Test
   public void testCommitAge() throws InterruptedException {
+    assumeFalse("This test is not working on Windows (or maybe machines with only 2 CPUs)",
+      Constants.WINDOWS);
+  
     IndexDeletionPolicyWrapper delPolicy = h.getCore().getDeletionPolicy();
     addDocs();
     Map<Long, IndexCommit> commits = delPolicy.getCommits();
@@ -126,7 +130,7 @@ public class TestSolrDeletionPolicy1 extends SolrTestCaseJ4 {
     );
 
     commits = delPolicy.getCommits();
-    assertTrue(!commits.containsKey(ic.getVersion()));
+    assertTrue(!commits.containsKey(ic.getGeneration()));
   }
 
 }

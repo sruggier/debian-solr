@@ -1,10 +1,4 @@
-package org.apache.lucene.util;
-
-import java.util.concurrent.atomic.AtomicLong;
-
-import org.apache.lucene.util.ByteBlockPool.Allocator;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -20,19 +14,25 @@ import org.apache.lucene.util.ByteBlockPool.Allocator;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
+import org.apache.lucene.util.ByteBlockPool.Allocator;
+
 
 /**
  * A {@link ByteBlockPool.Allocator} implementation that recycles unused byte
  * blocks in a buffer and reuses them in subsequent calls to
  * {@link #getByteBlock()}.
- * 
+ * <p>
+ * Note: This class is not thread-safe
+ * </p>
  * @lucene.internal
  */
 public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
   private byte[][] freeByteBlocks;
   private final int maxBufferedBlocks;
   private int freeBlocks = 0;
-  private final AtomicLong bytesUsed;
+  private final Counter bytesUsed;
   public static final int DEFAULT_BUFFERED_BLOCKS = 64;
 
   /**
@@ -43,21 +43,18 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
    * @param maxBufferedBlocks
    *          maximum number of buffered byte block
    * @param bytesUsed
-   *          {@link AtomicLong} reference counting internally allocated bytes
-   * 
-   * @see DummyConcurrentLock
+   *          {@link Counter} reference counting internally allocated bytes
    */
   public RecyclingByteBlockAllocator(int blockSize, int maxBufferedBlocks,
-      AtomicLong bytesUsed) {
+      Counter bytesUsed) {
     super(blockSize);
-    freeByteBlocks = new byte[Math.min(10, maxBufferedBlocks)][];
+    freeByteBlocks = new byte[maxBufferedBlocks][];
     this.maxBufferedBlocks = maxBufferedBlocks;
     this.bytesUsed = bytesUsed;
   }
 
   /**
-   * Creates a new {@link RecyclingByteBlockAllocator} with a
-   * {@link DummyConcurrentLock} instance.
+   * Creates a new {@link RecyclingByteBlockAllocator}.
    * 
    * @param blockSize
    *          the block size in bytes
@@ -65,22 +62,21 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
    *          maximum number of buffered byte block
    */
   public RecyclingByteBlockAllocator(int blockSize, int maxBufferedBlocks) {
-    this(blockSize, maxBufferedBlocks, new AtomicLong());
+    this(blockSize, maxBufferedBlocks, Counter.newCounter(false));
   }
 
   /**
    * Creates a new {@link RecyclingByteBlockAllocator} with a block size of
    * {@link ByteBlockPool#BYTE_BLOCK_SIZE}, upper buffered docs limit of
-   * {@link #DEFAULT_BUFFERED_BLOCKS} ({@value #DEFAULT_BUFFERED_BLOCKS}) and a
-   * {@link DummyConcurrentLock} instance.
+   * {@link #DEFAULT_BUFFERED_BLOCKS} ({@value #DEFAULT_BUFFERED_BLOCKS}).
    * 
    */
   public RecyclingByteBlockAllocator() {
-    this(ByteBlockPool.BYTE_BLOCK_SIZE, 64, new AtomicLong());
+    this(ByteBlockPool.BYTE_BLOCK_SIZE, 64, Counter.newCounter(false));
   }
 
   @Override
-  public synchronized byte[] getByteBlock() {
+  public byte[] getByteBlock() {
     if (freeBlocks == 0) {
       bytesUsed.addAndGet(blockSize);
       return new byte[blockSize];
@@ -91,7 +87,7 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
   }
 
   @Override
-  public synchronized void recycleByteBlocks(byte[][] blocks, int start, int end) {
+  public void recycleByteBlocks(byte[][] blocks, int start, int end) {
     final int numBlocks = Math.min(maxBufferedBlocks - freeBlocks, end - start);
     final int size = freeBlocks + numBlocks;
     if (size >= freeByteBlocks.length) {
@@ -115,7 +111,7 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
   /**
    * @return the number of currently buffered blocks
    */
-  public synchronized int numBufferedBlocks() {
+  public int numBufferedBlocks() {
     return freeBlocks;
   }
 
@@ -140,8 +136,8 @@ public final class RecyclingByteBlockAllocator extends ByteBlockPool.Allocator {
    *          the number of byte blocks to remove
    * @return the number of actually removed buffers
    */
-  public synchronized int freeBlocks(int num) {
-    assert num >= 0;
+  public int freeBlocks(int num) {
+    assert num >= 0 : "free blocks must be >= 0 but was: "+ num;
     final int stop;
     final int count;
     if (num > freeBlocks) {

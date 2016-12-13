@@ -1,8 +1,4 @@
-package org.apache.lucene.index;
-
-import java.util.regex.Pattern;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -18,6 +14,12 @@ import java.util.regex.Pattern;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
+
+import java.util.regex.Pattern;
+
+import org.apache.lucene.codecs.Codec;
 
 /**
  * This class contains useful constants representing filenames and extensions
@@ -26,154 +28,33 @@ import java.util.regex.Pattern;
  * matchesExtension}), as well as generating file names from a segment name,
  * generation and extension (
  * {@link #fileNameFromGeneration(String, String, long) fileNameFromGeneration},
- * {@link #segmentFileName(String, String) segmentFileName}).
- * 
+ * {@link #segmentFileName(String, String, String) segmentFileName}).
+ *
+ * <p><b>NOTE</b>: extensions used by codecs are not
+ * listed here.  You must interact with the {@link Codec}
+ * directly.
+ *
  * @lucene.internal
  */
+
 public final class IndexFileNames {
+  
+  /** No instance */
+  private IndexFileNames() {}
 
   /** Name of the index segment file */
   public static final String SEGMENTS = "segments";
+  
+  /** Name of pending index segment file */
+  public static final String PENDING_SEGMENTS = "pending_segments";
 
   /** Name of the generation reference file name */
-  public static final String SEGMENTS_GEN = "segments.gen";
-  
-  /** Name of the index deletable file (only used in
-   * pre-lockless indices) */
-  public static final String DELETABLE = "deletable";
-   
-  /** Extension of norms file */
-  public static final String NORMS_EXTENSION = "nrm";
-
-  /** Extension of freq postings file */
-  public static final String FREQ_EXTENSION = "frq";
-
-  /** Extension of prox postings file */
-  public static final String PROX_EXTENSION = "prx";
-
-  /** Extension of terms file */
-  public static final String TERMS_EXTENSION = "tis";
-
-  /** Extension of terms index file */
-  public static final String TERMS_INDEX_EXTENSION = "tii";
-
-  /** Extension of stored fields index file */
-  public static final String FIELDS_INDEX_EXTENSION = "fdx";
-
-  /** Extension of stored fields file */
-  public static final String FIELDS_EXTENSION = "fdt";
-
-  /** Extension of vectors fields file */
-  public static final String VECTORS_FIELDS_EXTENSION = "tvf";
-
-  /** Extension of vectors documents file */
-  public static final String VECTORS_DOCUMENTS_EXTENSION = "tvd";
-
-  /** Extension of vectors index file */
-  public static final String VECTORS_INDEX_EXTENSION = "tvx";
-
-  /** Extension of compound file */
-  public static final String COMPOUND_FILE_EXTENSION = "cfs";
-
-  /** Extension of compound file for doc store files*/
-  public static final String COMPOUND_FILE_STORE_EXTENSION = "cfx";
-
-  /** Extension of deletes */
-  public static final String DELETES_EXTENSION = "del";
-
-  /** Extension of field infos */
-  public static final String FIELD_INFOS_EXTENSION = "fnm";
-
-  /** Extension of plain norms */
-  public static final String PLAIN_NORMS_EXTENSION = "f";
-
-  /** Extension of separate norms */
-  public static final String SEPARATE_NORMS_EXTENSION = "s";
-
-  /** Extension of gen file */
-  public static final String GEN_EXTENSION = "gen";
-
-  /**
-   * This array contains all filename extensions used by
-   * Lucene's index files, with two exceptions, namely the
-   * extension made up from <code>.f</code> + a number and
-   * from <code>.s</code> + a number.  Also note that
-   * Lucene's <code>segments_N</code> files do not have any
-   * filename extension.
-   */
-  public static final String INDEX_EXTENSIONS[] = new String[] {
-    COMPOUND_FILE_EXTENSION,
-    FIELD_INFOS_EXTENSION,
-    FIELDS_INDEX_EXTENSION,
-    FIELDS_EXTENSION,
-    TERMS_INDEX_EXTENSION,
-    TERMS_EXTENSION,
-    FREQ_EXTENSION,
-    PROX_EXTENSION,
-    DELETES_EXTENSION,
-    VECTORS_INDEX_EXTENSION,
-    VECTORS_DOCUMENTS_EXTENSION,
-    VECTORS_FIELDS_EXTENSION,
-    GEN_EXTENSION,
-    NORMS_EXTENSION,
-    COMPOUND_FILE_STORE_EXTENSION,
-  };
-
-  /** File extensions that are added to a compound file
-   * (same as above, minus "del", "gen", "cfs"). */
-  public static final String[] INDEX_EXTENSIONS_IN_COMPOUND_FILE = new String[] {
-    FIELD_INFOS_EXTENSION,
-    FIELDS_INDEX_EXTENSION,
-    FIELDS_EXTENSION,
-    TERMS_INDEX_EXTENSION,
-    TERMS_EXTENSION,
-    FREQ_EXTENSION,
-    PROX_EXTENSION,
-    VECTORS_INDEX_EXTENSION,
-    VECTORS_DOCUMENTS_EXTENSION,
-    VECTORS_FIELDS_EXTENSION,
-    NORMS_EXTENSION
-  };
-
-  public static final String[] STORE_INDEX_EXTENSIONS = new String[] {
-    VECTORS_INDEX_EXTENSION,
-    VECTORS_FIELDS_EXTENSION,
-    VECTORS_DOCUMENTS_EXTENSION,
-    FIELDS_INDEX_EXTENSION,
-    FIELDS_EXTENSION
-  };
-
-  public static final String[] NON_STORE_INDEX_EXTENSIONS = new String[] {
-    FIELD_INFOS_EXTENSION,
-    FREQ_EXTENSION,
-    PROX_EXTENSION,
-    TERMS_EXTENSION,
-    TERMS_INDEX_EXTENSION,
-    NORMS_EXTENSION
-  };
-  
-  /** File extensions of old-style index files */
-  public static final String COMPOUND_EXTENSIONS[] = new String[] {
-    FIELD_INFOS_EXTENSION,
-    FREQ_EXTENSION,
-    PROX_EXTENSION,
-    FIELDS_INDEX_EXTENSION,
-    FIELDS_EXTENSION,
-    TERMS_INDEX_EXTENSION,
-    TERMS_EXTENSION
-  };
-  
-  /** File extensions for term vector support */
-  public static final String VECTOR_EXTENSIONS[] = new String[] {
-    VECTORS_INDEX_EXTENSION,
-    VECTORS_DOCUMENTS_EXTENSION,
-    VECTORS_FIELDS_EXTENSION
-  };
+  public static final String OLD_SEGMENTS_GEN = "segments.gen";
 
   /**
    * Computes the full file name from base, extension and generation. If the
    * generation is -1, the file name is null. If it's 0, the file name is
-   * &lt;base&gt;.&lt;ext&gt;. If it's > 0, the file name is
+   * &lt;base&gt;.&lt;ext&gt;. If it's &gt; 0, the file name is
    * &lt;base&gt;_&lt;gen&gt;.&lt;ext&gt;.<br>
    * <b>NOTE:</b> .&lt;ext&gt; is added to the name only if <code>ext</code> is
    * not an empty string.
@@ -182,12 +63,13 @@ public final class IndexFileNames {
    * @param ext extension of the filename
    * @param gen generation
    */
-  public static final String fileNameFromGeneration(String base, String ext, long gen) {
-    if (gen == SegmentInfo.NO) {
+  public static String fileNameFromGeneration(String base, String ext, long gen) {
+    if (gen == -1) {
       return null;
-    } else if (gen == SegmentInfo.WITHOUT_GEN) {
-      return segmentFileName(base, ext);
+    } else if (gen == 0) {
+      return segmentFileName(base, "", ext);
     } else {
+      assert gen > 0;
       // The '6' part in the length is: 1 for '.', 1 for '_' and 4 as estimate
       // to the gen length as string (hopefully an upper limit so SB won't
       // expand in the middle.
@@ -201,77 +83,135 @@ public final class IndexFileNames {
   }
 
   /**
-   * Returns true if the provided filename is one of the doc store files (ends
-   * with an extension in {@link #STORE_INDEX_EXTENSIONS}).
-   */
-  public static final boolean isDocStoreFile(String fileName) {
-    if (fileName.endsWith(COMPOUND_FILE_STORE_EXTENSION))
-      return true;
-    for (String ext : STORE_INDEX_EXTENSIONS) {
-      if (fileName.endsWith(ext))
-        return true;
-    }
-    return false;
-  }
-
-  /**
-   * Returns the file name that matches the given segment name and extension.
-   * This method takes care to return the full file name in the form
-   * &lt;segmentName&gt;.&lt;ext&gt;, therefore you don't need to prefix the
-   * extension with a '.'.<br>
+   * Returns a file name that includes the given segment name, your own custom
+   * name and extension. The format of the filename is:
+   * &lt;segmentName&gt;(_&lt;name&gt;)(.&lt;ext&gt;).
+   * <p>
    * <b>NOTE:</b> .&lt;ext&gt; is added to the result file name only if
    * <code>ext</code> is not empty.
+   * <p>
+   * <b>NOTE:</b> _&lt;segmentSuffix&gt; is added to the result file name only if
+   * it's not the empty string
+   * <p>
+   * <b>NOTE:</b> all custom files should be named using this method, or
+   * otherwise some structures may fail to handle them properly (such as if they
+   * are added to compound files).
    */
-  public static final String segmentFileName(String segmentName, String ext) {
-    if (ext.length() > 0) {
-      return new StringBuilder(segmentName.length() + 1 + ext.length()).append(
-          segmentName).append('.').append(ext).toString();
+  public static String segmentFileName(String segmentName, String segmentSuffix, String ext) {
+    if (ext.length() > 0 || segmentSuffix.length() > 0) {
+      assert !ext.startsWith(".");
+      StringBuilder sb = new StringBuilder(segmentName.length() + 2 + segmentSuffix.length() + ext.length());
+      sb.append(segmentName);
+      if (segmentSuffix.length() > 0) {
+        sb.append('_').append(segmentSuffix);
+      }
+      if (ext.length() > 0) {
+        sb.append('.').append(ext);
+      }
+      return sb.toString();
     } else {
       return segmentName;
     }
   }
-  
+
   /**
    * Returns true if the given filename ends with the given extension. One
    * should provide a <i>pure</i> extension, without '.'.
    */
-  public static final boolean matchesExtension(String filename, String ext) {
+  public static boolean matchesExtension(String filename, String ext) {
     // It doesn't make a difference whether we allocate a StringBuilder ourself
     // or not, since there's only 1 '+' operator.
     return filename.endsWith("." + ext);
   }
 
-  /**
-   * Strips the segment file name out of the given one. If you used
-   * {@link #segmentFileName} or {@link #fileNameFromGeneration} to create your
-   * files, then this method simply removes whatever comes before the first '.',
-   * or the second '_' (excluding both), in case of deleted docs.
-   * 
-   * @return the filename with the segment name removed, or the given filename
-   *         if it does not contain a '.' and '_'.
-   */
-  public static final String stripSegmentName(String filename) {
+  /** locates the boundary of the segment name, or -1 */
+  private static int indexOfSegmentName(String filename) {
     // If it is a .del file, there's an '_' after the first character
     int idx = filename.indexOf('_', 1);
     if (idx == -1) {
       // If it's not, strip everything that's before the '.'
       idx = filename.indexOf('.');
     }
+    return idx;
+  }
+  
+  /**
+   * Strips the segment name out of the given file name. If you used
+   * {@link #segmentFileName} or {@link #fileNameFromGeneration} to create your
+   * files, then this method simply removes whatever comes before the first '.',
+   * or the second '_' (excluding both).
+   * 
+   * @return the filename with the segment name removed, or the given filename
+   *         if it does not contain a '.' and '_'.
+   */
+  public static String stripSegmentName(String filename) {
+    int idx = indexOfSegmentName(filename);
     if (idx != -1) {
       filename = filename.substring(idx);
     }
     return filename;
   }
 
+  /** Returns the generation from this file name, or 0 if there is no
+   *  generation. */
+  public static long parseGeneration(String filename) {
+    assert filename.startsWith("_");
+    String parts[] = stripExtension(filename).substring(1).split("_");
+    // 4 cases: 
+    // segment.ext
+    // segment_gen.ext
+    // segment_codec_suffix.ext
+    // segment_gen_codec_suffix.ext
+    if (parts.length == 2 || parts.length == 4) {
+      return Long.parseLong(parts[1], Character.MAX_RADIX);
+    } else {
+      return 0;
+    }
+  }
+  
   /**
-   * Returns true if the given filename ends with the separate norms file
-   * pattern: {@code SEPARATE_NORMS_EXTENSION + "[0-9]+"}.
+   * Parses the segment name out of the given file name.
+   * 
+   * @return the segment name only, or filename
+   *         if it does not contain a '.' and '_'.
    */
-  public static boolean isSeparateNormsFile(String filename) {
-    int idx = filename.lastIndexOf('.');
-    if (idx == -1) return false;
-    String ext = filename.substring(idx + 1);
-    return Pattern.matches(SEPARATE_NORMS_EXTENSION + "[0-9]+", ext);
+  public static String parseSegmentName(String filename) {
+    int idx = indexOfSegmentName(filename);
+    if (idx != -1) {
+      filename = filename.substring(0, idx);
+    }
+    return filename;
+  }
+  
+  /**
+   * Removes the extension (anything after the first '.'),
+   * otherwise returns the original filename.
+   */
+  public static String stripExtension(String filename) {
+    int idx = filename.indexOf('.');
+    if (idx != -1) {
+      filename = filename.substring(0, idx);
+    }
+    return filename;
+  }  
+
+  /**
+   * Return the extension (anything after the first '.'),
+   * or null if there is no '.' in the file name.
+   */
+  public static String getExtension(String filename) {
+    final int idx = filename.indexOf('.');
+    if (idx == -1) {
+      return null;
+    } else {
+      return filename.substring(idx + 1, filename.length());
+    }
   }
 
+  /**
+   * All files created by codecs much match this pattern (checked in
+   * SegmentInfo).
+   */
+  public static final Pattern CODEC_FILE_PATTERN = Pattern.compile("_[a-z0-9]+(_.*)?\\..*");
+  
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.request;
 
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrRequest;
-import org.apache.solr.client.solrj.SolrServer;
-import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.response.FieldAnalysisResponse;
 import org.apache.solr.common.params.AnalysisParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -32,12 +30,12 @@ import java.util.LinkedList;
 import java.util.List;
 
 /**
- * A request for the org.apache.solr.handler.DocumentAnalysisRequestHandler.
+ * A request for the org.apache.solr.handler.FieldAnalysisRequestHandler.
  *
- * @version $Id$
+ *
  * @since solr.14
  */
-public class FieldAnalysisRequest extends SolrRequest {
+public class FieldAnalysisRequest extends SolrRequest<FieldAnalysisResponse> {
 
   private String fieldValue;
   private String query;
@@ -69,6 +67,17 @@ public class FieldAnalysisRequest extends SolrRequest {
     return null;
   }
 
+  @Override
+  protected FieldAnalysisResponse createResponse(SolrClient client) {
+    if (fieldTypes == null && fieldNames == null) {
+      throw new IllegalStateException("At least one field type or field name need to be specified");
+    }
+    if (fieldValue == null) {
+      throw new IllegalStateException("The field value must be set");
+    }
+    return new FieldAnalysisResponse();
+  }
+
   /**
    * {@inheritDoc}
    */
@@ -90,25 +99,6 @@ public class FieldAnalysisRequest extends SolrRequest {
     }
     return params;
   }
-
-  /**
-   * {@inheritDoc}
-   */
-  @Override
-  public FieldAnalysisResponse process(SolrServer server) throws SolrServerException, IOException {
-    if (fieldTypes == null && fieldNames == null) {
-      throw new IllegalStateException("At least one field type or field name need to be specified");
-    }
-    if (fieldValue == null) {
-      throw new IllegalStateException("The field value must be set");
-    }
-    long startTime = System.currentTimeMillis();
-    FieldAnalysisResponse res = new FieldAnalysisResponse();
-    res.setResponse(server.request(this));
-    res.setElapsedTime(System.currentTimeMillis() - startTime);
-    return res;
-  }
-
 
   //================================================ Helper Methods ==================================================
 
@@ -210,7 +200,7 @@ public class FieldAnalysisRequest extends SolrRequest {
    */
   public FieldAnalysisRequest addFieldName(String fieldName) {
     if (fieldNames == null) {
-      fieldNames = new LinkedList<String>();
+      fieldNames = new LinkedList<>();
     }
     fieldNames.add(fieldName);
     return this;
@@ -247,7 +237,7 @@ public class FieldAnalysisRequest extends SolrRequest {
    */
   public FieldAnalysisRequest addFieldType(String fieldTypeName) {
     if (fieldTypes == null) {
-      fieldTypes = new LinkedList<String>();
+      fieldTypes = new LinkedList<>();
     }
     fieldTypes.add(fieldTypeName);
     return this;

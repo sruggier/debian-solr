@@ -1,15 +1,4 @@
-package org.apache.solr.uima.processor.an;
-
-import java.util.Arrays;
-
-import org.apache.solr.uima.ts.SentimentAnnotation;
-import org.apache.uima.TokenAnnotation;
-import org.apache.uima.analysis_component.JCasAnnotator_ImplBase;
-import org.apache.uima.analysis_engine.AnalysisEngineProcessException;
-import org.apache.uima.jcas.JCas;
-import org.apache.uima.jcas.tcas.Annotation;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -25,6 +14,16 @@ import org.apache.uima.jcas.tcas.Annotation;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.uima.processor.an;
+
+import java.util.Arrays;
+
+import org.apache.solr.uima.ts.DummySentimentAnnotation;
+import org.apache.uima.TokenAnnotation;
+import org.apache.uima.analysis_component.JCasAnnotator_ImplBase;
+import org.apache.uima.analysis_engine.AnalysisEngineProcessException;
+import org.apache.uima.jcas.JCas;
+import org.apache.uima.jcas.tcas.Annotation;
 
 public class DummySentimentAnnotator extends JCasAnnotator_ImplBase{
 
@@ -38,24 +37,24 @@ public class DummySentimentAnnotator extends JCasAnnotator_ImplBase{
       String tokenPOS = ((TokenAnnotation) annotation).getPosTag();
       if ("jj".equals(tokenPOS)) {
         if (Arrays.asList(positiveAdj).contains(annotation.getCoveredText())) {
-          SentimentAnnotation sentimentAnnotation = createSentimentAnnotation(jcas, annotation);
-          sentimentAnnotation.setMood("positive");
-          sentimentAnnotation.addToIndexes();
+          DummySentimentAnnotation dummySentimentAnnotation = createSentimentAnnotation(jcas, annotation);
+          dummySentimentAnnotation.setMood("positive");
+          dummySentimentAnnotation.addToIndexes();
         }
         else if (Arrays.asList(negativeAdj).contains(annotation.getCoveredText())) {
-          SentimentAnnotation sentimentAnnotation = createSentimentAnnotation(jcas, annotation);
-          sentimentAnnotation.setMood("negative");
-          sentimentAnnotation.addToIndexes();
+          DummySentimentAnnotation dummySentimentAnnotation = createSentimentAnnotation(jcas, annotation);
+          dummySentimentAnnotation.setMood("negative");
+          dummySentimentAnnotation.addToIndexes();
         }
       }
     }
   }
 
-  private SentimentAnnotation createSentimentAnnotation(JCas jcas, Annotation annotation) {
-    SentimentAnnotation sentimentAnnotation = new SentimentAnnotation(jcas);
-    sentimentAnnotation.setBegin(annotation.getBegin());
-    sentimentAnnotation.setEnd(annotation.getEnd());
-    return sentimentAnnotation;
+  private DummySentimentAnnotation createSentimentAnnotation(JCas jcas, Annotation annotation) {
+    DummySentimentAnnotation dummySentimentAnnotation = new DummySentimentAnnotation(jcas);
+    dummySentimentAnnotation.setBegin(annotation.getBegin());
+    dummySentimentAnnotation.setEnd(annotation.getEnd());
+    return dummySentimentAnnotation;
   }
 
 }

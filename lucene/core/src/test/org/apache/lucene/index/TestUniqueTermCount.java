@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,7 +14,10 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
+
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 
@@ -24,11 +25,12 @@ import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.search.DefaultSimilarity;
-import org.apache.lucene.search.Similarity;
+import org.apache.lucene.search.CollectionStatistics;
+import org.apache.lucene.search.TermStatistics;
+import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Tests the uniqueTermCount statistic in FieldInvertState
@@ -37,21 +39,22 @@ public class TestUniqueTermCount extends LuceneTestCase {
   Directory dir;
   IndexReader reader;
   /* expected uniqueTermCount values for our documents */
-  ArrayList<Integer> expected = new ArrayList<Integer>();
+  ArrayList<Integer> expected = new ArrayList<>();
   
   @Override
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
-    IndexWriterConfig config = newIndexWriterConfig(TEST_VERSION_CURRENT, 
-                                                    new MockAnalyzer(random, MockTokenizer.SIMPLE, true)).setMergePolicy(newLogMergePolicy());
+    MockAnalyzer analyzer = new MockAnalyzer(random(), MockTokenizer.SIMPLE, true);
+    IndexWriterConfig config = newIndexWriterConfig(analyzer);
+    config.setMergePolicy(newLogMergePolicy());
     config.setSimilarity(new TestSimilarity());
-    RandomIndexWriter writer = new RandomIndexWriter(random, dir, config);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), dir, config);
     Document doc = new Document();
-    Field foo = newField("foo", "", Field.Store.NO, Field.Index.ANALYZED);
+    Field foo = newTextField("foo", "", Field.Store.NO);
     doc.add(foo);
     for (int i = 0; i < 100; i++) {
-      foo.setValue(addValue());
+      foo.setStringValue(addValue());
       writer.addDocument(doc);
     }
     reader = writer.getReader();
@@ -66,9 +69,11 @@ public class TestUniqueTermCount extends LuceneTestCase {
   }
   
   public void test() throws Exception {
-    byte fooNorms[] = reader.norms("foo");
-    for (int i = 0; i < reader.maxDoc(); i++)
-      assertEquals(expected.get(i).intValue(), fooNorms[i] & 0xff);
+    NumericDocValues fooNorms = MultiDocValues.getNormValues(reader, "foo");
+    assertNotNull(fooNorms);
+    for (int i = 0; i < reader.maxDoc(); i++) {
+      assertEquals(expected.get(i).longValue(), fooNorms.get(i));
+    }
   }
 
   /**
@@ -77,11 +82,11 @@ public class TestUniqueTermCount extends LuceneTestCase {
    */
   private String addValue() {
     StringBuilder sb = new StringBuilder();
-    HashSet<String> terms = new HashSet<String>();
-    int num = _TestUtil.nextInt(random, 0, 255);
+    HashSet<String> terms = new HashSet<>();
+    int num = TestUtil.nextInt(random(), 0, 255);
     for (int i = 0; i < num; i++) {
       sb.append(' ');
-      char term = (char) _TestUtil.nextInt(random, 'a', 'z');
+      char term = (char) TestUtil.nextInt(random(), 'a', 'z');
       sb.append(term);
       terms.add("" + term);
     }
@@ -90,18 +95,23 @@ public class TestUniqueTermCount extends LuceneTestCase {
   }
   
   /**
-   * Simple similarity that encodes maxTermFrequency directly as a byte
+   * Simple similarity that encodes maxTermFrequency directly
    */
-  class TestSimilarity extends DefaultSimilarity {
+  class TestSimilarity extends Similarity {
 
     @Override
-    public byte encodeNormValue(float f) {
-      return (byte) f;
+    public long computeNorm(FieldInvertState state) {
+      return state.getUniqueTermCount();
     }
 
     @Override
-    public float computeNorm(String field, FieldInvertState state) {
-      return (float) state.getUniqueTermCount();
+    public SimWeight computeWeight(CollectionStatistics collectionStats, TermStatistics... termStats) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SimScorer simScorer(SimWeight weight, LeafReaderContext context) throws IOException {
+      throw new UnsupportedOperationException();
     }
   }
 }

@@ -1,6 +1,4 @@
-package org.apache.solr.schema;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.schema;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.schema;
 
 import org.apache.solr.SolrTestCaseJ4;
 import org.junit.BeforeClass;
@@ -43,10 +42,18 @@ public class TestOmitPositions extends SolrTestCaseJ4 {
   public void testPositions() {
     // no results should be found:
     // lucene 3.x: silent failure
-
+    // lucene 4.x: illegal state exception, field was indexed without positions
+    
+    ignoreException("was indexed without position data");
+    try {
     assertQ("phrase query: ",
        req("fl", "id", "q", "nopositionstext:\"test test\""),
               "//*[@numFound='0']"
     );
+    } catch (Exception expected) {
+      assertTrue(expected.getCause() instanceof IllegalStateException);
+      // in lucene 4.0, queries don't silently fail
+    }
+    resetExceptionIgnores();
   }
 }

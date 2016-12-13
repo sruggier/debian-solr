@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
 /**
@@ -24,4 +23,5 @@ public interface StatsParams {
   public static final String STATS = "stats";
   public static final String STATS_FIELD = STATS + ".field";
   public static final String STATS_FACET = STATS + ".facet";
+  public static final String STATS_CALC_DISTINCT = STATS + ".calcdistinct";
 }

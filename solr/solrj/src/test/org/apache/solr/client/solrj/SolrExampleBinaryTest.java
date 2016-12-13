@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,15 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj;
 
-import org.apache.solr.client.solrj.SolrExampleTests;
-import org.apache.solr.client.solrj.SolrServer;
+import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
 import org.apache.solr.client.solrj.impl.BinaryRequestWriter;
 import org.apache.solr.client.solrj.impl.BinaryResponseParser;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
-import org.apache.solr.util.ExternalPaths;
+import org.apache.solr.client.solrj.impl.HttpSolrClient;
 import org.junit.BeforeClass;
 
 
@@ -30,28 +27,30 @@ import org.junit.BeforeClass;
  * A subclass of SolrExampleTests that explicitly uses the binary 
  * codec for communication. 
  */
+@SuppressSSL(bugUrl = "https://issues.apache.org/jira/browse/SOLR-5776")
 public class SolrExampleBinaryTest extends SolrExampleTests {
   @BeforeClass
   public static void beforeTest() throws Exception {
-    createJetty(ExternalPaths.EXAMPLE_HOME, null, null);
+    createJetty(legacyExampleCollection1SolrHome());
   }
 
   @Override
-  public SolrServer createNewSolrServer()
+  public SolrClient createNewSolrClient()
   {
     try {
       // setup the server...
-      String url = "http://localhost:"+port+context;
-      CommonsHttpSolrServer s = new CommonsHttpSolrServer( url );
-      s.setConnectionTimeout(100); // 1/10th sec
-      s.setDefaultMaxConnectionsPerHost(100);
-      s.setMaxTotalConnections(100);
+      String url = jetty.getBaseUrl().toString() + "/collection1";
+      HttpSolrClient client = getHttpSolrClient(url);
+      client.setConnectionTimeout(DEFAULT_CONNECTION_TIMEOUT);
+      client.setDefaultMaxConnectionsPerHost(100);
+      client.setMaxTotalConnections(100);
+      client.setUseMultiPartPost(random().nextBoolean());
 
       // where the magic happens
-      s.setParser(new BinaryResponseParser());
-      s.setRequestWriter(new BinaryRequestWriter());
+      client.setParser(new BinaryResponseParser());
+      client.setRequestWriter(new BinaryRequestWriter());
 
-      return s;
+      return client;
     }
     catch( Exception ex ) {
       throw new RuntimeException( ex );

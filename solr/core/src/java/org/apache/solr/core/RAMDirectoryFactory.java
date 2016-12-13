@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,62 +14,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
-import java.io.File;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockFactory;
+import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.store.SingleInstanceLockFactory;
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.SolrException.ErrorCode;
 
 /**
- * Directory provider for using lucene RAMDirectory
+ * Factory to instantiate {@link org.apache.lucene.store.RAMDirectory}
  */
-public class RAMDirectoryFactory extends StandardDirectoryFactory {
-  private static Map<String, RefCntRamDirectory> directories = new HashMap<String, RefCntRamDirectory>();
+public class RAMDirectoryFactory extends EphemeralDirectoryFactory {
 
   @Override
-  public Directory open(String path) throws IOException {
-    synchronized (RAMDirectoryFactory.class) {
-      RefCntRamDirectory directory = directories.get(path);
-      if (directory == null || !directory.isOpen()) {
-        directory = (RefCntRamDirectory) openNew(path);
-        directories.put(path, directory);
-      } else {
-        directory.incRef();
-      }
-
-      return directory;
+  protected LockFactory createLockFactory(String rawLockType) throws IOException {
+    if (!(rawLockType == null || DirectoryFactory.LOCK_TYPE_SINGLE.equalsIgnoreCase(rawLockType.trim()))) {
+      throw new SolrException(ErrorCode.FORBIDDEN,
+          "RAMDirectory can only be used with the '"+DirectoryFactory.LOCK_TYPE_SINGLE+"' lock factory type.");
     }
+    return new SingleInstanceLockFactory();
   }
-  
+
   @Override
-  public boolean exists(String path) {
-    synchronized (RAMDirectoryFactory.class) {
-      RefCntRamDirectory directory = directories.get(path);
-      if (directory == null || !directory.isOpen()) {
-        return false;
-      } else {
-        return true;
-      }
-    }
+  protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) throws IOException {
+    return new RAMDirectory(lockFactory);
   }
 
-  /**
-   * Non-public for unit-test access only. Do not use directly
-   */
-  Directory openNew(String path) throws IOException {
-    Directory directory;
-    File dirFile = new File(path);
-    boolean indexExists = dirFile.canRead();
-    if (indexExists) {
-      Directory dir = super.open(path);
-      directory = new RefCntRamDirectory(dir);
-    } else {
-      directory = new RefCntRamDirectory();
-    }
-    return directory;
-  }
 }

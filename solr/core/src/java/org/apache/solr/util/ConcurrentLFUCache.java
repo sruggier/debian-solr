@@ -1,5 +1,4 @@
-package org.apache.solr.util;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -10,16 +9,14 @@ package org.apache.solr.util;
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.util;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import java.lang.invoke.MethodHandles;
 import java.lang.ref.WeakReference;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -29,20 +26,23 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.apache.solr.common.util.Cache;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * A LFU cache implementation based upon ConcurrentHashMap.
- * <p/>
+ * <p>
  * This is not a terribly efficient implementation.  The tricks used in the
  * LRU version were not directly usable, perhaps it might be possible to
  * rewrite them with LFU in mind.
- * <p/>
+ * <p>
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id: ConcurrentLFUCache.java 1170772 2011-09-14 19:09:56Z sarowe $
  * @since solr 1.6
  */
-public class ConcurrentLFUCache<K, V> {
-  private static Logger log = LoggerFactory.getLogger(ConcurrentLFUCache.class);
+public class ConcurrentLFUCache<K, V> implements Cache<K,V> {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private final ConcurrentHashMap<Object, CacheEntry<K, V>> map;
   private final int upperWaterMark, lowerWaterMark;
@@ -51,6 +51,7 @@ public class ConcurrentLFUCache<K, V> {
   private final boolean newThreadForCleanup;
   private volatile boolean islive = true;
   private final Stats stats = new Stats();
+  @SuppressWarnings("unused")
   private final int acceptableWaterMark;
   private long lowHitCount = 0;  // not volatile, only accessed in the cleaning method
   private final EvictionListener<K, V> evictionListener;
@@ -63,7 +64,7 @@ public class ConcurrentLFUCache<K, V> {
     if (upperWaterMark < 1) throw new IllegalArgumentException("upperWaterMark must be > 0");
     if (lowerWaterMark >= upperWaterMark)
       throw new IllegalArgumentException("lowerWaterMark must be  < upperWaterMark");
-    map = new ConcurrentHashMap<Object, CacheEntry<K, V>>(initialSize);
+    map = new ConcurrentHashMap<>(initialSize);
     newThreadForCleanup = runNewThreadForCleanup;
     this.upperWaterMark = upperWaterMark;
     this.lowerWaterMark = lowerWaterMark;
@@ -85,6 +86,7 @@ public class ConcurrentLFUCache<K, V> {
     islive = live;
   }
 
+  @Override
   public V get(K key) {
     CacheEntry<K, V> e = map.get(key);
     if (e == null) {
@@ -98,6 +100,7 @@ public class ConcurrentLFUCache<K, V> {
     return e.value;
   }
 
+  @Override
   public V remove(K key) {
     CacheEntry<K, V> cacheEntry = map.remove(key);
     if (cacheEntry != null) {
@@ -107,9 +110,10 @@ public class ConcurrentLFUCache<K, V> {
     return null;
   }
 
+  @Override
   public V put(K key, V val) {
     if (val == null) return null;
-    CacheEntry<K, V> e = new CacheEntry<K, V>(key, val, stats.accessCounter.incrementAndGet());
+    CacheEntry<K, V> e = new CacheEntry<>(key, val, stats.accessCounter.incrementAndGet());
     CacheEntry<K, V> oldCacheEntry = map.put(key, e);
     int currentSize;
     if (oldCacheEntry == null) {
@@ -135,12 +139,7 @@ public class ConcurrentLFUCache<K, V> {
     // in this method.
     if (currentSize > upperWaterMark && !isCleaning) {
       if (newThreadForCleanup) {
-        new Thread() {
-          @Override
-          public void run() {
-            markAndSweep();
-          }
-        }.start();
+        new Thread(this::markAndSweep).start();
       } else if (cleanupThread != null) {
         cleanupThread.wakeThread();
       } else {
@@ -151,57 +150,64 @@ public class ConcurrentLFUCache<K, V> {
   }
 
   /**
-   * Removes items from the cache to bring the size down
-   * to an acceptable value ('acceptableWaterMark').
-   * <p/>
-   * It is done in two stages. In the first stage, least recently used items are evicted.
-   * If, after the first stage, the cache size is still greater than 'acceptableSize'
-   * config parameter, the second stage takes over.
-   * <p/>
-   * The second stage is more intensive and tries to bring down the cache size
-   * to the 'lowerWaterMark' config parameter.
+   * Removes items from the cache to bring the size down to the lowerWaterMark.
    */
   private void markAndSweep() {
     if (!markAndSweepLock.tryLock()) return;
     try {
       long lowHitCount = this.lowHitCount;
       isCleaning = true;
-      this.lowHitCount = lowHitCount;     // volatile write to make isCleaning visible
-
+      this.lowHitCount = lowHitCount; // volatile write to make isCleaning visible
+      
       int sz = stats.size.get();
-
+      if (sz <= upperWaterMark) {
+        /* SOLR-7585: Even though we acquired a lock, multiple threads might detect a need for calling this method.
+         * Locking keeps these from executing at the same time, so they run sequentially.  The second and subsequent
+         * sequential runs of this method don't need to be done, since there are no elements to remove.
+        */
+        return;
+      }
+      
       int wantToRemove = sz - lowerWaterMark;
-
-      TreeSet<CacheEntry> tree = new TreeSet<CacheEntry>();
-
+      
+      TreeSet<CacheEntry<K, V>> tree = new TreeSet<>();
+      
       for (CacheEntry<K, V> ce : map.values()) {
-        // set hitsCopy to avoid later Atomic reads
+        // set hitsCopy to avoid later Atomic reads.  Primitive types are faster than the atomic get().
         ce.hitsCopy = ce.hits.get();
         ce.lastAccessedCopy = ce.lastAccessed;
         if (timeDecay) {
           ce.hits.set(ce.hitsCopy >>> 1);
         }
-
+        
         if (tree.size() < wantToRemove) {
           tree.add(ce);
         } else {
-          // If the hits are not equal, we can remove before adding
-          // which is slightly faster
-          if (ce.hitsCopy < tree.first().hitsCopy) {
-            tree.remove(tree.first());
-            tree.add(ce);
-          } else if (ce.hitsCopy == tree.first().hitsCopy) {
-            tree.add(ce);
-            tree.remove(tree.first());
+          /*
+           * SOLR-7585: Before doing this part, make sure the TreeSet actually has an element, since the first() method
+           * fails with NoSuchElementException if the set is empty.  If that test passes, check hits. This test may
+           * never actually fail due to the upperWaterMark check above, but we'll do it anyway.
+           */
+          if (tree.size() > 0) {
+            /* If hits are not equal, we can remove before adding which is slightly faster. I can no longer remember
+             * why removing first is faster, but I vaguely remember being sure about it!
+             */
+            if (ce.hitsCopy < tree.first().hitsCopy) {
+              tree.remove(tree.first());
+              tree.add(ce);
+            } else if (ce.hitsCopy == tree.first().hitsCopy) {
+              tree.add(ce);
+              tree.remove(tree.first());
+            }
           }
         }
       }
-
+      
       for (CacheEntry<K, V> e : tree) {
         evictEntry(e.key);
       }
     } finally {
-      isCleaning = false;  // set before markAndSweep.unlock() for visibility
+      isCleaning = false; // set before markAndSweep.unlock() for visibility
       markAndSweepLock.unlock();
     }
   }
@@ -216,7 +222,7 @@ public class ConcurrentLFUCache<K, V> {
 
   /**
    * Returns 'n' number of least used entries present in this cache.
-   * <p/>
+   * <p>
    * This uses a TreeSet to collect the 'n' least used items ordered by ascending hitcount
    * and returns a LinkedHashMap containing 'n' or less than 'n' entries.
    *
@@ -224,15 +230,15 @@ public class ConcurrentLFUCache<K, V> {
    * @return a LinkedHashMap containing 'n' or less than 'n' entries
    */
   public Map<K, V> getLeastUsedItems(int n) {
-    Map<K, V> result = new LinkedHashMap<K, V>();
+    Map<K, V> result = new LinkedHashMap<>();
     if (n <= 0)
       return result;
-    TreeSet<CacheEntry> tree = new TreeSet<CacheEntry>();
+    TreeSet<CacheEntry<K, V>> tree = new TreeSet<>();
     // we need to grab the lock since we are changing the copy variables
     markAndSweepLock.lock();
     try {
       for (Map.Entry<Object, CacheEntry<K, V>> entry : map.entrySet()) {
-        CacheEntry ce = entry.getValue();
+        CacheEntry<K, V> ce = entry.getValue();
         ce.hitsCopy = ce.hits.get();
         ce.lastAccessedCopy = ce.lastAccessed;
         if (tree.size() < n) {
@@ -260,7 +266,7 @@ public class ConcurrentLFUCache<K, V> {
 
   /**
    * Returns 'n' number of most used entries present in this cache.
-   * <p/>
+   * <p>
    * This uses a TreeSet to collect the 'n' most used items ordered by descending hitcount
    * and returns a LinkedHashMap containing 'n' or less than 'n' entries.
    *
@@ -268,10 +274,10 @@ public class ConcurrentLFUCache<K, V> {
    * @return a LinkedHashMap containing 'n' or less than 'n' entries
    */
   public Map<K, V> getMostUsedItems(int n) {
-    Map<K, V> result = new LinkedHashMap<K, V>();
+    Map<K, V> result = new LinkedHashMap<>();
     if (n <= 0)
       return result;
-    TreeSet<CacheEntry> tree = new TreeSet<CacheEntry>();
+    TreeSet<CacheEntry<K, V>> tree = new TreeSet<>();
     // we need to grab the lock since we are changing the copy variables
     markAndSweepLock.lock();
     try {
@@ -306,6 +312,7 @@ public class ConcurrentLFUCache<K, V> {
     return stats.size.get();
   }
 
+  @Override
   public void clear() {
     map.clear();
   }
@@ -314,7 +321,7 @@ public class ConcurrentLFUCache<K, V> {
     return map;
   }
 
-  private static class CacheEntry<K, V> implements Comparable<CacheEntry<K, V>> {
+  public static class CacheEntry<K, V> implements Comparable<CacheEntry<K, V>> {
     K key;
     V value;
     volatile AtomicLong hits = new AtomicLong(0);
@@ -328,6 +335,7 @@ public class ConcurrentLFUCache<K, V> {
       this.lastAccessed = lastAccessed;
     }
 
+    @Override
     public int compareTo(CacheEntry<K, V> that) {
       if (this.hitsCopy == that.hitsCopy) {
         if (this.lastAccessedCopy == that.lastAccessedCopy) {
@@ -427,7 +435,7 @@ public class ConcurrentLFUCache<K, V> {
     private boolean stop = false;
 
     public CleanupThread(ConcurrentLFUCache c) {
-      cache = new WeakReference<ConcurrentLFUCache>(c);
+      cache = new WeakReference<>(c);
     }
 
     @Override

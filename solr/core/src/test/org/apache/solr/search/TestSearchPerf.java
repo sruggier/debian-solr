@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import org.apache.lucene.index.Term;
@@ -26,19 +25,23 @@ import org.apache.solr.update.processor.UpdateRequestProcessorChain;
 import org.apache.solr.update.processor.UpdateRequestProcessor;
 import org.apache.solr.update.AddUpdateCommand;
 import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.util.RTimer;
+import org.junit.BeforeClass;
 
 import java.util.*;
 import java.io.IOException;
 
 /**
- * @version $Id$
+ *
  */
 public class TestSearchPerf extends AbstractSolrTestCase {
 
-  @Override
-  public String getSchemaFile() { return "schema11.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solrconfig.xml"; }
+  
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solrconfig.xml", "schema11.xml");
+  }
+
 
   @Override
   public void setUp() throws Exception {
@@ -50,7 +53,7 @@ public class TestSearchPerf extends AbstractSolrTestCase {
   }
 
   String t(int tnum) {
-    return String.format("%08d", tnum);
+    return String.format(Locale.ROOT, "%08d", tnum);
   }
 
   Random r = new Random(0);  // specific seed for reproducible perf testing
@@ -73,7 +76,7 @@ public class TestSearchPerf extends AbstractSolrTestCase {
 
   // Skip encoding for updating the index
   void createIndex2(int nDocs, String... fields) throws IOException {
-    Set<String> fieldSet = new HashSet<String>(Arrays.asList(fields));
+    Set<String> fieldSet = new HashSet<>(Arrays.asList(fields));
 
     SolrQueryRequest req = lrf.makeRequest();
     SolrQueryResponse rsp = new SolrQueryResponse();
@@ -115,7 +118,7 @@ public class TestSearchPerf extends AbstractSolrTestCase {
         doc.addField("t10_100_ws", sb.toString());
       }
 
-      AddUpdateCommand cmd = new AddUpdateCommand();
+      AddUpdateCommand cmd = new AddUpdateCommand(req);
       cmd.solrDoc = doc;
       processor.processAdd(cmd);
     }
@@ -135,7 +138,7 @@ public class TestSearchPerf extends AbstractSolrTestCase {
 
     SolrIndexSearcher searcher = req.getSearcher();
 
-    long start = System.currentTimeMillis();
+    final RTimer timer = new RTimer();
 
     int ret = 0;
     for (int i=0; i<iter; i++) {
@@ -143,8 +146,8 @@ public class TestSearchPerf extends AbstractSolrTestCase {
       ret += set.size();
     }
 
-    long end = System.currentTimeMillis();
-    System.out.println("ret="+ret+ " time="+(end-start)+" throughput="+iter*1000/(end-start+1));
+    double elapsed = timer.getTime();
+    System.out.println("ret="+ret+ " time="+elapsed+" throughput="+iter*1000/(elapsed+1));
 
     req.close();
     assertTrue(ret>0);  // make sure we did some work
@@ -156,22 +159,16 @@ public class TestSearchPerf extends AbstractSolrTestCase {
 
     SolrIndexSearcher searcher = req.getSearcher();
 
-    long start = System.currentTimeMillis();
-
-    // These aren't public in SolrIndexSearcher
-    int NO_CHECK_QCACHE       = 0x80000000;
-    int GET_DOCSET            = 0x40000000;
-    int NO_CHECK_FILTERCACHE  = 0x20000000;
-    int GET_SCORES            = 0x01;
+    final RTimer timer = new RTimer();
 
     int ret = 0;
     for (int i=0; i<iter; i++) {
-      DocList l = searcher.getDocList(q, filt, (Sort)null, 0, 10, (cacheQuery?0:NO_CHECK_QCACHE)|(cacheFilt?0:NO_CHECK_FILTERCACHE) );
+      DocList l = searcher.getDocList(q, filt, (Sort)null, 0, 10, (cacheQuery?0:SolrIndexSearcher.NO_CHECK_QCACHE)|(cacheFilt?0:SolrIndexSearcher.NO_CHECK_FILTERCACHE) );
       ret += l.matches();
     }
 
-    long end = System.currentTimeMillis();
-    System.out.println("ret="+ret+ " time="+(end-start)+" throughput="+iter*1000/(end-start+1));
+    double elapsed = timer.getTime();
+    System.out.println("ret="+ret+ " time="+elapsed+" throughput="+iter*1000/(elapsed+1));
 
     req.close();
     assertTrue(ret>0);  // make sure we did some work
@@ -186,10 +183,10 @@ public class TestSearchPerf extends AbstractSolrTestCase {
     createIndex(49999);
     doSetGen(10000, new TermQuery(new Term("foo1_s",t(0))) );
 
-    BooleanQuery bq = new BooleanQuery();
+    BooleanQuery.Builder bq = new BooleanQuery.Builder();
     bq.add(new TermQuery(new Term("foo2_s",t(0))), BooleanClause.Occur.SHOULD);
     bq.add(new TermQuery(new Term("foo2_s",t(1))), BooleanClause.Occur.SHOULD);
-    doSetGen(5000, bq); 
+    doSetGen(5000, bq.build()); 
   }
 
   /** test range query performance */
@@ -201,10 +198,10 @@ public class TestSearchPerf extends AbstractSolrTestCase {
     String u=t((int)(indexSize*10*fractionCovered));   
 
     SolrQueryRequest req = lrf.makeRequest();
-    QParser parser = QParser.getParser("foomany_s:[" + l + " TO " + u + "]", null, req);
+    QParser parser = QParser.getParser("foomany_s:[" + l + " TO " + u + "]", req);
     Query range = parser.getQuery();
                                      
-    QParser parser2 = QParser.getParser("{!frange l="+l+" u="+u+"}foomany_s", null, req);
+    QParser parser2 = QParser.getParser("{!frange l="+l+" u="+u+"}foomany_s", req);
     Query frange = parser2.getQuery();
     req.close();
 
@@ -227,13 +224,13 @@ public class TestSearchPerf extends AbstractSolrTestCase {
 
     SolrQueryRequest req = lrf.makeRequest();
 
-    QParser parser = QParser.getParser("foomany_s:[" + l + " TO " + u + "]", null, req);
+    QParser parser = QParser.getParser("foomany_s:[" + l + " TO " + u + "]", req);
     Query rangeQ = parser.getQuery();
-    List<Query> filters = new ArrayList<Query>();
+    List<Query> filters = new ArrayList<>();
     filters.add(rangeQ);
     req.close();
 
-    parser = QParser.getParser("{!dismax qf=t10_100_ws pf=t10_100_ws ps=20}"+ t(0) + ' ' + t(1) + ' ' + t(2), null, req);
+    parser = QParser.getParser("{!dismax qf=t10_100_ws pf=t10_100_ws ps=20}"+ t(0) + ' ' + t(1) + ' ' + t(2), req);
     Query q= parser.getQuery();
 
     // SolrIndexSearcher searcher = req.getSearcher();

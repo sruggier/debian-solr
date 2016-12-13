@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,21 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.schema;
 
 import java.io.IOException;
 import java.util.Map;
 
-import org.apache.lucene.document.Fieldable;
-import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.ReaderUtil;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.docvalues.IntDocValues;
 import org.apache.lucene.search.*;
 import org.apache.solr.response.TextResponseWriter;
-import org.apache.solr.response.XMLWriter;
 import org.apache.solr.search.QParser;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.ValueSource;
-import org.apache.solr.search.SolrIndexReader;
+import org.apache.solr.uninverting.UninvertingReader.Type;
 
 /**
  * Utility Field used for random sorting.  It should not be passed a value.
@@ -51,14 +52,14 @@ import org.apache.solr.search.SolrIndexReader;
  * 
  * Examples of queries:
  * <ul>
- * <li>http://localhost:8983/solr/select/?q=*:*&fl=name&sort=rand_1234%20desc</li>
- * <li>http://localhost:8983/solr/select/?q=*:*&fl=name&sort=rand_2345%20desc</li>
- * <li>http://localhost:8983/solr/select/?q=*:*&fl=name&sort=rand_ABDC%20desc</li>
- * <li>http://localhost:8983/solr/select/?q=*:*&fl=name&sort=rand_21%20desc</li>
+ * <li>http://localhost:8983/solr/select/?q=*:*&amp;fl=name&amp;sort=random_1234%20desc</li>
+ * <li>http://localhost:8983/solr/select/?q=*:*&amp;fl=name&amp;sort=random_2345%20desc</li>
+ * <li>http://localhost:8983/solr/select/?q=*:*&amp;fl=name&amp;sort=random_ABDC%20desc</li>
+ * <li>http://localhost:8983/solr/select/?q=*:*&amp;fl=name&amp;sort=random_21%20desc</li>
  * </ul>
  * Note that multiple calls to the same URL will return the same sorting order.
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class RandomSortField extends FieldType {
@@ -75,46 +76,43 @@ public class RandomSortField extends FieldType {
   }
 
   /** 
-   * Given a field name and an IndexReader, get a random hash seed.  
+   * Given a field name and an IndexReader, get a random hash seed.
    * Using dynamic fields, you can force the random order to change 
    */
-  private static int getSeed(String fieldName, IndexReader r) {
-    SolrIndexReader top = (SolrIndexReader)r;
-    int base=0;
-    while (top.getParent() != null) {
-      base += top.getBase();
-      top = top.getParent();
-    }
-
+  private static int getSeed(String fieldName, LeafReaderContext context) {
+    final DirectoryReader top = (DirectoryReader) ReaderUtil.getTopLevelContext(context).reader();
     // calling getVersion() on a segment will currently give you a null pointer exception, so
     // we use the top-level reader.
-    return fieldName.hashCode() + base + (int)top.getVersion();
+    return fieldName.hashCode() + context.docBase + (int)top.getVersion();
   }
-
+  
   @Override
   public SortField getSortField(SchemaField field, boolean reverse) {
     return new SortField(field.getName(), randomComparatorSource, reverse);
   }
+  
+  @Override
+  public Type getUninversionType(SchemaField sf) {
+    return null;
+  }
 
   @Override
-  public ValueSource getValueSource(SchemaField field, QParser parser) {
+  public ValueSource getValueSource(SchemaField field, QParser qparser) {
     return new RandomValueSource(field.getName());
   }
 
   @Override
-  public void write(XMLWriter xmlWriter, String name, Fieldable f) throws IOException { }
-
-  @Override
-  public void write(TextResponseWriter writer, String name, Fieldable f) throws IOException { }
+  public void write(TextResponseWriter writer, String name, IndexableField f) throws IOException { }
 
 
   private static FieldComparatorSource randomComparatorSource = new FieldComparatorSource() {
     @Override
-    public FieldComparator<Integer> newComparator(final String fieldname, final int numHits, int sortPos, boolean reversed) throws IOException {
-      return new FieldComparator<Integer>() {
+    public FieldComparator<Integer> newComparator(final String fieldname, final int numHits, int sortPos, boolean reversed) {
+      return new SimpleFieldComparator<Integer>() {
         int seed;
         private final int[] values = new int[numHits];
         int bottomVal;
+        int topVal;
 
         @Override
         public int compare(int slot1, int slot2) {
@@ -127,23 +125,34 @@ public class RandomSortField extends FieldType {
         }
 
         @Override
-        public int compareBottom(int doc) throws IOException {
+        public void setTopValue(Integer value) {
+          topVal = value.intValue();
+        }
+
+        @Override
+        public int compareBottom(int doc) {
           return bottomVal - hash(doc+seed);
         }
 
         @Override
-        public void copy(int slot, int doc) throws IOException {
+        public void copy(int slot, int doc) {
           values[slot] = hash(doc+seed);
         }
 
         @Override
-        public void setNextReader(IndexReader reader, int docBase) throws IOException {
-          seed = getSeed(fieldname, reader);
+        protected void doSetNextReader(LeafReaderContext context) {
+          seed = getSeed(fieldname, context);
         }
 
         @Override
         public Integer value(int slot) {
           return values[slot];
+        }
+
+        @Override
+        public int compareTop(int doc) {
+          // values will be positive... no overflow possible.
+          return topVal - hash(doc+seed);
         }
       };
     }
@@ -164,37 +173,12 @@ public class RandomSortField extends FieldType {
     }
 
     @Override
-    public DocValues getValues(Map context, final IndexReader reader) throws IOException {
-      return new DocValues() {
-          private final int seed = getSeed(field, reader);
-          @Override
-          public float floatVal(int doc) {
-            return (float)hash(doc+seed);
-          }
-
+    public FunctionValues getValues(Map context, final LeafReaderContext readerContext) throws IOException {
+      return new IntDocValues(this) {
+          private final int seed = getSeed(field, readerContext);
           @Override
           public int intVal(int doc) {
             return hash(doc+seed);
-          }
-
-          @Override
-          public long longVal(int doc) {
-            return (long)hash(doc+seed);
-          }
-
-          @Override
-          public double doubleVal(int doc) {
-            return (double)hash(doc+seed);
-          }
-
-          @Override
-          public String strVal(int doc) {
-            return Integer.toString(hash(doc+seed));
-          }
-
-          @Override
-          public String toString(int doc) {
-            return description() + '=' + intVal(doc);
           }
         };
     }

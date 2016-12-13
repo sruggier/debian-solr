@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.util;
 
 import java.io.*;
@@ -22,11 +21,12 @@ import java.io.*;
 /** Single threaded buffered InputStream
  *  Internal Solr use only, subject to change.
  */
-public class FastInputStream extends InputStream implements DataInput {
-  private final InputStream in;
-  private final byte[] buf;
-  private int pos;
-  private int end;
+public class FastInputStream extends DataInputInputStream {
+  protected final InputStream in;
+  protected final byte[] buf;
+  protected int pos;
+  protected int end;
+  protected long readFromStream; // number of bytes read from the underlying inputstream
 
   public FastInputStream(InputStream in) {
   // use default BUFSIZE of BufferedOutputStream so if we wrap that
@@ -55,17 +55,38 @@ public class FastInputStream extends InputStream implements DataInput {
     return buf[pos++] & 0xff;     
   }
 
+  public int peek() throws IOException {
+    if (pos >= end) {
+      refill();
+      if (pos >= end) return -1;
+    }
+    return buf[pos] & 0xff;
+  }
+
+
+  @Override
   public int readUnsignedByte() throws IOException {
     if (pos >= end) {
       refill();
-      if (pos >= end) throw new EOFException();
+      if (pos >= end) {
+        throw new EOFException();
+      }
     }
     return buf[pos++] & 0xff;
   }
 
+  public int readWrappedStream(byte[] target, int offset, int len) throws IOException {
+    return in.read(target, offset, len);
+  }
+
+  public long position() {
+    return readFromStream - (end - pos);
+  }
+
   public void refill() throws IOException {
     // this will set end to -1 at EOF
-    end = in.read(buf, 0, buf.length);
+    end = readWrappedStream(buf, 0, buf.length);
+    if (end > 0) readFromStream += end;
     pos = 0;
   }
 
@@ -74,13 +95,29 @@ public class FastInputStream extends InputStream implements DataInput {
     return end - pos;
   }
 
+  /** Returns the internal buffer used for caching */
+  public byte[] getBuffer() {
+    return buf;
+  }
+
+  /** Current position within the internal buffer */
+  public int getPositionInBuffer() {
+    return pos;
+  }
+
+  /** Current end-of-data position within the internal buffer.  This is one past the last valid byte. */
+  public int getEndInBuffer() {
+    return end;
+  }
+
   @Override
   public int read(byte b[], int off, int len) throws IOException {
-    int r=0;  // number of bytes read
+    int r=0;  // number of bytes we have read
+
     // first read from our buffer;
     if (end-pos > 0) {
       r = Math.min(end-pos, len);
-      System.arraycopy(buf, pos, b, off, r);      
+      System.arraycopy(buf, pos, b, off, r);
       pos += r;
     }
 
@@ -88,15 +125,20 @@ public class FastInputStream extends InputStream implements DataInput {
 
     // amount left to read is >= buffer size
     if (len-r >= buf.length) {
-      int ret = in.read(b, off+r, len-r);
-      if (ret==-1) return r==0 ? -1 : r;
-      r += ret;
-      return r;
+      int ret = readWrappedStream(b, off+r, len-r);
+      if (ret >= 0) {
+        readFromStream += ret;
+        r += ret;
+        return r;
+      } else {
+        // negative return code
+        return r > 0 ? r : -1;
+      }
     }
 
     refill();
 
-    // first read from our buffer;
+    // read rest from our buffer
     if (end-pos > 0) {
       int toRead = Math.min(end-pos, len-r);
       System.arraycopy(buf, pos, b, off+r, toRead);
@@ -104,7 +146,7 @@ public class FastInputStream extends InputStream implements DataInput {
       r += toRead;
       return r;
     }
-    
+
     return r > 0 ? r : -1;
   }
 
@@ -113,10 +155,12 @@ public class FastInputStream extends InputStream implements DataInput {
     in.close();
   }
 
+  @Override
   public void readFully(byte b[]) throws IOException {
     readFully(b, 0, b.length);
   }
 
+  @Override
   public void readFully(byte b[], int off, int len) throws IOException {
     while (len>0) {
       int ret = read(b, off, len);
@@ -128,6 +172,7 @@ public class FastInputStream extends InputStream implements DataInput {
     }
   }
 
+  @Override
   public int skipBytes(int n) throws IOException {
     if (end-pos >= n) {
       pos += n;
@@ -150,10 +195,12 @@ public class FastInputStream extends InputStream implements DataInput {
     return r;
   }
 
+  @Override
   public boolean readBoolean() throws IOException {
     return readByte()==1;
   }
 
+  @Override
   public byte readByte() throws IOException {
     if (pos >= end) {
       refill();
@@ -163,18 +210,22 @@ public class FastInputStream extends InputStream implements DataInput {
   }
 
 
+  @Override
   public short readShort() throws IOException {
     return (short)((readUnsignedByte() << 8) | readUnsignedByte());
   }
 
+  @Override
   public int readUnsignedShort() throws IOException {
     return (readUnsignedByte() << 8) | readUnsignedByte();
   }
 
+  @Override
   public char readChar() throws IOException {
     return (char)((readUnsignedByte() << 8) | readUnsignedByte());
   }
 
+  @Override
   public int readInt() throws IOException {
     return  ((readUnsignedByte() << 24)
             |(readUnsignedByte() << 16)
@@ -182,6 +233,7 @@ public class FastInputStream extends InputStream implements DataInput {
             | readUnsignedByte());
   }
 
+  @Override
   public long readLong() throws IOException {
     return  (((long)readUnsignedByte()) << 56)
             | (((long)readUnsignedByte()) << 48)
@@ -193,18 +245,22 @@ public class FastInputStream extends InputStream implements DataInput {
             | (readUnsignedByte());
   }
 
+  @Override
   public float readFloat() throws IOException {
     return Float.intBitsToFloat(readInt());    
   }
 
+  @Override
   public double readDouble() throws IOException {
     return Double.longBitsToDouble(readLong());    
   }
 
+  @Override
   public String readLine() throws IOException {
-    return new DataInputStream(this).readLine();
+    throw new UnsupportedOperationException();
   }
 
+  @Override
   public String readUTF() throws IOException {
     return new DataInputStream(this).readUTF();
   }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +16,11 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.index.Term;
-import org.apache.lucene.queryParser.ParseException;
-import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.schema.SchemaField;
+
 /**
  * Create a prefix query from the input value.  Currently no analysis or
  * value transformation is done to create this prefix query (subject to change).
@@ -31,17 +29,15 @@ import org.apache.solr.request.SolrQueryRequest;
  * to the Lucene query parser expression <code>myfield:foo*</code>
  */
 public class PrefixQParserPlugin extends QParserPlugin {
-  public static String NAME = "prefix";
-
-  public void init(NamedList args) {
-  }
+  public static final String NAME = "prefix";
 
   @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
     return new QParser(qstr, localParams, params, req) {
       @Override
-      public Query parse() throws ParseException {
-        return new PrefixQuery(new Term(localParams.get(QueryParsing.F), localParams.get(QueryParsing.V)));
+      public Query parse() {
+        SchemaField sf = req.getSchema().getField(localParams.get(QueryParsing.F));
+        return sf.getType().getPrefixQuery(this, sf, localParams.get(QueryParsing.V));
       }
     };
   }

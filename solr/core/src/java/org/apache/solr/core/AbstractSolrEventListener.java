@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
 import org.apache.solr.common.util.NamedList;
@@ -23,21 +22,32 @@ import org.apache.solr.search.SolrIndexSearcher;
 
 /**
  */
-class AbstractSolrEventListener implements SolrEventListener {
-  protected final SolrCore core;
+public class AbstractSolrEventListener implements SolrEventListener {
+  private final SolrCore core;
+  public SolrCore getCore() { return core; }
+
   public AbstractSolrEventListener(SolrCore core) {
     this.core = core;
   }
-  protected NamedList args;
+  private NamedList args;
+  public NamedList getArgs() { return args; }
 
+  @Override
   public void init(NamedList args) {
-    this.args = args;
+    this.args = args.clone();
   }
 
+  @Override
   public void postCommit() {
     throw new UnsupportedOperationException();
   }
+  
+  @Override
+  public void postSoftCommit() {
+    throw new UnsupportedOperationException();
+  }
 
+  @Override
   public void newSearcher(SolrIndexSearcher newSearcher, SolrIndexSearcher currentSearcher) {
     throw new UnsupportedOperationException();
   }
@@ -50,7 +60,7 @@ class AbstractSolrEventListener implements SolrEventListener {
   /**
    * Add the {@link org.apache.solr.common.params.EventParams#EVENT} with either the {@link org.apache.solr.common.params.EventParams#NEW_SEARCHER}
    * or {@link org.apache.solr.common.params.EventParams#FIRST_SEARCHER} values depending on the value of currentSearcher.
-   * <p/>
+   * <p>
    * Makes a copy of NamedList and then adds the parameters.
    *
    *

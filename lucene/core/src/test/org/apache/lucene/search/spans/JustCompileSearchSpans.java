@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +14,12 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
+
 
 import java.io.IOException;
-import java.util.Collection;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.Weight;
-import org.apache.lucene.search.Similarity;
+import org.apache.lucene.search.IndexSearcher;
 
 /**
  * Holds all implementations of classes in the o.a.l.s.spans package as a
@@ -38,40 +35,54 @@ final class JustCompileSearchSpans {
   static final class JustCompileSpans extends Spans {
 
     @Override
-    public int doc() {
+    public int docID() {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
 
     @Override
-    public int end() {
+    public int nextDoc() throws IOException {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
 
     @Override
-    public boolean next() throws IOException {
+    public int advance(int target) throws IOException {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
 
     @Override
-    public boolean skipTo(int target) throws IOException {
+    public int startPosition() {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
 
     @Override
-    public int start() {
+    public int endPosition() {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
 
     @Override
-    public Collection<byte[]> getPayload() throws IOException {
+    public int width() {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
 
     @Override
-    public boolean isPayloadAvailable() {
+    public void collect(SpanCollector collector) throws IOException {
+
+    }
+
+    @Override
+    public int nextStartPosition() throws IOException {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
-    
+
+    @Override
+    public long cost() {
+      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+    }
+
+    @Override
+    public float positionsCost() {
+      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+    }
   }
 
   static final class JustCompileSpanQuery extends SpanQuery {
@@ -82,7 +93,7 @@ final class JustCompileSearchSpans {
     }
 
     @Override
-    public Spans getSpans(IndexReader reader) throws IOException {
+    public SpanWeight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
 
@@ -90,58 +101,17 @@ final class JustCompileSearchSpans {
     public String toString(String field) {
       throw new UnsupportedOperationException(UNSUPPORTED_MSG);
     }
-    
+
+    @Override
+    public boolean equals(Object o) {
+      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+    }
+
+    @Override
+    public int hashCode() {
+      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
+    }
+
   }
 
-  static final class JustCompilePayloadSpans extends Spans {
-
-    @Override
-    public Collection<byte[]> getPayload() throws IOException {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-
-    @Override
-    public boolean isPayloadAvailable() {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-
-    @Override
-    public int doc() {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-
-    @Override
-    public int end() {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-
-    @Override
-    public boolean next() throws IOException {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-
-    @Override
-    public boolean skipTo(int target) throws IOException {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-
-    @Override
-    public int start() {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-    
-  }
-  
-  static final class JustCompileSpanScorer extends SpanScorer {
-
-    protected JustCompileSpanScorer(Spans spans, Weight weight,
-        Similarity similarity, byte[] norms) throws IOException {
-      super(spans, weight, similarity, norms);
-    }
-
-    @Override
-    protected boolean setFreqCurrentDoc() throws IOException {
-      throw new UnsupportedOperationException(UNSUPPORTED_MSG);
-    }
-  }
 }

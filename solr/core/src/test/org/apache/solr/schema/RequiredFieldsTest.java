@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,14 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.schema;
 
 import java.util.Collection;
 
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.schema.SchemaField;
 import org.junit.BeforeClass;
 import org.junit.Test;
 /**
@@ -42,7 +40,7 @@ public class RequiredFieldsTest extends SolrTestCaseJ4 {
   @Test
   public void testRequiredFieldsConfig() {
     SolrCore core = h.getCore();
-    IndexSchema schema = core.getSchema();
+    IndexSchema schema = core.getLatestSchema();
     SchemaField uniqueKey = schema.getUniqueKeyField();
 
     // Make sure the uniqueKey is required
@@ -73,12 +71,12 @@ public class RequiredFieldsTest extends SolrTestCaseJ4 {
     assertU(commit());
 
     // Add another document without a subject, which has a default in schema
-    String subjectDefault = core.getSchema().getField("subject").getDefaultValue();
+    String subjectDefault = core.getLatestSchema().getField("subject").getDefaultValue();
     assertNotNull("subject has no default value", subjectDefault);
     assertQ("should find one with subject="+subjectDefault, req("id:530 subject:"+subjectDefault) ,"//result[@numFound=1]" );
 
     // Add another document without a required name, which has no default
-    assertNull(core.getSchema().getField("name").getDefaultValue());
+    assertNull(core.getLatestSchema().getField("name").getDefaultValue());
     ignoreException("missing required field");
     assertFailedU("adding doc without required field",
           adoc("id", "531", "subject", "no name document", "field_t", "what's inside?") );

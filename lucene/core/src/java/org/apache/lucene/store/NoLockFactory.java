@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,62 +14,45 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
 
 import java.io.IOException;
 
 /**
  * Use this {@link LockFactory} to disable locking entirely.
- * Only one instance of this lock is created.  You should call {@link
- * #getNoLockFactory()} to get the instance.
+ * This is a singleton, you have to use {@link #INSTANCE}.
  *
  * @see LockFactory
  */
 
-public class NoLockFactory extends LockFactory {
+public final class NoLockFactory extends LockFactory {
 
-  // Single instance returned whenever makeLock is called.
-  private static NoLock singletonLock = new NoLock();
-  private static NoLockFactory singleton = new NoLockFactory();
+  /** The singleton */
+  public static final NoLockFactory INSTANCE = new NoLockFactory();
   
-  /**
-   * @deprecated This constructor was not intended to be public and should not be used.
-   *  It will be made private in Lucene 4.0
-   * @see #getNoLockFactory()
-   */
-  // make private in 4.0!
-  @Deprecated
-  public NoLockFactory() {}
+  // visible for AssertingLock!
+  static final NoLock SINGLETON_LOCK = new NoLock();
+  
+  private NoLockFactory() {}
 
-  public static NoLockFactory getNoLockFactory() {
-    return singleton;
+  @Override
+  public Lock obtainLock(Directory dir, String lockName) {
+    return SINGLETON_LOCK;
   }
+  
+  private static class NoLock extends Lock {
+    @Override
+    public void close() {
+    }
 
-  @Override
-  public Lock makeLock(String lockName) {
-    return singletonLock;
-  }
+    @Override
+    public void ensureValid() throws IOException {
+    }
 
-  @Override
-  public void clearLock(String lockName) {}
-}
-
-class NoLock extends Lock {
-  @Override
-  public boolean obtain() throws IOException {
-    return true;
-  }
-
-  @Override
-  public void release() {
-  }
-
-  @Override
-  public boolean isLocked() {
-    return false;
-  }
-
-  @Override
-  public String toString() {
-    return "NoLock";
+    @Override
+    public String toString() {
+      return "NoLock";
+    }
   }
 }

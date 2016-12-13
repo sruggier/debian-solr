@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -18,21 +18,28 @@ package org.apache.solr.spelling;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.lang.invoke.MethodHandles;
 import java.util.List;
 
-import org.apache.lucene.index.*;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LogByteSizeMergePolicy;
+import org.apache.lucene.index.LogMergePolicy;
+import org.apache.solr.schema.IndexSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.search.spell.PlainTextDictionary;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.search.spell.HighFrequencyDictionary;
+import org.apache.lucene.search.spell.PlainTextDictionary;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.schema.FieldType;
-
 import org.apache.solr.search.SolrIndexSearcher;
 
 /**
@@ -44,7 +51,7 @@ import org.apache.solr.search.SolrIndexSearcher;
  **/
 public class FileBasedSpellChecker extends AbstractLuceneSpellChecker {
 
-  private static final Logger log = LoggerFactory.getLogger(FileBasedSpellChecker.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   public static final String SOURCE_FILE_CHAR_ENCODING = "characterEncoding";
 
@@ -59,14 +66,13 @@ public class FileBasedSpellChecker extends AbstractLuceneSpellChecker {
   }
 
   @Override
-  public void build(SolrCore core, SolrIndexSearcher searcher) {
-    try {
-      loadExternalFileDictionary(core);
-      spellChecker.clearIndex();
-      spellChecker.indexDictionary(dictionary, new IndexWriterConfig(core.getSolrConfig().luceneMatchVersion, null), false);
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+  public void build(SolrCore core, SolrIndexSearcher searcher) throws IOException {
+    loadExternalFileDictionary(core, searcher);
+    spellChecker.clearIndex();
+    // TODO: you should be able to specify the IWC params?
+    // TODO: if we enable this, codec gets angry since field won't exist in the schema
+    // config.setCodec(core.getCodec());
+    spellChecker.indexDictionary(dictionary, new IndexWriterConfig(null), false);
   }
 
   /**
@@ -77,13 +83,12 @@ public class FileBasedSpellChecker extends AbstractLuceneSpellChecker {
     return null;
   }
 
-  @SuppressWarnings("unchecked")
-  private void loadExternalFileDictionary(SolrCore core) {
+  private void loadExternalFileDictionary(SolrCore core, SolrIndexSearcher searcher) {
     try {
-
+      IndexSchema schema = null == searcher ? core.getLatestSchema() : searcher.getSchema();
       // Get the field's analyzer
-      if (fieldTypeName != null && core.getSchema().getFieldTypeNoEx(fieldTypeName) != null) {
-        FieldType fieldType = core.getSchema().getFieldTypes().get(fieldTypeName);
+      if (fieldTypeName != null && schema.getFieldTypeNoEx(fieldTypeName) != null) {
+        FieldType fieldType = schema.getFieldTypes().get(fieldTypeName);
         // Do index-time analysis using the given fieldType's analyzer
         RAMDirectory ramDir = new RAMDirectory();
 
@@ -92,23 +97,25 @@ public class FileBasedSpellChecker extends AbstractLuceneSpellChecker {
 
         IndexWriter writer = new IndexWriter(
             ramDir,
-            new IndexWriterConfig(core.getSolrConfig().luceneMatchVersion, fieldType.getAnalyzer()).
+            new IndexWriterConfig(fieldType.getIndexAnalyzer()).
                 setMaxBufferedDocs(150).
                 setMergePolicy(mp).
                 setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+                // TODO: if we enable this, codec gets angry since field won't exist in the schema
+                // .setCodec(core.getCodec())
         );
 
         List<String> lines = core.getResourceLoader().getLines(sourceLocation, characterEncoding);
 
         for (String s : lines) {
           Document d = new Document();
-          d.add(new Field(WORD_FIELD_NAME, s, Field.Store.NO, Field.Index.ANALYZED));
+          d.add(new TextField(WORD_FIELD_NAME, s, Field.Store.NO));
           writer.addDocument(d);
         }
         writer.forceMerge(1);
         writer.close();
 
-        dictionary = new HighFrequencyDictionary(IndexReader.open(ramDir),
+        dictionary = new HighFrequencyDictionary(DirectoryReader.open(ramDir),
                 WORD_FIELD_NAME, 0.0f);
       } else {
         // check if character encoding is defined

@@ -1,5 +1,4 @@
-package org.apache.solr.client.solrj.request;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,8 +14,7 @@ package org.apache.solr.client.solrj.request;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
+package org.apache.solr.client.solrj.request;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 
@@ -30,8 +28,8 @@ import java.util.List;
 /**
  * Basic functionality to upload a File or {@link org.apache.solr.common.util.ContentStream} to a Solr Cell or some
  * other handler that takes ContentStreams (CSV)
- * <p/>
- * See http://wiki.apache.org/solr/ExtractingRequestHandler<br/>
+ * <p>
+ * See http://wiki.apache.org/solr/ExtractingRequestHandler<br>
  * See http://wiki.apache.org/solr/UpdateCSV
  * 
  *
@@ -45,7 +43,7 @@ public class ContentStreamUpdateRequest extends AbstractUpdateRequest {
    */
   public ContentStreamUpdateRequest(String url) {
     super(METHOD.POST, url);
-    contentStreams = new ArrayList<ContentStream>();
+    contentStreams = new ArrayList<>();
   }
 
   @Override
@@ -61,8 +59,10 @@ public class ContentStreamUpdateRequest extends AbstractUpdateRequest {
    * @see #getContentStreams()
    * @see org.apache.solr.common.util.ContentStreamBase.FileStream
    */
-  public void addFile(File file) throws IOException {
-    addContentStream(new ContentStreamBase.FileStream(file));
+  public void addFile(File file, String contentType) throws IOException {
+    ContentStreamBase cs = new ContentStreamBase.FileStream(file);
+    cs.setContentType(contentType);
+    addContentStream(cs);
   }
 
   /**

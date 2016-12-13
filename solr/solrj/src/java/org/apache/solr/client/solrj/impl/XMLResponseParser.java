@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.impl;
 
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+import java.io.InputStream;
+import java.io.Reader;
+import java.lang.invoke.MethodHandles;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
 import org.apache.solr.client.solrj.ResponseParser;
-import org.apache.solr.client.solrj.util.ClientUtils;
+import org.apache.solr.common.EmptyEntityResolver;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrException;
@@ -28,25 +40,15 @@ import org.apache.solr.common.util.XMLErrorLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamConstants;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
-import java.io.InputStream;
-import java.io.Reader;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.Locale;
-
 /**
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class XMLResponseParser extends ResponseParser
 {
-  public static Logger log = LoggerFactory.getLogger(XMLResponseParser.class);
+  public static final String XML_CONTENT_TYPE = "application/xml; charset=UTF-8";
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   private static final XMLErrorLogger xmllog = new XMLErrorLogger(log);
 
   // reuse the factory among all parser instances so things like string caches
@@ -54,6 +56,8 @@ public class XMLResponseParser extends ResponseParser
   static final XMLInputFactory factory;
   static {
     factory = XMLInputFactory.newInstance();
+    EmptyEntityResolver.configureXMLInputFactory(factory);
+
     try {
       // The java 1.6 bundled stax parser (sjsxp) does not currently have a thread-safe
       // XMLInputFactory, as that implementation tries to cache and reuse the
@@ -77,6 +81,11 @@ public class XMLResponseParser extends ResponseParser
   public String getWriterType()
   {
     return "xml";
+  }
+  
+  @Override
+  public String getContentType() {
+    return XML_CONTENT_TYPE;
   }
 
   @Override
@@ -128,7 +137,7 @@ public class XMLResponseParser extends ResponseParser
               response = readNamedList( parser );
             }
             else if( name.equals( "solr" ) ) {
-              return new SimpleOrderedMap<Object>();
+              return new SimpleOrderedMap<>();
             }
             else {
               throw new Exception( "really needs to be response or result.  " +
@@ -163,7 +172,7 @@ public class XMLResponseParser extends ResponseParser
       @Override 
       public Date read( String txt ) { 
         try {
-          return ClientUtils.parseDate(txt);      
+          return new Date(Instant.parse(txt).toEpochMilli());
         }
         catch( Exception ex ) {
           ex.printStackTrace();
@@ -190,7 +199,7 @@ public class XMLResponseParser extends ResponseParser
     {
       if( v != null ) {
         try {
-          return KnownType.valueOf( v.toUpperCase(Locale.ENGLISH) );
+          return KnownType.valueOf( v.toUpperCase(Locale.ROOT) );
         }
         catch( Exception ex ) {}
       }
@@ -205,7 +214,7 @@ public class XMLResponseParser extends ResponseParser
     }
 
     StringBuilder builder = new StringBuilder();
-    NamedList<Object> nl = new SimpleOrderedMap<Object>();
+    NamedList<Object> nl = new SimpleOrderedMap<>();
     KnownType type = null;
     String name = null;
     
@@ -270,14 +279,14 @@ public class XMLResponseParser extends ResponseParser
     if( XMLStreamConstants.START_ELEMENT != parser.getEventType() ) {
       throw new RuntimeException( "must be start element, not: "+parser.getEventType() );
     }
-    if( !"arr".equals( parser.getLocalName().toLowerCase(Locale.ENGLISH) ) ) {
+    if( !"arr".equals( parser.getLocalName().toLowerCase(Locale.ROOT) ) ) {
       throw new RuntimeException( "must be 'arr', not: "+parser.getLocalName() );
     }
     
     StringBuilder builder = new StringBuilder();
     KnownType type = null;
 
-    List<Object> vals = new ArrayList<Object>();
+    List<Object> vals = new ArrayList<>();
 
     int depth = 0;
     while( true ) 
@@ -358,7 +367,7 @@ public class XMLResponseParser extends ResponseParser
       event = parser.next();
       if( XMLStreamConstants.START_ELEMENT == event ) {
         if( !"doc".equals( parser.getLocalName() ) ) {
-          throw new RuntimeException( "shoudl be doc! "+parser.getLocalName() + " :: " + parser.getLocation() );
+          throw new RuntimeException( "should be doc! "+parser.getLocalName() + " :: " + parser.getLocation() );
         }
         docs.add( readDocument( parser ) );
       }
@@ -373,7 +382,7 @@ public class XMLResponseParser extends ResponseParser
     if( XMLStreamConstants.START_ELEMENT != parser.getEventType() ) {
       throw new RuntimeException( "must be start element, not: "+parser.getEventType() );
     }
-    if( !"doc".equals( parser.getLocalName().toLowerCase(Locale.ENGLISH) ) ) {
+    if( !"doc".equals( parser.getLocalName().toLowerCase(Locale.ROOT) ) ) {
       throw new RuntimeException( "must be 'lst', not: "+parser.getLocalName() );
     }
 
@@ -403,6 +412,15 @@ public class XMLResponseParser extends ResponseParser
             break;
           }
         }
+
+        //Nested documents
+        while( type == KnownType.DOC) {
+          doc.addChildDocument(readDocument(parser));
+          int event = parser.next();
+          if (event == XMLStreamConstants.END_ELEMENT) { //Doc ends
+            return doc;
+          }
+        }
         
         if( name == null ) {
           throw new XMLStreamException( "requires 'name' attribute: "+parser.getLocalName(), parser.getLocation() );
@@ -414,8 +432,12 @@ public class XMLResponseParser extends ResponseParser
             doc.addField( name, val );
           }
           depth--; // the array reading clears out the 'endElement'
-        }
-        else if( !type.isLeaf ) {
+        } else if( type == KnownType.LST ) {
+            doc.addField( name, readNamedList( parser ) );
+          depth--; 
+        } else if( !type.isLeaf ) {
+          System.out.println("nbot leaf!:" + type);
+          
           throw new XMLStreamException( "must be value or array", parser.getLocation() );
         }
         break;

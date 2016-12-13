@@ -1,10 +1,3 @@
-package org.apache.solr.handler.dataimport;
-
-import java.io.File;
-
-import org.apache.solr.request.LocalSolrQueryRequest;
-import org.junit.BeforeClass;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -21,6 +14,14 @@ import org.junit.BeforeClass;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.dataimport;
+
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.solr.request.LocalSolrQueryRequest;
+import org.junit.BeforeClass;
 
 public class TestFileListWithLineEntityProcessor extends AbstractDataImportHandlerTestCase {
   @BeforeClass
@@ -29,17 +30,14 @@ public class TestFileListWithLineEntityProcessor extends AbstractDataImportHandl
   }
   
   public void test() throws Exception {
-    File tmpdir = File.createTempFile("test", "tmp", TEMP_DIR);
-    tmpdir.delete();
-    tmpdir.mkdir();
-    tmpdir.deleteOnExit();
-    createFile(tmpdir, "a.txt", "a line one\na line two\na line three".getBytes(), false);
-    createFile(tmpdir, "b.txt", "b line one\nb line two".getBytes(), false);
-    createFile(tmpdir, "c.txt", "c line one\nc line two\nc line three\nc line four".getBytes(), false);
+    File tmpdir = createTempDir(LuceneTestCase.getTestClass().getSimpleName()).toFile();
+    createFile(tmpdir, "a.txt", "a line one\na line two\na line three".getBytes(StandardCharsets.UTF_8), false);
+    createFile(tmpdir, "b.txt", "b line one\nb line two".getBytes(StandardCharsets.UTF_8), false);
+    createFile(tmpdir, "c.txt", "c line one\nc line two\nc line three\nc line four".getBytes(StandardCharsets.UTF_8), false);
     
     String config = generateConfig(tmpdir);
     LocalSolrQueryRequest request = lrf.makeRequest(
-        "command", "full-import", "dataConfig", config, "debug", "true",
+        "command", "full-import", "dataConfig", config,
         "clean", "true", "commit", "true", "synchronous", "true", "indent", "true");
     h.query("/dataimport", request);
     

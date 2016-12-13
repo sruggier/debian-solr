@@ -1,5 +1,4 @@
-package org.apache.solr.update.processor;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.update.processor;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -65,7 +64,7 @@ public class TextProfileSignature extends MD5Signature {
 
   @Override
   public void add(String content) {
-    HashMap<String, Token> tokens = new HashMap<String, Token>();
+    HashMap<String, Token> tokens = new HashMap<>();
 
     StringBuilder curToken = new StringBuilder();
     int maxFreq = 0;
@@ -105,7 +104,7 @@ public class TextProfileSignature extends MD5Signature {
         maxFreq = tok.cnt;
     }
     Iterator<Token> it = tokens.values().iterator();
-    ArrayList<Token> profile = new ArrayList<Token>();
+    ArrayList<Token> profile = new ArrayList<>();
     // calculate the QUANT value
     int quant = Math.round(maxFreq * quantRate);
     if (quant < 2) {
@@ -153,6 +152,7 @@ public class TextProfileSignature extends MD5Signature {
   }
 
   private static class TokenComparator implements Comparator<Token> {
+    @Override
     public int compare(Token t1, Token t2) {
       return t2.cnt - t1.cnt;
     }

@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 
@@ -33,9 +33,9 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
   public void testNormalCase() throws IOException {
     Directory dir = newDirectory();
 
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(10).setMergePolicy(new LogDocMergePolicy()));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                .setMaxBufferedDocs(10)
+                                                .setMergePolicy(new LogDocMergePolicy()));
 
     for (int i = 0; i < 100; i++) {
       addDoc(writer);
@@ -50,9 +50,9 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
   public void testNoOverMerge() throws IOException {
     Directory dir = newDirectory();
 
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(10).setMergePolicy(new LogDocMergePolicy()));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                .setMaxBufferedDocs(10)
+                                                .setMergePolicy(new LogDocMergePolicy()));
 
     boolean noOverMerge = false;
     for (int i = 0; i < 100; i++) {
@@ -75,9 +75,9 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
     LogDocMergePolicy mp = new LogDocMergePolicy();
     mp.setMinMergeDocs(100);
     mp.setMergeFactor(10);
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(10).setMergePolicy(mp));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                .setMaxBufferedDocs(10)
+                                                .setMergePolicy(mp));
 
     for (int i = 0; i < 100; i++) {
       addDoc(writer);
@@ -85,9 +85,10 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
 
       mp = new LogDocMergePolicy();
       mp.setMergeFactor(10);
-      writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT,
-          new MockAnalyzer(random)).setOpenMode(
-          OpenMode.APPEND).setMaxBufferedDocs(10).setMergePolicy(mp));
+      writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                      .setOpenMode(OpenMode.APPEND)
+                                      .setMaxBufferedDocs(10)
+                                      .setMergePolicy(mp));
       mp.setMinMergeDocs(100);
       checkInvariants(writer);
     }
@@ -102,13 +103,11 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
 
     IndexWriter writer = new IndexWriter(
         dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).
-            setMaxBufferedDocs(10).
-            setMergePolicy(newLogMergePolicy()).
-            setMergeScheduler(new SerialMergeScheduler())
+        newIndexWriterConfig(new MockAnalyzer(random()))
+            .setMaxBufferedDocs(10)
+            .setMergePolicy(newLogMergePolicy())
+            .setMergeScheduler(new SerialMergeScheduler())
     );
-
-    writer.setInfoStream(VERBOSE ? System.out : null);
 
     for (int i = 0; i < 250; i++) {
       addDoc(writer);
@@ -132,9 +131,9 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
   public void testMaxBufferedDocsChange() throws IOException {
     Directory dir = newDirectory();
 
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(101).setMergePolicy(new LogDocMergePolicy())
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+        .setMaxBufferedDocs(101)
+        .setMergePolicy(new LogDocMergePolicy())
         .setMergeScheduler(new SerialMergeScheduler()));
 
     // leftmost* segment has 1 doc
@@ -146,18 +145,21 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
       }
       writer.close();
 
-      writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT,
-          new MockAnalyzer(random)).setOpenMode(
-          OpenMode.APPEND).setMaxBufferedDocs(101).setMergePolicy(new LogDocMergePolicy())
-                          .setMergeScheduler(new SerialMergeScheduler()));
+      writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                      .setOpenMode(OpenMode.APPEND)
+                                      .setMaxBufferedDocs(101)
+                                      .setMergePolicy(new LogDocMergePolicy())
+                                      .setMergeScheduler(new SerialMergeScheduler()));
     }
 
     writer.close();
     LogDocMergePolicy ldmp = new LogDocMergePolicy();
     ldmp.setMergeFactor(10);
-    writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT,
-        new MockAnalyzer(random)).setOpenMode(
-        OpenMode.APPEND).setMaxBufferedDocs(10).setMergePolicy(ldmp).setMergeScheduler(new SerialMergeScheduler()));
+    writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                    .setOpenMode(OpenMode.APPEND)
+                                    .setMaxBufferedDocs(10)
+                                    .setMergePolicy(ldmp)
+                                    .setMergeScheduler(new SerialMergeScheduler()));
 
     // merge policy only fixes segments on levels where merges
     // have been triggered, so check invariants after all adds
@@ -184,9 +186,9 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
 
     LogDocMergePolicy ldmp = new LogDocMergePolicy();
     ldmp.setMergeFactor(100);
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(10).setMergePolicy(ldmp));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                .setMaxBufferedDocs(10)
+                                                .setMergePolicy(ldmp));
 
     for (int i = 0; i < 250; i++) {
       addDoc(writer);
@@ -194,15 +196,22 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
     }
     writer.close();
 
-    IndexReader reader = IndexReader.open(dir, false);
-    reader.deleteDocuments(new Term("content", "aaa"));
-    reader.close();
+    // delete some docs without merging
+    writer = new IndexWriter(
+        dir,
+        newIndexWriterConfig(new MockAnalyzer(random()))
+          .setMergePolicy(NoMergePolicy.INSTANCE)
+    );
+    writer.deleteDocuments(new Term("content", "aaa"));
+    writer.close();
 
     ldmp = new LogDocMergePolicy();
     ldmp.setMergeFactor(5);
-    writer = new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT,
-        new MockAnalyzer(random)).setOpenMode(
-        OpenMode.APPEND).setMaxBufferedDocs(10).setMergePolicy(ldmp).setMergeScheduler(new ConcurrentMergeScheduler()));
+    writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                    .setOpenMode(OpenMode.APPEND)
+                                    .setMaxBufferedDocs(10)
+                                    .setMergePolicy(ldmp)
+                                    .setMergeScheduler(new ConcurrentMergeScheduler()));
 
     // merge factor is changed, so check invariants after all adds
     for (int i = 0; i < 10; i++) {
@@ -220,7 +229,7 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
 
   private void addDoc(IndexWriter writer) throws IOException {
     Document doc = new Document();
-    doc.add(newField("content", "aaa", Field.Store.NO, Field.Index.ANALYZED));
+    doc.add(newTextField("content", "aaa", Field.Store.NO));
     writer.addDocument(doc);
   }
 
@@ -239,7 +248,7 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
 
     int segmentCount = writer.getSegmentCount();
     for (int i = segmentCount - 1; i >= 0; i--) {
-      int docCount = writer.getDocCount(i);
+      int docCount = writer.maxDoc(i);
       assertTrue("docCount=" + docCount + " lowerBound=" + lowerBound + " upperBound=" + upperBound + " i=" + i + " segmentCount=" + segmentCount + " index=" + writer.segString() + " config=" + writer.getConfig(), docCount > lowerBound);
 
       if (docCount <= upperBound) {
@@ -259,5 +268,29 @@ public class TestIndexWriterMergePolicy extends LuceneTestCase {
     if (upperBound * mergeFactor <= maxMergeDocs) {
       assertTrue(numSegments < mergeFactor);
     }
+  }
+
+  private static final double EPSILON = 1E-14;
+  
+  public void testSetters() {
+    assertSetters(new LogByteSizeMergePolicy());
+    assertSetters(new LogDocMergePolicy());
+  }
+
+  private void assertSetters(MergePolicy lmp) {
+    lmp.setMaxCFSSegmentSizeMB(2.0);
+    assertEquals(2.0, lmp.getMaxCFSSegmentSizeMB(), EPSILON);
+    
+    lmp.setMaxCFSSegmentSizeMB(Double.POSITIVE_INFINITY);
+    assertEquals(Long.MAX_VALUE/1024/1024., lmp.getMaxCFSSegmentSizeMB(), EPSILON*Long.MAX_VALUE);
+    
+    lmp.setMaxCFSSegmentSizeMB(Long.MAX_VALUE/1024/1024.);
+    assertEquals(Long.MAX_VALUE/1024/1024., lmp.getMaxCFSSegmentSizeMB(), EPSILON*Long.MAX_VALUE);
+    
+    expectThrows(IllegalArgumentException.class, () -> {
+      lmp.setMaxCFSSegmentSizeMB(-2.0);
+    });
+    
+    // TODO: Add more checks for other non-double setters!
   }
 }

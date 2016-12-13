@@ -1,6 +1,4 @@
-package org.apache.lucene;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,42 +14,16 @@ package org.apache.lucene;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene;
 
-import java.io.Reader;
 
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.util.LuceneTestCase;
 
+/**
+ * validate that assertions are enabled during tests
+ */
 public class TestAssertions extends LuceneTestCase {
-
-  static class TestAnalyzer1 extends Analyzer {
-    @Override
-    public final TokenStream tokenStream(String s, Reader r) { return null; }
-    @Override
-    public final TokenStream reusableTokenStream(String s, Reader r) { return null; }
-  }
-
-  static final class TestAnalyzer2 extends Analyzer {
-    @Override
-    public TokenStream tokenStream(String s, Reader r) { return null; }
-    @Override
-    public TokenStream reusableTokenStream(String s, Reader r) { return null; }
-  }
-
-  static class TestAnalyzer3 extends Analyzer {
-    @Override
-    public TokenStream tokenStream(String s, Reader r) { return null; }
-    @Override
-    public TokenStream reusableTokenStream(String s, Reader r) { return null; }
-  }
-
-  static class TestAnalyzer4 extends Analyzer {
-    @Override
-    public final TokenStream tokenStream(String s, Reader r) { return null; }
-    @Override
-    public TokenStream reusableTokenStream(String s, Reader r) { return null; }
-  }
 
   static class TestTokenStream1 extends TokenStream {
     @Override
@@ -69,38 +41,15 @@ public class TestAssertions extends LuceneTestCase {
   }
 
   public void testTokenStreams() {
-    new TestAnalyzer1();
-    
-    new TestAnalyzer2();
-    
-    boolean doFail = false;
-    try {
-      new TestAnalyzer3();
-      doFail = true;
-    } catch (AssertionError e) {
-      // expected
-    }
-    assertFalse("TestAnalyzer3 should fail assertion", doFail);
-    
-    try {
-      new TestAnalyzer4();
-      doFail = true;
-    } catch (AssertionError e) {
-      // expected
-    }
-    assertFalse("TestAnalyzer4 should fail assertion", doFail);
-    
     new TestTokenStream1();
-    
     new TestTokenStream2();
-    
     try {
       new TestTokenStream3();
-      doFail = true;
+      if (assertsAreEnabled) {
+        fail("TestTokenStream3 should fail assertion");
+      }
     } catch (AssertionError e) {
       // expected
     }
-    assertFalse("TestTokenStream3 should fail assertion", doFail);
   }
-
 }

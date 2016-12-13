@@ -1,5 +1,4 @@
-package org.apache.solr.core;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,22 +14,22 @@ package org.apache.solr.core;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.core;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.List;
 
 import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexDeletionPolicy;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.solr.common.util.NamedList;
-import org.apache.solr.schema.DateField;
 import org.apache.solr.util.DateMathParser;
 import org.apache.solr.util.plugin.NamedListInitializedPlugin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.List;
-import java.util.Locale;
 
 
 /**
@@ -38,16 +37,17 @@ import java.util.Locale;
  * for certain amounts of time to support features such as index replication
  * or snapshooting directly out of a live index directory.
  *
- * @version $Id$
+ *
  * @see org.apache.lucene.index.IndexDeletionPolicy
  */
-public class SolrDeletionPolicy implements IndexDeletionPolicy, NamedListInitializedPlugin {
-  public static Logger log = LoggerFactory.getLogger(SolrCore.class);
+public class SolrDeletionPolicy extends IndexDeletionPolicy implements NamedListInitializedPlugin {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private String maxCommitAge = null;
   private int maxCommitsToKeep = 1;
   private int maxOptimizedCommitsToKeep = 0;
 
+  @Override
   public void init(NamedList args) {
     String keepOptimizedOnlyString = (String) args.get("keepOptimizedOnly");
     String maxCommitsToKeepString = (String) args.get("maxCommitsToKeep");
@@ -72,59 +72,76 @@ public class SolrDeletionPolicy implements IndexDeletionPolicy, NamedListInitial
     }
   }
 
-  static String str(IndexCommit commit) {
-    StringBuilder sb = new StringBuilder();
-    try {
-      sb.append("commit{");
+  /**
+   * Internal use for Lucene... do not explicitly call.
+   */
+  @Override
+  public void onInit(List<? extends IndexCommit> commits) throws IOException {
+    if (commits.isEmpty()) {
+      return;
+    }
+    log.debug("SolrDeletionPolicy.onInit: commits: {}", new CommitsLoggingDebug(commits));
+    updateCommits(commits);
+  }
 
-      Directory dir = commit.getDirectory();
+  /**
+   * Internal use for Lucene... do not explicitly call.
+   */
+  @Override
+  public void onCommit(List<? extends IndexCommit> commits) throws IOException {
+    log.debug("SolrDeletionPolicy.onCommit: commits: {}", new CommitsLoggingDebug(commits));
+    updateCommits(commits);
+  }
 
+  private static class CommitsLoggingInfo {
+    private List<? extends IndexCommit> commits;
+
+    public CommitsLoggingInfo(List<? extends IndexCommit> commits) {
+      this.commits = commits;
+    }
+
+    public final String toString() {
+      StringBuilder sb = new StringBuilder();
+      sb.append("num=").append(commits.size());
+      for (IndexCommit c : commits) {
+        sb.append("\n\tcommit{");
+        appendDetails(sb, c);
+        sb.append("}");
+      }
+      // add an end brace
+      return sb.toString();
+    }
+
+    protected void appendDetails(StringBuilder sb, IndexCommit c) {
+      Directory dir = c.getDirectory();
       if (dir instanceof FSDirectory) {
         FSDirectory fsd = (FSDirectory) dir;
         sb.append("dir=").append(fsd.getDirectory());
       } else {
         sb.append("dir=").append(dir);
       }
-
-      sb.append(",segFN=").append(commit.getSegmentsFileName());
-      sb.append(",version=").append(commit.getVersion());
-      sb.append(",generation=").append(commit.getGeneration());
-      sb.append(",filenames=").append(commit.getFileNames());
-    } catch (Exception e) {
-      sb.append(e);
+      sb.append(",segFN=").append(c.getSegmentsFileName());
+      sb.append(",generation=").append(c.getGeneration());
     }
-    return sb.toString();
   }
 
-  static String str(List commits) {
-    StringBuilder sb = new StringBuilder();
-    sb.append("num=").append(commits.size());
-
-    for (IndexCommit commit : (List<IndexCommit>) commits) {
-      sb.append("\n\t");
-      sb.append(str(commit));
+  private static class CommitsLoggingDebug extends CommitsLoggingInfo {
+    public CommitsLoggingDebug(List<? extends IndexCommit> commits) {
+      super(commits);
     }
-    return sb.toString();
+
+    protected void appendDetails(StringBuilder sb, IndexCommit c) {
+      super.appendDetails(sb, c);
+      try {
+        sb.append(",filenames=");
+        sb.append(c.getFileNames());
+      } catch (IOException e) {
+        sb.append(e);
+      }
+    }
   }
 
-  /**
-   * Internal use for Lucene... do not explicitly call.
-   */
-  public void onInit(List commits) throws IOException {
-    log.info("SolrDeletionPolicy.onInit: commits:" + str(commits));
-    updateCommits((List<IndexCommit>) commits);
-  }
-
-  /**
-   * Internal use for Lucene... do not explicitly call.
-   */
-  public void onCommit(List commits) throws IOException {
-    log.info("SolrDeletionPolicy.onCommit: commits:" + str(commits));
-    updateCommits((List<IndexCommit>) commits);
-  }
-
-
-  private void updateCommits(List<IndexCommit> commits) {
+  private void updateCommits(List<? extends IndexCommit> commits) {
     // to be safe, we should only call delete on a commit point passed to us
     // in this specific call (may be across diff IndexWriter instances).
     // this will happen rarely, so just synchronize everything
@@ -133,8 +150,7 @@ public class SolrDeletionPolicy implements IndexDeletionPolicy, NamedListInitial
     synchronized (this) {
       long maxCommitAgeTimeStamp = -1L;
       IndexCommit newest = commits.get(commits.size() - 1);
-      log.info("newest commit = " + newest.getVersion());
-
+      log.debug("newest commit generation = " + newest.getGeneration());
       int singleSegKept = (newest.getSegmentCount() == 1) ? 1 : 0;
       int totalKept = 1;
 
@@ -146,10 +162,10 @@ public class SolrDeletionPolicy implements IndexDeletionPolicy, NamedListInitial
         try {
           if (maxCommitAge != null) {
             if (maxCommitAgeTimeStamp==-1) {
-              DateMathParser dmp = new DateMathParser(DateField.UTC, Locale.US);
+              DateMathParser dmp = new DateMathParser(DateMathParser.UTC);
               maxCommitAgeTimeStamp = dmp.parseMath(maxCommitAge).getTime();
             }
-            if (commit.getTimestamp() < maxCommitAgeTimeStamp) {
+            if (IndexDeletionPolicyWrapper.getCommitTimestamp(commit) < maxCommitAgeTimeStamp) {
               commit.delete();
               continue;
             }
@@ -183,7 +199,7 @@ public class SolrDeletionPolicy implements IndexDeletionPolicy, NamedListInitial
     // be the same, regardless of the Directory instance.
     if (dir instanceof FSDirectory) {
       FSDirectory fsd = (FSDirectory) dir;
-      File fdir = fsd.getDirectory();
+      File fdir = fsd.getDirectory().toFile();
       sb.append(fdir.getPath());
     } else {
       sb.append(dir);
@@ -191,8 +207,6 @@ public class SolrDeletionPolicy implements IndexDeletionPolicy, NamedListInitial
 
     sb.append('/');
     sb.append(commit.getGeneration());
-    sb.append('_');
-    sb.append(commit.getVersion());
     return sb.toString();
   }
 

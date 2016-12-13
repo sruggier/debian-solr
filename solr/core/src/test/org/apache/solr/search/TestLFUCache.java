@@ -1,5 +1,3 @@
-package org.apache.solr.search;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,35 +14,38 @@ package org.apache.solr.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search;
 
 import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.common.util.ExecutorUtil;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.util.ConcurrentLFUCache;
+import org.apache.solr.util.DefaultSolrThreadFactory;
 import org.apache.solr.util.RefCounted;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 /**
  * Test for LFUCache
  *
- * @version $Id: TestFastLFUCache.java 1170772 2011-09-14 19:09:56Z sarowe $
  * @see org.apache.solr.search.LFUCache
  * @since solr 3.6
  */
 public class TestLFUCache extends SolrTestCaseJ4 {
 
-  private class LFURegenerator implements CacheRegenerator {
-    public boolean regenerateItem(SolrIndexSearcher newSearcher, SolrCache newCache,
-                                  SolrCache oldCache, Object oldKey, Object oldVal) throws IOException {
-      newCache.put(oldKey, oldVal);
-      return true;
-    }
-  }
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   @BeforeClass
   public static void beforeClass() throws Exception {
@@ -113,7 +114,7 @@ public class TestLFUCache extends SolrTestCaseJ4 {
   private void assertCache(LFUCache cache, int... gets) {
     for (int idx : gets) {
       if (cache.get(idx) == null) {
-        log.error(String.format("Expected entry %d not in cache", idx));
+        log.error(String.format(Locale.ROOT, "Expected entry %d not in cache", idx));
         assertTrue(false);
       }
     }
@@ -121,7 +122,7 @@ public class TestLFUCache extends SolrTestCaseJ4 {
   private void assertNotCache(LFUCache cache, int... gets) {
     for (int idx : gets) {
       if (cache.get(idx) != null) {
-        log.error(String.format("Unexpected entry %d in cache", idx));
+        log.error(String.format(Locale.ROOT, "Unexpected entry %d in cache", idx));
         assertTrue(false);
       }
     }
@@ -138,7 +139,7 @@ public class TestLFUCache extends SolrTestCaseJ4 {
       params.put("size", "100");
       params.put("initialSize", "10");
       params.put("autowarmCount", "25");
-      LFURegenerator regenerator = new LFURegenerator();
+      NoOpRegenerator regenerator = new NoOpRegenerator();
       Object initObj = lfuCache.init(params, null, regenerator);
       lfuCache.setState(SolrCache.State.LIVE);
       for (int i = 0; i < 101; i++) {
@@ -194,7 +195,7 @@ public class TestLFUCache extends SolrTestCaseJ4 {
 
   @Test
   public void testItemOrdering() {
-    ConcurrentLFUCache<Integer, String> cache = new ConcurrentLFUCache<Integer, String>(100, 90);
+    ConcurrentLFUCache<Integer, String> cache = new ConcurrentLFUCache<>(100, 90);
     try {
       for (int i = 0; i < 50; i++) {
         cache.put(i + 1, "" + (i + 1));
@@ -260,7 +261,7 @@ public class TestLFUCache extends SolrTestCaseJ4 {
 
   @Test
   public void testTimeDecay() {
-    ConcurrentLFUCache<Integer, String> cacheDecay = new ConcurrentLFUCache<Integer, String>(10, 9);
+    ConcurrentLFUCache<Integer, String> cacheDecay = new ConcurrentLFUCache<>(10, 9);
     try {
       for (int i = 1; i < 21; i++) {
         cacheDecay.put(i, Integer.toString(i));
@@ -334,7 +335,7 @@ public class TestLFUCache extends SolrTestCaseJ4 {
   @Test
   public void testTimeNoDecay() {
 
-    ConcurrentLFUCache<Integer, String> cacheNoDecay = new ConcurrentLFUCache<Integer, String>(10, 9,
+    ConcurrentLFUCache<Integer, String> cacheNoDecay = new ConcurrentLFUCache<>(10, 9,
         (int) Math.floor((9 + 10) / 2), (int) Math.ceil(0.75 * 10), false, false, null, false);
     try {
       for (int i = 1; i < 21; i++) {
@@ -366,6 +367,38 @@ public class TestLFUCache extends SolrTestCaseJ4 {
     } finally {
       cacheNoDecay.destroy();
     }
+  }
+
+  @Test
+  public void testConcurrentAccess() throws InterruptedException {
+    /* Set up a thread pool with twice as many threads as there are CPUs. */
+    final ConcurrentLFUCache<Integer,Long> cache = new ConcurrentLFUCache<>(10, 9);
+    ExecutorService executorService = ExecutorUtil.newMDCAwareFixedThreadPool(10,
+        new DefaultSolrThreadFactory("testConcurrentAccess"));
+    final AtomicReference<Throwable> error = new AtomicReference<>();
+    
+    /*
+     * Use the thread pool to execute at least two million puts into the cache.
+     * Without the fix on SOLR-7585, NoSuchElementException is thrown.
+     * Simultaneous calls to markAndSweep are protected from each other by a
+     * lock, so they run sequentially, and due to a problem in the previous
+     * design, the cache eviction doesn't work right.
+     */
+    for (int i = 0; i < atLeast(2_000_000); ++i) {
+      executorService.submit(() -> {
+        try {
+          cache.put(random().nextInt(100), random().nextLong());
+        } catch (Throwable t) {
+          error.compareAndSet(null, t);
+        }
+      });
+    }
+    
+    executorService.shutdown();
+    executorService.awaitTermination(1, TimeUnit.MINUTES);
+    
+    // then:
+    assertNull("Exception during concurrent access: " + error.get(), error.get());
   }
 
 // From the original LRU cache tests, they're commented out there too because they take a while.

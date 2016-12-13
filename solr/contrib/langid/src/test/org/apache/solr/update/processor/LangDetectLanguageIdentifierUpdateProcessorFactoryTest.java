@@ -1,6 +1,4 @@
-package org.apache.solr.update.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.update.processor;
 
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -24,7 +23,7 @@ import org.junit.Test;
 public class LangDetectLanguageIdentifierUpdateProcessorFactoryTest extends LanguageIdentifierUpdateProcessorFactoryTestCase {
   @Override
   protected LanguageIdentifierUpdateProcessor createLangIdProcessor(ModifiableSolrParams parameters) throws Exception {
-    return new LangDetectLanguageIdentifierUpdateProcessor(_parser.buildRequestFrom(null, parameters, null), resp, null);
+    return new LangDetectLanguageIdentifierUpdateProcessor(_parser.buildRequestFrom(h.getCore(), parameters, null), resp, null);
   }
   
   // this one actually works better it seems with short docs
@@ -40,7 +39,7 @@ public class LangDetectLanguageIdentifierUpdateProcessorFactoryTest extends Lang
    */
   @Test @Override
   public void testLangIdGlobal() throws Exception {
-    parameters = new ModifiableSolrParams();
+    ModifiableSolrParams parameters = new ModifiableSolrParams();
     parameters.add("langid.fl", "name,subject");
     parameters.add("langid.langField", "language_s");
     parameters.add("langid.fallback", "un");

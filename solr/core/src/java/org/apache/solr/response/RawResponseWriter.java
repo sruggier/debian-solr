@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,10 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.response;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Reader;
 import java.io.Writer;
@@ -34,7 +34,7 @@ import org.apache.solr.request.SolrQueryRequest;
  * This writer is a special case that extends and alters the
  * QueryResponseWriter contract.  If SolrQueryResponse contains a
  * ContentStream added with the key {@link #CONTENT}
- * then this writer will output that stream exactly as is (with it's
+ * then this writer will output that stream exactly as is (with its
  * Content-Type).  if no such ContentStream has been added, then a
  * "base" QueryResponseWriter will be used to write the response
  * according to the usual contract.  The name of the "base" writer can
@@ -42,11 +42,10 @@ import org.apache.solr.request.SolrQueryRequest;
  * defaults to the "standard" writer.
  * </p>
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
-public class RawResponseWriter implements BinaryQueryResponseWriter 
-{
+public class RawResponseWriter implements BinaryQueryResponseWriter {
   /** 
    * The key that should be used to add a ContentStream to the 
    * SolrQueryResponse if you intend to use this Writer.
@@ -54,6 +53,7 @@ public class RawResponseWriter implements BinaryQueryResponseWriter
   public static final String CONTENT = "content";
   private String _baseWriter = null;
   
+  @Override
   public void init(NamedList n) {
     if( n != null ) {
       Object base = n.get( "base" );
@@ -64,11 +64,11 @@ public class RawResponseWriter implements BinaryQueryResponseWriter
   }
 
   // Even if this is null, it should be ok
-  protected QueryResponseWriter getBaseWriter( SolrQueryRequest request )
-  {
+  protected QueryResponseWriter getBaseWriter( SolrQueryRequest request ) {
     return request.getCore().getQueryResponseWriter( _baseWriter );
   }
   
+  @Override
   public String getContentType(SolrQueryRequest request, SolrQueryResponse response) {
     Object obj = response.getValues().get( CONTENT );
     if( obj != null && (obj instanceof ContentStream ) ) {
@@ -77,41 +77,32 @@ public class RawResponseWriter implements BinaryQueryResponseWriter
     return getBaseWriter( request ).getContentType( request, response );
   }
 
-  public void write(Writer writer, SolrQueryRequest request, SolrQueryResponse response) throws IOException 
-  {
+  @Override
+  public void write(Writer writer, SolrQueryRequest request, SolrQueryResponse response) throws IOException {
     Object obj = response.getValues().get( CONTENT );
     if( obj != null && (obj instanceof ContentStream ) ) {
       // copy the contents to the writer...
       ContentStream content = (ContentStream)obj;
-      Reader reader = content.getReader();
-      try {
+      try(Reader reader = content.getReader()) {
         IOUtils.copy( reader, writer );
-      } finally {
-        reader.close();
       }
-    }
-    else {
+    } else {
       getBaseWriter( request ).write( writer, request, response );
     }
   }
 
-public void write(OutputStream out, SolrQueryRequest request,
-		SolrQueryResponse response) throws IOException {
+  @Override
+  public void write(OutputStream out, SolrQueryRequest request, SolrQueryResponse response) throws IOException {
     Object obj = response.getValues().get( CONTENT );
     if( obj != null && (obj instanceof ContentStream ) ) {
       // copy the contents to the writer...
       ContentStream content = (ContentStream)obj;
-      java.io.InputStream in = content.getStream();
-      try {
+      try(InputStream in = content.getStream()) {
         IOUtils.copy( in, out );
-      } finally {
-        in.close();
       }
+    } else {
+      QueryResponseWriterUtil.writeQueryResponse(out, 
+          getBaseWriter(request), request, response, getContentType(request, response));
     }
-    else {
-      //getBaseWriter( request ).write( writer, request, response );
-    	throw new IOException("did not find a CONTENT object");
-    }
-	
-}
+  }
 }

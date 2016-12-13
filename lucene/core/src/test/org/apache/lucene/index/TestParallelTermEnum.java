@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,170 +14,97 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
+import java.util.Iterator;
 
-import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field.Index;
-import org.apache.lucene.document.Field.Store;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.TestUtil;
 
 public class TestParallelTermEnum extends LuceneTestCase {
-    private IndexReader ir1;
-    private IndexReader ir2;
-    private Directory rd1;
-    private Directory rd2;
+  private LeafReader ir1;
+  private LeafReader ir2;
+  private Directory rd1;
+  private Directory rd2;
+  
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    Document doc;
+    rd1 = newDirectory();
+    IndexWriter iw1 = new IndexWriter(rd1, newIndexWriterConfig(new MockAnalyzer(random())));
+
+    doc = new Document();
+    doc.add(newTextField("field1", "the quick brown fox jumps", Field.Store.YES));
+    doc.add(newTextField("field2", "the quick brown fox jumps", Field.Store.YES));
+    iw1.addDocument(doc);
+
+    iw1.close();
+    rd2 = newDirectory();
+    IndexWriter iw2 = new IndexWriter(rd2, newIndexWriterConfig(new MockAnalyzer(random())));
+
+    doc = new Document();
+    doc.add(newTextField("field1", "the fox jumps over the lazy dog", Field.Store.YES));
+    doc.add(newTextField("field3", "the fox jumps over the lazy dog", Field.Store.YES));
+    iw2.addDocument(doc);
+
+    iw2.close();
+
+    this.ir1 = getOnlyLeafReader(DirectoryReader.open(rd1));
+    this.ir2 = getOnlyLeafReader(DirectoryReader.open(rd2));
+  }
+
+  @Override
+  public void tearDown() throws Exception {
+    ir1.close();
+    ir2.close();
+    rd1.close();
+    rd2.close();
+    super.tearDown();
+  }
+  
+  private void checkTerms(Terms terms, String... termsList) throws IOException {
+    assertNotNull(terms);
+    final TermsEnum te = terms.iterator();
     
-    @Override
-    public void setUp() throws Exception {
-        super.setUp();
-        Document doc;
-        rd1 = newDirectory();
-        IndexWriter iw1 = new IndexWriter(rd1, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)));
-
-        doc = new Document();
-        doc.add(newField("field1", "the quick brown fox jumps", Store.YES,
-            Index.ANALYZED));
-        doc.add(newField("field2", "the quick brown fox jumps", Store.YES,
-            Index.ANALYZED));
-        doc.add(newField("field4", "", Store.NO, Index.ANALYZED));
-        iw1.addDocument(doc);
-
-        iw1.close();
-
-        rd2 = newDirectory();
-        IndexWriter iw2 = new IndexWriter(rd2, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)));
-
-        doc = new Document();
-        doc.add(newField("field0", "", Store.NO, Index.ANALYZED));
-        doc.add(newField("field1", "the fox jumps over the lazy dog",
-            Store.YES, Index.ANALYZED));
-        doc.add(newField("field3", "the fox jumps over the lazy dog",
-            Store.YES, Index.ANALYZED));
-        iw2.addDocument(doc);
-
-        iw2.close();
-
-        this.ir1 = IndexReader.open(rd1, true);
-        this.ir2 = IndexReader.open(rd2, true);
+    for (String t : termsList) {
+      BytesRef b = te.next();
+      assertNotNull(b);
+      assertEquals(t, b.utf8ToString());
+      PostingsEnum td = TestUtil.docs(random(), te, null, PostingsEnum.NONE);
+      assertTrue(td.nextDoc() != DocIdSetIterator.NO_MORE_DOCS);
+      assertEquals(0, td.docID());
+      assertEquals(td.nextDoc(), DocIdSetIterator.NO_MORE_DOCS);
     }
+    assertNull(te.next());
+  }
 
-    @Override
-    public void tearDown() throws Exception {
-        ir1.close();
-        ir2.close();
-        rd1.close();
-        rd2.close();
-        super.tearDown();
-    }
+  public void test1() throws IOException {
+    ParallelLeafReader pr = new ParallelLeafReader(ir1, ir2);
 
-    public void test1() throws IOException {
-        ParallelReader pr = new ParallelReader();
-        pr.add(ir1);
-        pr.add(ir2);
+    Fields fields = pr.fields();
+    Iterator<String> fe = fields.iterator();
 
-        TermDocs td = pr.termDocs();
+    String f = fe.next();
+    assertEquals("field1", f);
+    checkTerms(fields.terms(f), "brown", "fox", "jumps", "quick", "the");
 
-        TermEnum te = pr.terms();
-        assertTrue(te.next());
-        assertEquals("field1:brown", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field1:fox", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field1:jumps", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field1:quick", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field1:the", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field2:brown", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field2:fox", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field2:jumps", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field2:quick", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field2:the", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field3:dog", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field3:fox", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field3:jumps", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field3:lazy", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field3:over", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertTrue(te.next());
-        assertEquals("field3:the", te.term().toString());
-        td.seek(te.term());
-        assertTrue(td.next());
-        assertEquals(0, td.doc());
-        assertFalse(td.next());
-        assertFalse(te.next());
-    }
+    f = fe.next();
+    assertEquals("field2", f);
+    checkTerms(fields.terms(f), "brown", "fox", "jumps", "quick", "the");
+
+    f = fe.next();
+    assertEquals("field3", f);
+    checkTerms(fields.terms(f), "dog", "fox", "jumps", "lazy", "over", "the");
+
+    assertFalse(fe.hasNext());
+  }
 }

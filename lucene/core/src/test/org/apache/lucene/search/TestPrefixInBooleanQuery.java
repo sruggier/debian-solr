@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,8 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.util.LuceneTestCase;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -25,8 +23,10 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.LuceneTestCase;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
+
 
 /**
  * https://issues.apache.org/jira/browse/LUCENE-1974
@@ -36,7 +36,6 @@ import org.junit.BeforeClass;
  *    BooleanScorer.score(Collector collector, int max, int firstDocID)
  * 
  * Line 273, end=8192, subScorerDocID=11378, then more got false?
- * 
  */
 public class TestPrefixInBooleanQuery extends LuceneTestCase {
 
@@ -48,26 +47,25 @@ public class TestPrefixInBooleanQuery extends LuceneTestCase {
   @BeforeClass
   public static void beforeClass() throws Exception {
     directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, directory);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
 
     Document doc = new Document();
-    Field field = newField(FIELD, "meaninglessnames", Field.Store.NO,
-        Field.Index.NOT_ANALYZED_NO_NORMS);
+    Field field = newStringField(FIELD, "meaninglessnames", Field.Store.NO);
     doc.add(field);
     
     for (int i = 0; i < 5137; ++i) {
       writer.addDocument(doc);
     }
     
-    field.setValue("tangfulin");
+    field.setStringValue("tangfulin");
     writer.addDocument(doc);
 
-    field.setValue("meaninglessnames");
+    field.setStringValue("meaninglessnames");
     for (int i = 5138; i < 11377; ++i) {
       writer.addDocument(doc);
     }
     
-    field.setValue("tangfulin");
+    field.setStringValue("tangfulin");
     writer.addDocument(doc);
     
     reader = writer.getReader();
@@ -77,7 +75,6 @@ public class TestPrefixInBooleanQuery extends LuceneTestCase {
   
   @AfterClass
   public static void afterClass() throws Exception {
-    searcher.close();
     searcher = null;
     reader.close();
     reader = null;
@@ -88,30 +85,30 @@ public class TestPrefixInBooleanQuery extends LuceneTestCase {
   public void testPrefixQuery() throws Exception {
     Query query = new PrefixQuery(new Term(FIELD, "tang"));
     assertEquals("Number of matched documents", 2,
-                 searcher.search(query, null, 1000).totalHits);
+                 searcher.search(query, 1000).totalHits);
   }
   public void testTermQuery() throws Exception {
     Query query = new TermQuery(new Term(FIELD, "tangfulin"));
     assertEquals("Number of matched documents", 2,
-                 searcher.search(query, null, 1000).totalHits);
+                 searcher.search(query, 1000).totalHits);
   }
   public void testTermBooleanQuery() throws Exception {
-    BooleanQuery query = new BooleanQuery();
+    BooleanQuery.Builder query = new BooleanQuery.Builder();
     query.add(new TermQuery(new Term(FIELD, "tangfulin")),
               BooleanClause.Occur.SHOULD);
     query.add(new TermQuery(new Term(FIELD, "notexistnames")),
               BooleanClause.Occur.SHOULD);
     assertEquals("Number of matched documents", 2,
-                 searcher.search(query, null, 1000).totalHits);
+                 searcher.search(query.build(), 1000).totalHits);
 
   }
   public void testPrefixBooleanQuery() throws Exception {
-    BooleanQuery query = new BooleanQuery();
+    BooleanQuery.Builder query = new BooleanQuery.Builder();
     query.add(new PrefixQuery(new Term(FIELD, "tang")),
               BooleanClause.Occur.SHOULD);
     query.add(new TermQuery(new Term(FIELD, "notexistnames")),
               BooleanClause.Occur.SHOULD);
     assertEquals("Number of matched documents", 2,
-                 searcher.search(query, null, 1000).totalHits);
+                 searcher.search(query.build(), 1000).totalHits);
   }
 }

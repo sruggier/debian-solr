@@ -1,9 +1,10 @@
-package org.apache.lucene.index;
-
-/**
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -13,46 +14,16 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.util.ArrayList;
-import java.util.List;
-
+import org.apache.lucene.util.ByteBlockPool;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.RecyclingByteBlockAllocator;
 
 public class TestByteSlices extends LuceneTestCase {
 
-  private static class ByteBlockAllocator extends ByteBlockPool.Allocator {
-    ArrayList<byte[]> freeByteBlocks = new ArrayList<byte[]>();
-    
-    /* Allocate another byte[] from the shared pool */
-    @Override
-    synchronized byte[] getByteBlock() {
-      final int size = freeByteBlocks.size();
-      final byte[] b;
-      if (0 == size)
-        b = new byte[DocumentsWriter.BYTE_BLOCK_SIZE];
-      else
-        b =  freeByteBlocks.remove(size-1);
-      return b;
-    }
-
-    /* Return a byte[] to the pool */
-    @Override
-    synchronized void recycleByteBlocks(byte[][] blocks, int start, int end) {
-      for(int i=start;i<end;i++)
-        freeByteBlocks.add(blocks[i]);
-    }
-
-    @Override
-    synchronized void recycleByteBlocks(List<byte[]> blocks) {
-      final int size = blocks.size();
-      for(int i=0;i<size;i++)
-        freeByteBlocks.add(blocks.get(i));
-    }
-  }
-
   public void testBasic() throws Throwable {
-    ByteBlockPool pool = new ByteBlockPool(new ByteBlockAllocator());
+    ByteBlockPool pool = new ByteBlockPool(new RecyclingByteBlockAllocator(ByteBlockPool.BYTE_BLOCK_SIZE, random().nextInt(100)));
 
     final int NUM_STREAM = atLeast(100);
 
@@ -71,26 +42,43 @@ public class TestByteSlices extends LuceneTestCase {
         counters[stream] = 0;
       }
       
-      int num = atLeast(10000);
+      int num = atLeast(3000);
       for (int iter = 0; iter < num; iter++) {
-        int stream = random.nextInt(NUM_STREAM);
-        if (VERBOSE)
+        int stream;
+        if (random().nextBoolean()) {
+          stream = random().nextInt(3);
+        } else {
+          stream = random().nextInt(NUM_STREAM);
+        }
+
+        if (VERBOSE) {
           System.out.println("write stream=" + stream);
+        }
 
         if (starts[stream] == -1) {
           final int spot = pool.newSlice(ByteBlockPool.FIRST_LEVEL_SIZE);
           starts[stream] = uptos[stream] = spot + pool.byteOffset;
-          if (VERBOSE)
+          if (VERBOSE) {
             System.out.println("  init to " + starts[stream]);
+          }
         }
 
         writer.init(uptos[stream]);
-        int numValue = random.nextInt(20);
+        int numValue;
+        if (random().nextInt(10) == 3) {
+          numValue = random().nextInt(100);
+        } else if (random().nextInt(5) == 3) {
+          numValue = random().nextInt(3);
+        } else {
+          numValue = random().nextInt(20);
+        }
+
         for(int j=0;j<numValue;j++) {
-          if (VERBOSE)
+          if (VERBOSE) {
             System.out.println("    write " + (counters[stream]+j));
+          }
           // write some large (incl. negative) ints:
-          writer.writeVInt(random.nextInt());
+          writer.writeVInt(random().nextInt());
           writer.writeVInt(counters[stream]+j);
         }
         counters[stream] += numValue;

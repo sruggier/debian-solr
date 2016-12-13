@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.response;
 
 import java.io.Writer;
@@ -26,10 +25,12 @@ import org.apache.solr.request.SolrQueryRequest;
 public class PythonResponseWriter implements QueryResponseWriter {
   static String CONTENT_TYPE_PYTHON_ASCII="text/x-python;charset=US-ASCII";
 
+  @Override
   public void init(NamedList n) {
     /* NOOP */
   }
   
+  @Override
   public void write(Writer writer, SolrQueryRequest req, SolrQueryResponse rsp) throws IOException {
     PythonWriter w = new PythonWriter(writer, req, rsp);
     try {
@@ -39,6 +40,7 @@ public class PythonResponseWriter implements QueryResponseWriter {
     }
   }
 
+  @Override
   public String getContentType(SolrQueryRequest request, SolrQueryResponse response) {
     return CONTENT_TYPE_TEXT_ASCII;
   }
@@ -80,7 +82,7 @@ class PythonWriter extends NaNFloatWriter {
     }
 
     // use python unicode strings...
-    // python doesn't tolerate newlines in strings in it's eval(), so we must escape them.
+    // python doesn't tolerate newlines in strings in its eval(), so we must escape them.
 
     StringBuilder sb = new StringBuilder(val.length());
     boolean needUnicode=false;
@@ -117,7 +119,7 @@ class PythonWriter extends NaNFloatWriter {
   old version that always used unicode
   public void writeStr(String name, String val, boolean needsEscaping) throws IOException {
     // use python unicode strings...
-    // python doesn't tolerate newlines in strings in it's eval(), so we must escape them.
+    // python doesn't tolerate newlines in strings in its eval(), so we must escape them.
     writer.write("u'");
     // it might be more efficient to use a stringbuilder or write substrings
     // if writing chars to the stream is slow.

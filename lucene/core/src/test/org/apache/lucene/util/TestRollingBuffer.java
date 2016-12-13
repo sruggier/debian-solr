@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,17 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
+
+import java.util.Random;
+
 
 public class TestRollingBuffer extends LuceneTestCase {
 
   private static class Position implements RollingBuffer.Resettable {
     public int pos;
 
+    @Override
     public void reset() {
       pos = -1;
     }
@@ -44,6 +47,7 @@ public class TestRollingBuffer extends LuceneTestCase {
       final int maxPos = atLeast(10000);
       final FixedBitSet posSet = new FixedBitSet(maxPos + 1000);
       int posUpto = 0;
+      Random random = random();
       while (freeBeforePos < maxPos) {
         if (random.nextInt(4) == 1) {
           final int limit = rarely() ? 1000 : 20;

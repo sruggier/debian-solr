@@ -1,5 +1,4 @@
-package org.apache.solr.update.processor;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,16 +14,12 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import java.io.UnsupportedEncodingException;
+package org.apache.solr.update.processor;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class MD5Signature extends Signature {
-  protected final static Logger log = LoggerFactory.getLogger(MD5Signature.class);
   private static ThreadLocal<MessageDigest> DIGESTER_FACTORY = new ThreadLocal<MessageDigest>() {
     @Override
     protected MessageDigest initialValue() {
@@ -44,13 +39,7 @@ public class MD5Signature extends Signature {
 
   @Override
   public void add(String content) {
-    try {
-      digester.update(content.getBytes("UTF-8"));
-    } catch (UnsupportedEncodingException e) {
-      // won't happen
-      log.error("UTF-8 not supported", e);
-      throw new RuntimeException(e);
-    }
+    digester.update(content.getBytes(StandardCharsets.UTF_8));
   }
 
   @Override

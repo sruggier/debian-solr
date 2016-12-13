@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,33 +14,33 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.schema;
 
-import org.apache.solr.response.TextResponseWriter;
-import org.apache.solr.response.XMLWriter;
-import org.apache.solr.common.util.Base64;
-import org.apache.lucene.document.Fieldable;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.search.SortField;
-
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.nio.ByteBuffer;
+
+import org.apache.lucene.document.Field;
+import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.search.SortField;
+import org.apache.lucene.util.BytesRef;
+import org.apache.solr.common.util.Base64;
+import org.apache.solr.response.TextResponseWriter;
+import org.apache.solr.uninverting.UninvertingReader.Type;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public class BinaryField extends FieldType  {
 
-  @Override
-  public void write(XMLWriter xmlWriter, String name, Fieldable f) throws IOException {
-    xmlWriter.writeStr( name, toBase64String(toObject(f)) );
-  }
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  private String  toBase64String(ByteBuffer buf) {
+  private String toBase64String(ByteBuffer buf) {
     return Base64.byteArrayToBase64(buf.array(), buf.position(), buf.limit()-buf.position());
   }
 
   @Override
-  public void write(TextResponseWriter writer, String name, Fieldable f) throws IOException {
+  public void write(TextResponseWriter writer, String name, IndexableField f) throws IOException {
     writer.writeStr(name, toBase64String(toObject(f)), false);
   }
 
@@ -49,18 +49,29 @@ public class BinaryField extends FieldType  {
     throw new RuntimeException("Cannot sort on a Binary field");
   }
 
+  @Override
+  public Type getUninversionType(SchemaField sf) {
+    // TODO: maybe just return null?
+    if (sf.multiValued()) {
+      return Type.SORTED_SET_BINARY;
+    } else {
+      return Type.BINARY;
+    }
+  }
 
   @Override
-  public String toExternal(Fieldable f) {
+  public String toExternal(IndexableField f) {
     return toBase64String(toObject(f));
   }
-  
+
   @Override
-  public ByteBuffer toObject(Fieldable f) {
-    return  ByteBuffer.wrap(f.getBinaryValue(), f.getBinaryOffset(), f.getBinaryLength() ) ;
+  public ByteBuffer toObject(IndexableField f) {
+    BytesRef bytes = f.binaryValue();
+    return  ByteBuffer.wrap(bytes.bytes, bytes.offset, bytes.length);
   }
 
-  public Field createField(SchemaField field, Object val, float boost) {
+  @Override
+  public IndexableField createField(SchemaField field, Object val, float boost) {
     if (val == null) return null;
     if (!field.stored()) {
       log.trace("Ignoring unstored binary field: " + field);
@@ -84,7 +95,7 @@ public class BinaryField extends FieldType  {
       len = buf.length;
     }
 
-    Field f = new Field(field.getName(), buf, offset, len);
+    Field f = new org.apache.lucene.document.StoredField(field.getName(), buf, offset, len);
     f.setBoost(boost);
     return f;
   }

@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,72 +14,106 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
+
 
 import java.io.IOException;
-import java.util.Collection;
 
-/** Expert: an enumeration of span matches.  Used to implement span searching.
- * Each span represents a range of term positions within a document.  Matches
- * are enumerated in order, by increasing document number, within that by
- * increasing start position and finally by increasing end position. */
-public abstract class Spans {
-  /** Move to the next match, returning true iff any such exists. */
-  public abstract boolean next() throws IOException;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.TwoPhaseIterator;
+import org.apache.lucene.search.similarities.Similarity.SimScorer;
 
-  /** Skips to the first match beyond the current, whose document number is
-   * greater than or equal to <i>target</i>. <p>Returns true iff there is such
-   * a match.  <p>Behaves as if written: <pre>
-   *   boolean skipTo(int target) {
-   *     do {
-   *       if (!next())
-   * 	     return false;
-   *     } while (target > doc());
-   *     return true;
-   *   }
-   * </pre>
-   * Most implementations are considerably more efficient than that.
-   */
-  public abstract boolean skipTo(int target) throws IOException;
+/** Iterates through combinations of start/end positions per-doc.
+ *  Each start/end position represents a range of term positions within the current document.
+ *  These are enumerated in order, by increasing document number, within that by
+ *  increasing start position and finally by increasing end position.
+ */
+public abstract class Spans extends DocIdSetIterator {
 
-  /** Returns the document number of the current match.  Initially invalid. */
-  public abstract int doc();
+  public static final int NO_MORE_POSITIONS = Integer.MAX_VALUE;
 
-  /** Returns the start position of the current match.  Initially invalid. */
-  public abstract int start();
-
-  /** Returns the end position of the current match.  Initially invalid. */
-  public abstract int end();
-  
   /**
-   * Returns the payload data for the current span.
-   * This is invalid until {@link #next()} is called for
-   * the first time.
-   * This method must not be called more than once after each call
-   * of {@link #next()}. However, most payloads are loaded lazily,
-   * so if the payload data for the current position is not needed,
-   * this method may not be called at all for performance reasons. An ordered
-   * SpanQuery does not lazy load, so if you have payloads in your index and
-   * you do not want ordered SpanNearQuerys to collect payloads, you can
-   * disable collection with a constructor option.<br>
-   * <br>
-    * Note that the return type is a collection, thus the ordering should not be relied upon.
-    * <br/>
+   * Returns the next start position for the current doc.
+   * There is always at least one start/end position per doc.
+   * After the last start/end position at the current doc this returns {@link #NO_MORE_POSITIONS}.
+   */
+  public abstract int nextStartPosition() throws IOException;
+
+  /**
+   * Returns the start position in the current doc, or -1 when {@link #nextStartPosition} was not yet called on the current doc.
+   * After the last start/end position at the current doc this returns {@link #NO_MORE_POSITIONS}.
+   */
+  public abstract int startPosition();
+
+  /**
+   * Returns the end position for the current start position, or -1 when {@link #nextStartPosition} was not yet called on the current doc.
+   * After the last start/end position at the current doc this returns {@link #NO_MORE_POSITIONS}.
+   */
+  public abstract int endPosition();
+
+  /**
+   * Return the width of the match, which is typically used to compute
+   * the {@link SimScorer#computeSlopFactor(int) slop factor}. It is only legal
+   * to call this method when the iterator is on a valid doc ID and positioned.
+   * The return value must be positive, and lower values means that the match is
+   * better.
+   */
+  public abstract int width();
+
+  /**
+   * Collect postings data from the leaves of the current Spans.
+   *
+   * This method should only be called after {@link #nextStartPosition()}, and before
+   * {@link #NO_MORE_POSITIONS} has been reached.
+   *
+   * @param collector a SpanCollector
+   *
    * @lucene.experimental
-   *
-   * @return a List of byte arrays containing the data of this payload, otherwise null if isPayloadAvailable is false
-   * @throws java.io.IOException
-    */
-  // TODO: Remove warning after API has been finalized
-  public abstract Collection<byte[]> getPayload() throws IOException;
+   */
+  public abstract void collect(SpanCollector collector) throws IOException;
 
   /**
-   * Checks if a payload can be loaded at this position.
-   * <p/>
-   * Payloads can only be loaded once per call to
-   * {@link #next()}.
+   * Return an estimation of the cost of using the positions of
+   * this {@link Spans} for any single document, but only after
+   * {@link #asTwoPhaseIterator} returned {@code null}.
+   * Otherwise this method should not be called.
+   * The returned value is independent of the current document.
    *
-   * @return true if there is a payload available at this position that can be loaded
+   * @lucene.experimental
    */
-  public abstract boolean isPayloadAvailable();
+  public abstract float positionsCost();
+
+  /**
+   * Optional method: Return a {@link TwoPhaseIterator} view of this
+   * {@link Scorer}. A return value of {@code null} indicates that
+   * two-phase iteration is not supported.
+   * @see Scorer#twoPhaseIterator()
+   */
+  public TwoPhaseIterator asTwoPhaseIterator() {
+    return null;
+  }
+
+  @Override
+  public String toString() {
+    StringBuilder sb = new StringBuilder();
+    Class<? extends Spans> clazz = getClass();
+    sb.append(clazz.isAnonymousClass() ? clazz.getName() : clazz.getSimpleName());
+    sb.append("(doc=").append(docID());
+    sb.append(",start=").append(startPosition());
+    sb.append(",end=").append(endPosition());
+    sb.append(")");
+    return sb.toString();
+  }
+
+  /**
+   * Called before the current doc's frequency is calculated
+   */
+  protected void doStartCurrentDoc() throws IOException {}
+
+  /**
+   * Called each time the scorer's SpanScorer is advanced during frequency calculation
+   */
+  protected void doCurrentSpans() throws IOException {}
 
 }

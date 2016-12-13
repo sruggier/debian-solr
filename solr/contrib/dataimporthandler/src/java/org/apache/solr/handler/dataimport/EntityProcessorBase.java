@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -22,19 +22,19 @@ import static org.apache.solr.handler.dataimport.DataImportHandlerException.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.util.*;
 
 /**
- * <p> Base class for all implementations of {@link EntityProcessor} </p> <p/> <p> Most implementations of {@link EntityProcessor}
+ * <p> Base class for all implementations of {@link EntityProcessor} </p> <p> Most implementations of {@link EntityProcessor}
  * extend this base class which provides common functionality. </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public class EntityProcessorBase extends EntityProcessor {
-  private static final Logger log = LoggerFactory.getLogger(EntityProcessorBase.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   protected boolean isFirstInit = true;
 
@@ -49,6 +49,8 @@ public class EntityProcessorBase extends EntityProcessor {
   protected String onError = ABORT;  
   
   protected DIHCacheSupport cacheSupport = null;
+  
+  private Zipper zipper;
 
 
   @Override
@@ -57,23 +59,30 @@ public class EntityProcessorBase extends EntityProcessor {
     if (isFirstInit) {
       firstInit(context);
     }
-    
-    if(cacheSupport!=null) {
-      cacheSupport.initNewParent(context);
-    } else {
-      rowIterator = null;
-      query = null;
-    }  
-    
+    if(zipper!=null){
+      zipper.onNewParent(context);
+    }else{
+      if(cacheSupport!=null) {
+        cacheSupport.initNewParent(context);
+      }   
+    }
   }
 
-  /**first time init call. do one-time operations here
+  /**
+   * first time init call. do one-time operations here
+   * it's necessary to call it from the overridden method,
+   * otherwise it throws NPE on accessing zipper from nextRow()
    */
   protected void firstInit(Context context) {
     entityName = context.getEntityAttribute("name");
     String s = context.getEntityAttribute(ON_ERROR);
     if (s != null) onError = s;
-    initCache(context);
+    
+    zipper = Zipper.createOrNull(context);
+    
+    if(zipper==null){
+      initCache(context);
+    }
     isFirstInit = false;
   }
 
@@ -114,33 +123,39 @@ public class EntityProcessorBase extends EntityProcessor {
   }
   
   protected Map<String, Object> getNext() {
-    if(cacheSupport==null) {
-      try {
-        if (rowIterator == null)
+    if(zipper!=null){
+      return zipper.supplyNextChild(rowIterator);
+    }else{
+      if(cacheSupport==null) {
+        try {
+          if (rowIterator == null)
+            return null;
+          if (rowIterator.hasNext())
+            return rowIterator.next();
+          query = null;
+          rowIterator = null;
           return null;
-        if (rowIterator.hasNext())
-          return rowIterator.next();
-        query = null;
-        return null;
-      } catch (Exception e) {
-        SolrException.log(log, "getNext() failed for query '" + query + "'", e);
-        query = null;
-        wrapAndThrow(DataImportHandlerException.WARN, e);
-        return null;
-      }
-    } else  {
-      return cacheSupport.getCacheData(context, query, rowIterator);
-    }      
+        } catch (Exception e) {
+          SolrException.log(log, "getNext() failed for query '" + query + "'", e);
+          query = null;
+          rowIterator = null;
+          wrapAndThrow(DataImportHandlerException.WARN, e);
+          return null;
+        }
+      } else  {
+        return cacheSupport.getCacheData(context, query, rowIterator);
+      }  
+    }
   }
 
 
   @Override
   public void destroy() {
-  	query = null;
-  	if(cacheSupport!=null){
-  	  cacheSupport.destroyAll();
-  	}
-  	cacheSupport = null;
+    query = null;
+    if(cacheSupport!=null){
+      cacheSupport.destroyAll();
+    }
+    cacheSupport = null;
   }
 
   
@@ -156,7 +171,4 @@ public class EntityProcessorBase extends EntityProcessor {
   public static final String CONTINUE = "continue";
 
   public static final String SKIP = "skip";
-
-  public static final String SKIP_DOC = "$skipDoc";
-
 }

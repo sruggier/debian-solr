@@ -1,6 +1,4 @@
-package org.apache.solr.handler.clustering.carrot2;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.solr.handler.clustering.carrot2;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.clustering.carrot2;
+
 import java.util.List;
 
 import org.carrot2.core.Cluster;
@@ -49,14 +49,14 @@ public class LexicalResourcesCheckClusteringAlgorithm extends
   @Output
   @Processing
   @Attribute(key = AttributeNames.CLUSTERS)
-  private List<Cluster> clusters;
+  public List<Cluster> clusters;
 
   @Input
   @Processing
   @Attribute
-  private String wordsToCheck;
+  public String wordsToCheck;
 
-  private BasicPreprocessingPipeline preprocessing = new BasicPreprocessingPipeline();
+  public BasicPreprocessingPipeline preprocessing = new BasicPreprocessingPipeline();
 
   @Override
   public void process() throws ProcessingException {

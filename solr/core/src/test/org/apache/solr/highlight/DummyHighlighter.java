@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,28 +16,22 @@
  */
 package org.apache.solr.highlight;
 
-import java.io.IOException;
-
 import org.apache.lucene.search.Query;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
-import org.apache.solr.core.SolrConfig;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.search.DocList;
 
+import java.io.IOException;
+
 public class DummyHighlighter extends SolrHighlighter {
 
-	@Override
-	public NamedList<Object> doHighlighting(DocList docs, Query query,
-			SolrQueryRequest req, String[] defaultFields) throws IOException {
-		NamedList fragments = new SimpleOrderedMap();
-		fragments.add("dummy", "thing1");
-		return fragments;
-	}
-
-	@Override
-	public void initalize(SolrConfig config) {
-		// do nothing
-	}
+  @Override
+  public NamedList<Object> doHighlighting(DocList docs, Query query,
+      SolrQueryRequest req, String[] defaultFields) throws IOException {
+    NamedList fragments = new SimpleOrderedMap();
+    fragments.add("dummy", "thing1");
+    return fragments;
+  }
 
 }

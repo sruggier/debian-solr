@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -23,20 +23,17 @@ import java.util.Map;
  * An instance of entity processor serves an entity. It is reused throughout the
  * import process.
  * </p>
- * <p/>
  * <p>
  * Implementations of this abstract class must provide a public no-args constructor.
  * </p>
- * <p/>
  * <p>
  * Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
  * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public abstract class EntityProcessor {

@@ -1,6 +1,4 @@
-package org.apache.solr.uima.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,13 +14,13 @@ package org.apache.solr.uima.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.uima.processor;
 
-import java.net.URL;
-import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.MultiMapSolrParams;
@@ -31,7 +29,7 @@ import org.apache.solr.common.params.UpdateParams;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.handler.XmlUpdateRequestHandler;
+import org.apache.solr.handler.UpdateRequestHandler;
 import org.apache.solr.request.SolrQueryRequestBase;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.uima.processor.SolrUIMAConfiguration.MapField;
@@ -44,8 +42,9 @@ import org.junit.Test;
 /**
  * TestCase for {@link UIMAUpdateRequestProcessor}
  * 
- * @version $Id$
+ *
  */
+@Slow
 public class UIMAUpdateRequestProcessorTest extends SolrTestCaseJ4 {
 
   @BeforeClass
@@ -66,8 +65,7 @@ public class UIMAUpdateRequestProcessorTest extends SolrTestCaseJ4 {
     SolrCore core = h.getCore();
     UpdateRequestProcessorChain chained = core.getUpdateProcessingChain("uima");
     assertNotNull(chained);
-    UIMAUpdateRequestProcessorFactory factory = (UIMAUpdateRequestProcessorFactory) chained
-            .getFactories()[0];
+    UIMAUpdateRequestProcessorFactory factory = (UIMAUpdateRequestProcessorFactory)chained.getProcessors().get(0);
     assertNotNull(factory);
     UpdateRequestProcessor processor = factory.getInstance(req(), null, null);
     assertTrue(processor instanceof UIMAUpdateRequestProcessor);
@@ -78,12 +76,11 @@ public class UIMAUpdateRequestProcessorTest extends SolrTestCaseJ4 {
     SolrCore core = h.getCore();
     UpdateRequestProcessorChain chained = core.getUpdateProcessingChain("uima-multi-map");
     assertNotNull(chained);
-    UIMAUpdateRequestProcessorFactory factory = (UIMAUpdateRequestProcessorFactory) chained
-            .getFactories()[0];
+    UIMAUpdateRequestProcessorFactory factory = (UIMAUpdateRequestProcessorFactory)chained.getProcessors().get(0);
     assertNotNull(factory);
     UpdateRequestProcessor processor = factory.getInstance(req(), null, null);
     assertTrue(processor instanceof UIMAUpdateRequestProcessor);
-    SolrUIMAConfiguration conf = ((UIMAUpdateRequestProcessor)processor).solrUIMAConfiguration;
+    SolrUIMAConfiguration conf = ((UIMAUpdateRequestProcessor)processor).getConfiguration();
     Map<String, Map<String, MapField>> map = conf.getTypesFeaturesFieldsMapping();
     Map<String, MapField> subMap = map.get("a-type-which-can-have-multiple-features");
     assertEquals(2, subMap.size());
@@ -93,7 +90,6 @@ public class UIMAUpdateRequestProcessorTest extends SolrTestCaseJ4 {
 
   @Test
   public void testProcessing() throws Exception {
-
     addDoc("uima", adoc(
             "id",
             "2312312321312",
@@ -185,16 +181,23 @@ public class UIMAUpdateRequestProcessorTest extends SolrTestCaseJ4 {
     }
   }
 
+  @Test
+  public void testMultiplierProcessing() throws Exception {
+    for (int i = 0; i < RANDOM_MULTIPLIER; i++) {
+      testProcessing();
+    }
+  }
+
   private void addDoc(String chain, String doc) throws Exception {
-    Map<String, String[]> params = new HashMap<String, String[]>();
+    Map<String, String[]> params = new HashMap<>();
     params.put(UpdateParams.UPDATE_CHAIN, new String[] { chain });
     MultiMapSolrParams mmparams = new MultiMapSolrParams(params);
     SolrQueryRequestBase req = new SolrQueryRequestBase(h.getCore(), (SolrParams) mmparams) {
     };
 
-    XmlUpdateRequestHandler handler = new XmlUpdateRequestHandler();
+    UpdateRequestHandler handler = new UpdateRequestHandler();
     handler.init(null);
-    ArrayList<ContentStream> streams = new ArrayList<ContentStream>(2);
+    ArrayList<ContentStream> streams = new ArrayList<>(2);
     streams.add(new ContentStreamBase.StringStream(doc));
     req.setContentStreams(streams);
     handler.handleRequestBody(req, new SolrQueryResponse());

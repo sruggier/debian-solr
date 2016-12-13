@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -33,14 +33,22 @@ public class MockEventListener implements SolrEventListener {
     createCounter.incrementAndGet();
   }
 
+  @Override
   public void init(NamedList args) {
     /* NOOP */
   }
 
+  @Override
   public void postCommit() {
     /* NOOP */
   }
+  
+  @Override
+  public void postSoftCommit() {
+    /* NOOP */
+  }
 
+  @Override
   public void newSearcher(SolrIndexSearcher newSearcher, 
                           SolrIndexSearcher currentSearcher) {
     /* NOOP */

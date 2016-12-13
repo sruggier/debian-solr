@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 /** The ExtendedQuery interface provides extra metadata to a query.
@@ -27,7 +26,7 @@ public interface ExtendedQuery {
   public void setCache(boolean cache);
 
   /** Returns the cost of this query, used to order checking of filters that are not cached.
-   * If getCache()==false && getCost()>=100 && this instanceof PostFilter, then
+   * If getCache()==false &amp;&amp; getCost()&gt;=100 &amp;&amp; this instanceof PostFilter, then
    * the PostFilter interface will be used for filtering.
    */
   public int getCost();

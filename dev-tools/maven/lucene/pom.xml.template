@@ -35,22 +35,93 @@
     <module-directory>lucene</module-directory>
   </properties>
   <scm>
-    <connection>
-      scm:svn:http://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </connection>
-    <developerConnection>
-      scm:svn:https://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </developerConnection>
-    <url>
-      http://svn.apache.org/viewvc/lucene/dev/branches/branch_3x/${module-directory}
-    </url>
+    <connection>scm:git:${vc-anonymous-base-url}</connection>
+    <developerConnection>scm:git:${vc-dev-base-url}</developerConnection>
+    <url>${vc-browse-base-url};f=${module-directory}</url>
   </scm>
   <modules>
     <module>core</module>
+    <module>backward-codecs</module>
+    <module>codecs</module>
     <module>test-framework</module>
-    <module>contrib</module>
+    <module>analysis</module>
+    <module>benchmark</module>
+    <module>classification</module>
+    <module>demo</module>
+    <module>expressions</module>
+    <module>facet</module>
+    <module>grouping</module>
+    <module>highlighter</module>
+    <module>join</module>
+    <module>memory</module>
+    <module>misc</module>
+    <module>queries</module>
+    <module>queryparser</module>
+    <module>replicator</module>
+    <module>sandbox</module>
+    <module>spatial</module>
+    <module>spatial-extras</module>
+    <module>spatial3d</module>
+    <module>suggest</module>
   </modules>
   <build>
-    <directory>build/lucene-parent</directory>
+    <plugins>
+      <plugin>
+        <groupId>de.thetaphi</groupId>
+        <artifactId>forbiddenapis</artifactId>
+        <executions>
+          <execution>
+            <id>lucene-shared-check-forbidden-apis</id>
+            <configuration>
+              <!-- disallow undocumented classes like sun.misc.Unsafe: -->
+              <bundledSignatures>
+                <bundledSignature>jdk-unsafe</bundledSignature>
+                <bundledSignature>jdk-deprecated</bundledSignature>
+                <bundledSignature>jdk-non-portable</bundledSignature>
+                <bundledSignature>jdk-reflection</bundledSignature>
+              </bundledSignatures>
+              <signaturesFiles>
+                <signaturesFile>${top-level}/lucene/tools/forbiddenApis/base.txt</signaturesFile>
+                <signaturesFile>${top-level}/lucene/tools/forbiddenApis/lucene.txt</signaturesFile>
+              </signaturesFiles>
+            </configuration>
+            <goals>
+              <goal>check</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>lucene-shared-check-sysout-forbidden-apis</id>
+            <configuration>
+              <bundledSignatures>
+                <bundledSignature>jdk-system-out</bundledSignature>
+              </bundledSignatures>
+            </configuration>
+            <goals>
+              <goal>check</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>lucene-shared-test-check-forbidden-apis</id>
+            <configuration>
+              <!-- disallow undocumented classes like sun.misc.Unsafe: -->
+              <bundledSignatures>
+                <bundledSignature>jdk-unsafe</bundledSignature>
+                <bundledSignature>jdk-deprecated</bundledSignature>
+                <bundledSignature>jdk-non-portable</bundledSignature>
+                <bundledSignature>jdk-reflection</bundledSignature>
+              </bundledSignatures>
+              <signaturesFiles>
+                <signaturesFile>${top-level}/lucene/tools/forbiddenApis/tests.txt</signaturesFile>
+                <signaturesFile>${top-level}/lucene/tools/forbiddenApis/base.txt</signaturesFile>
+                <signaturesFile>${top-level}/lucene/tools/forbiddenApis/lucene.txt</signaturesFile>
+              </signaturesFiles>
+            </configuration>
+            <goals>
+              <goal>testCheck</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
   </build>
 </project>

@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,19 +14,20 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 
 /**
  * Abstract decorator class of a DocIdSetIterator
  * implementation that provides on-demand filter/validation
- * mechanism on an underlying DocIdSetIterator.  See {@link
- * FilteredDocIdSet}.
+ * mechanism on an underlying DocIdSetIterator.
  */
 public abstract class FilteredDocIdSetIterator extends DocIdSetIterator {
   protected DocIdSetIterator _innerIter;
   private int doc;
-	
+
   /**
    * Constructor.
    * @param innerIter Underlying DocIdSetIterator.
@@ -40,15 +39,20 @@ public abstract class FilteredDocIdSetIterator extends DocIdSetIterator {
     _innerIter = innerIter;
     doc = -1;
   }
-	
+
+  /** Return the wrapped {@link DocIdSetIterator}. */
+  public DocIdSetIterator getDelegate() {
+    return _innerIter;
+  }
+
   /**
    * Validation method to determine whether a docid should be in the result set.
    * @param doc docid to be tested
    * @return true if input docid should be in the result set, false otherwise.
    * @see #FilteredDocIdSetIterator(DocIdSetIterator)
    */
-  abstract protected boolean match(int doc) throws IOException;
-	
+  protected abstract boolean match(int doc);
+
   @Override
   public int docID() {
     return doc;
@@ -81,5 +85,9 @@ public abstract class FilteredDocIdSetIterator extends DocIdSetIterator {
     }
     return doc;
   }
-  
+
+  @Override
+  public long cost() {
+    return _innerIter.cost();
+  }
 }

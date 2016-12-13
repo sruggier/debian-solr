@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,10 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update.processor;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -35,157 +35,183 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * <p>
  * A logging processor.  This keeps track of all commands that have passed through
  * the chain and prints them on finish().  At the Debug (FINE) level, a message
  * will be logged for each command prior to the next stage in the chain.
- * 
- * If the Log level is not >= INFO the processor will not be created or added to the chain.
- * 
+ * </p>
+ * <p>
+ * If the Log level is not &gt;= INFO the processor will not be created or added to the chain.
+ * </p>
+ *
  * @since solr 1.3
  */
-public class LogUpdateProcessorFactory extends UpdateRequestProcessorFactory {
+public class LogUpdateProcessorFactory extends UpdateRequestProcessorFactory implements UpdateRequestProcessorFactory.RunAlways {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   
-  int maxNumToLog = 8;
-  
+  int maxNumToLog = 10;
+  int slowUpdateThresholdMillis = -1;
   @Override
   public void init( final NamedList args ) {
     if( args != null ) {
       SolrParams params = SolrParams.toSolrParams( args );
       maxNumToLog = params.getInt( "maxNumToLog", maxNumToLog );
+      slowUpdateThresholdMillis = params.getInt("slowUpdateThresholdMillis", slowUpdateThresholdMillis);
     }
   }
 
   @Override
   public UpdateRequestProcessor getInstance(SolrQueryRequest req, SolrQueryResponse rsp, UpdateRequestProcessor next) {
-    final Logger logger = LoggerFactory.getLogger(LogUpdateProcessor.class);
-    boolean doLog = logger.isInfoEnabled();
-    // LogUpdateProcessor.log.error("Will Log=" + doLog);
-    if( doLog ) {
-      // only create the log processor if we will use it
-      final LogUpdateProcessor processor = new LogUpdateProcessor(req, rsp, this, next);
-      assert processor.log == logger;
-      return processor;
-    }
-    return null;
-  }
-}
-
-class LogUpdateProcessor extends UpdateRequestProcessor {
-  private final SolrQueryRequest req;
-  private final SolrQueryResponse rsp;
-  private final NamedList<Object> toLog;
-
-  int numAdds;
-  int numDeletes;
-
-  // hold on to the added list for logging and the response
-  private List<String> adds;
-  private List<String> deletes;
-
-  private final int maxNumToLog;
-
-  private final boolean logDebug = log.isDebugEnabled();//cache to avoid volatile-read
-
-  public LogUpdateProcessor(SolrQueryRequest req, SolrQueryResponse rsp, LogUpdateProcessorFactory factory, UpdateRequestProcessor next) {
-    super( next );
-    this.req = req;
-    this.rsp = rsp;
-    maxNumToLog = factory.maxNumToLog;  // TODO: make configurable
-    // TODO: make log level configurable as well, or is that overkill?
-    // (ryan) maybe?  I added it mostly to show that it *can* be configurable
-
-    this.toLog = new SimpleOrderedMap<Object>();
+    return log.isInfoEnabled() ? new LogUpdateProcessor(req, rsp, this, next) : null;
   }
   
-  @Override
-  public void processAdd(AddUpdateCommand cmd) throws IOException {
-    // Add a list of added id's to the response
-    if (adds == null) {
-      adds = new ArrayList<String>();
-      toLog.add("add",adds);
+  static class LogUpdateProcessor extends UpdateRequestProcessor {
+
+    private final SolrQueryRequest req;
+    private final SolrQueryResponse rsp;
+    private final NamedList<Object> toLog;
+
+    int numAdds;
+    int numDeletes;
+
+    // hold on to the added list for logging and the response
+    private List<String> adds;
+    private List<String> deletes;
+
+    private final int maxNumToLog;
+    private final int slowUpdateThresholdMillis;
+
+    private final boolean logDebug = log.isDebugEnabled();//cache to avoid volatile-read
+
+    public LogUpdateProcessor(SolrQueryRequest req, SolrQueryResponse rsp, LogUpdateProcessorFactory factory, UpdateRequestProcessor next) {
+      super( next );
+      this.req = req;
+      this.rsp = rsp;
+      maxNumToLog = factory.maxNumToLog;  // TODO: make configurable
+      // TODO: make log level configurable as well, or is that overkill?
+      // (ryan) maybe?  I added it mostly to show that it *can* be configurable
+      slowUpdateThresholdMillis = factory.slowUpdateThresholdMillis;
+
+      this.toLog = new SimpleOrderedMap<>();
     }
-
-    if (adds.size() < maxNumToLog) {
-      adds.add(cmd.getPrintableId(req.getSchema()));
-    }
-    if (logDebug) { log.debug("add {}", cmd.getPrintableId(req.getSchema())); }
-
-    numAdds++;
-
-    if (next != null) next.processAdd(cmd);
-  }
-
-  @Override
-  public void processDelete( DeleteUpdateCommand cmd ) throws IOException {
-    if (cmd.id != null) {
-      if (deletes == null) {
-        deletes = new ArrayList<String>();
-        toLog.add("delete",deletes);
-      }
-      if (deletes.size() < maxNumToLog) {
-        deletes.add(cmd.id);
-      }
-      if (logDebug) { log.debug("delete {}", cmd.id); }
-    } else {
-      if (toLog.size() < maxNumToLog) {
-        toLog.add("deleteByQuery", cmd.query);
-      }
-      if (logDebug) { log.debug("deleteByQuery {}", cmd.query); }
-    }
-    numDeletes++;
-
-    if (next != null) next.processDelete(cmd);
-  }
-
-  @Override
-  public void processMergeIndexes(MergeIndexesCommand cmd) throws IOException {
-    toLog.add("mergeIndexes", cmd.toString());
-    if (logDebug) { log.debug("mergeIndexes {}",cmd.toString()); }
-
-    if (next != null) next.processMergeIndexes(cmd);
-  }
-
-  @Override
-  public void processCommit( CommitUpdateCommand cmd ) throws IOException {
-    final String msg = cmd.optimize ? "optimize" : "commit";
-    toLog.add(msg, "");
-    if (logDebug) { log.debug(msg); }
-
-    if (next != null) next.processCommit(cmd);
-  }
-
-  /**
-   * @since Solr 1.4
-   */
-  @Override
-  public void processRollback( RollbackUpdateCommand cmd ) throws IOException {
-    toLog.add("rollback", "");
-    if (logDebug) { log.debug("rollback"); }
-
-    if (next != null) next.processRollback(cmd);
-  }
-
-
-  @Override
-  public void finish() throws IOException {
-    if (next != null) next.finish();
-
-    // LOG A SUMMARY WHEN ALL DONE (INFO LEVEL)
     
-    // TODO: right now, update requests are logged twice...
-    // this will slow down things compared to Solr 1.2
-    // we should have extra log info on the SolrQueryResponse, to
-    // be logged by SolrCore
-    
-    // if id lists were truncated, show how many more there were
-    if (adds != null && numAdds > maxNumToLog) {
-      adds.add("... (" + numAdds + " adds)");
+    @Override
+    public void processAdd(AddUpdateCommand cmd) throws IOException {
+      if (logDebug) { log.debug("PRE_UPDATE " + cmd.toString() + " " + req); }
+
+      // call delegate first so we can log things like the version that get set later
+      if (next != null) next.processAdd(cmd);
+
+      // Add a list of added id's to the response
+      if (adds == null) {
+        adds = new ArrayList<>();
+        toLog.add("add",adds);
+      }
+
+      if (adds.size() < maxNumToLog) {
+        long version = cmd.getVersion();
+        String msg = cmd.getPrintableId();
+        if (version != 0) msg = msg + " (" + version + ')';
+        adds.add(msg);
+      }
+
+      numAdds++;
     }
-    if (deletes != null && numDeletes > maxNumToLog) {
-      deletes.add("... (" + numDeletes + " deletes)");
+
+    @Override
+    public void processDelete( DeleteUpdateCommand cmd ) throws IOException {
+      if (logDebug) { log.debug("PRE_UPDATE " + cmd.toString() + " " + req); }
+      if (next != null) next.processDelete(cmd);
+
+      if (cmd.isDeleteById()) {
+        if (deletes == null) {
+          deletes = new ArrayList<>();
+          toLog.add("delete",deletes);
+        }
+        if (deletes.size() < maxNumToLog) {
+          long version = cmd.getVersion();
+          String msg = cmd.getId();
+          if (version != 0) msg = msg + " (" + version + ')';
+          deletes.add(msg);
+        }
+      } else {
+        if (toLog.size() < maxNumToLog) {
+          long version = cmd.getVersion();
+          String msg = cmd.query;
+          if (version != 0) msg = msg + " (" + version + ')';
+          toLog.add("deleteByQuery", msg);
+        }
+      }
+      numDeletes++;
+
     }
-    long elapsed = rsp.getEndTime() - req.getStartTime();
-    log.info( ""+toLog + " 0 " + (elapsed) );
+
+    @Override
+    public void processMergeIndexes(MergeIndexesCommand cmd) throws IOException {
+      if (logDebug) { log.debug("PRE_UPDATE " + cmd.toString() + " " + req); }
+      if (next != null) next.processMergeIndexes(cmd);
+
+      toLog.add("mergeIndexes", cmd.toString());
+    }
+
+    @Override
+    public void processCommit( CommitUpdateCommand cmd ) throws IOException {
+      if (logDebug) { log.debug("PRE_UPDATE " + cmd.toString() + " " + req); }
+      if (next != null) next.processCommit(cmd);
+
+
+      final String msg = cmd.optimize ? "optimize" : "commit";
+      toLog.add(msg, "");
+    }
+
+    /**
+     * @since Solr 1.4
+     */
+    @Override
+    public void processRollback( RollbackUpdateCommand cmd ) throws IOException {
+      if (logDebug) { log.debug("PRE_UPDATE " + cmd.toString() + " " + req); }
+      if (next != null) next.processRollback(cmd);
+
+      toLog.add("rollback", "");
+    }
+
+
+    @Override
+    public void finish() throws IOException {
+      if (logDebug) { log.debug("PRE_UPDATE FINISH " + req); }
+      if (next != null) next.finish();
+
+      // LOG A SUMMARY WHEN ALL DONE (INFO LEVEL)
+
+      if (log.isInfoEnabled()) {
+        log.info(getLogStringAndClearRspToLog());
+      }
+
+      if (log.isWarnEnabled() && slowUpdateThresholdMillis >= 0) {
+        final long elapsed = (long) req.getRequestTimer().getTime();
+        if (elapsed >= slowUpdateThresholdMillis) {
+          log.warn("slow: " + getLogStringAndClearRspToLog());
+        }
+      }
+    }
+
+    private String getLogStringAndClearRspToLog() {
+      StringBuilder sb = new StringBuilder(rsp.getToLogAsString(req.getCore().getLogId()));
+
+      rsp.getToLog().clear();   // make it so SolrCore.exec won't log this again
+
+      // if id lists were truncated, show how many more there were
+      if (adds != null && numAdds > maxNumToLog) {
+        adds.add("... (" + numAdds + " adds)");
+      }
+      if (deletes != null && numDeletes > maxNumToLog) {
+        deletes.add("... (" + numDeletes + " deletes)");
+      }
+      final long elapsed = (long) req.getRequestTimer().getTime();
+
+      sb.append(toLog).append(" 0 ").append(elapsed);
+      return sb.toString();
+    }
   }
 }
 

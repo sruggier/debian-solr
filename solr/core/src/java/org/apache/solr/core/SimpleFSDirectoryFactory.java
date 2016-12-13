@@ -1,5 +1,4 @@
-package org.apache.solr.core;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,22 +14,29 @@ package org.apache.solr.core;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.SimpleFSDirectory;
-
+package org.apache.solr.core;
 import java.io.File;
 import java.io.IOException;
+
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockFactory;
+import org.apache.lucene.store.SimpleFSDirectory;
 
 
 /**
  * Factory to instantiate {@link org.apache.lucene.store.SimpleFSDirectory}
  *
  **/
-public class SimpleFSDirectoryFactory extends DirectoryFactory {
+public class SimpleFSDirectoryFactory extends StandardDirectoryFactory {
 
   @Override
-  public Directory open(String path) throws IOException {
-    return new SimpleFSDirectory(new File(path));
+  protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) throws IOException {
+    // we pass NoLockFactory, because the real lock factory is set later by injectLockFactory:
+    return new SimpleFSDirectory(new File(path).toPath(), lockFactory);
+  }
+
+  @Override
+  public boolean isAbsolute(String path) {
+    return new File(path).isAbsolute();
   }
 }

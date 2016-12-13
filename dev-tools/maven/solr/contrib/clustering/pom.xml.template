@@ -33,70 +33,46 @@
   <description>Apache Solr Clustering</description>
   <properties>
     <module-directory>solr/contrib/clustering</module-directory>
-    <build-directory>../../build/contrib/solr-clustering</build-directory>
+    <relative-top-level>../../../..</relative-top-level>
+    <module-path>${relative-top-level}/${module-directory}</module-path>
   </properties>
   <scm>
-    <connection>
-      scm:svn:http://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </connection>
-    <developerConnection>
-      scm:svn:https://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/${module-directory}
-    </developerConnection>
-    <url>
-      http://svn.apache.org/viewvc/lucene/dev/branches/branch_3x/${module-directory}
-    </url>
+    <connection>scm:git:${vc-anonymous-base-url}</connection>
+    <developerConnection>scm:git:${vc-dev-base-url}</developerConnection>
+    <url>${vc-browse-base-url};f=${module-directory}</url>
   </scm>
   <dependencies>
     <dependency>
-      <groupId>${project.groupId}</groupId>
-      <artifactId>solr-core</artifactId>
-      <version>${project.version}</version>
+      <!-- lucene-test-framework dependency must be declared before lucene-core -->
+      <!-- This dependency cannot be put into solr-parent, because local        -->
+      <!-- dependencies are always ordered before inherited dependencies.       -->
+      <groupId>org.apache.lucene</groupId>
+      <artifactId>lucene-test-framework</artifactId>
+      <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>${project.groupId}</groupId>
+      <groupId>org.apache.solr</groupId>
       <artifactId>solr-test-framework</artifactId>
-      <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.carrot2</groupId>
-      <artifactId>carrot2-core</artifactId> 
-    </dependency>
-    <dependency>
-      <groupId>org.mortbay.jetty</groupId>
-      <artifactId>jetty</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.mortbay.jetty</groupId>
-      <artifactId>jetty-util</artifactId>
-      <scope>test</scope>
-    </dependency>
+@solr-clustering.internal.dependencies@
+@solr-clustering.external.dependencies@
+@solr-clustering.internal.test.dependencies@
+@solr-clustering.external.test.dependencies@
   </dependencies>
   <build>
-    <directory>${build-directory}</directory>
-    <outputDirectory>${build-directory}/classes/java</outputDirectory>
-    <testOutputDirectory>${build-directory}/classes/test</testOutputDirectory>
-    <sourceDirectory>src/java</sourceDirectory>
-    <testSourceDirectory>src/test</testSourceDirectory>
+    <sourceDirectory>${module-path}/src/java</sourceDirectory>
+    <testSourceDirectory>${module-path}/src/test</testSourceDirectory>
     <testResources>
       <testResource>
-        <directory>src/test-files</directory>
+        <directory>${module-path}/src/test-files</directory>
       </testResource>
       <testResource>
-        <directory>../../core/src/test-files</directory>
+        <directory>${top-level}/dev-tools/maven/solr</directory>
+        <includes>
+          <include>maven.testlogging.properties</include>
+        </includes>
       </testResource>
     </testResources>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <configuration>
-          <systemPropertyVariables>
-            <java.util.logging.config.file>../../../../testlogging.properties</java.util.logging.config.file>
-          </systemPropertyVariables>
-        </configuration>
-      </plugin>
-    </plugins>
   </build>
 </project>

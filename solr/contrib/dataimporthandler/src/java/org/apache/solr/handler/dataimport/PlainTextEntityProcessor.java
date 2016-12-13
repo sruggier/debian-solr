@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -20,8 +20,6 @@ import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVE
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrapAndThrow;
 import static org.apache.solr.handler.dataimport.XPathEntityProcessor.URL;
 import org.apache.commons.io.IOUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -33,11 +31,9 @@ import java.util.Map;
  * <p>An implementation of {@link EntityProcessor} which reads data from a url/file and give out a row which contains one String
  * value. The name of the field is 'plainText'.
  *
- * @version $Id$
  * @since solr 1.4
  */
 public class PlainTextEntityProcessor extends EntityProcessorBase {
-  private static final Logger LOG = LoggerFactory.getLogger(PlainTextEntityProcessor.class);
   private boolean ended = false;
 
   @Override
@@ -70,7 +66,7 @@ public class PlainTextEntityProcessor extends EntityProcessorBase {
       if (len <= 0) break;
       sw.append(new String(buf, 0, len));
     }
-    Map<String, Object> row = new HashMap<String, Object>();
+    Map<String, Object> row = new HashMap<>();
     row.put(PLAIN_TEXT, sw.toString());
     ended = true;
     IOUtils.closeQuietly(r);

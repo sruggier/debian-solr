@@ -1,5 +1,4 @@
-package org.apache.solr.search;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,37 +14,42 @@ package org.apache.solr.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search;
+import java.io.Serializable;
+import java.lang.invoke.MethodHandles;
+import java.net.URL;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.util.ConcurrentLFUCache;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.io.Serializable;
-import java.net.URL;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
+import static org.apache.solr.common.params.CommonParams.NAME;
 
 /**
  * SolrCache based on ConcurrentLFUCache implementation.
- * <p/>
+ * <p>
  * This implementation does not use a separate cleanup thread. Instead it uses the calling thread
  * itself to do the cleanup when the size of the cache exceeds certain limits.
- * <p/>
+ * <p>
  * Also see <a href="http://wiki.apache.org/solr/SolrCaching">SolrCaching</a>
- * <p/>
+ * <p>
  * <b>This API is experimental and subject to change</b>
  *
- * @version $Id: LFUCache.java 1170772 2011-09-14 19:09:56Z sarowe $
  * @see org.apache.solr.util.ConcurrentLFUCache
  * @see org.apache.solr.search.SolrCache
  * @since solr 3.6
  */
 public class LFUCache<K, V> implements SolrCache<K, V> {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   // contains the statistics objects for all open caches of the same type
   private List<ConcurrentLFUCache.Stats> statsList;
@@ -61,10 +65,11 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
   private int showItems = 0;
   private Boolean timeDecay = true;
 
+  @Override
   public Object init(Map args, Object persistence, CacheRegenerator regenerator) {
     state = State.CREATED;
     this.regenerator = regenerator;
-    name = (String) args.get("name");
+    name = (String) args.get(NAME);
     String str = (String) args.get("size");
     int limit = str == null ? 1024 : Integer.parseInt(str);
     int minLimit;
@@ -109,7 +114,7 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
     }
     description += ')';
 
-    cache = new ConcurrentLFUCache<K, V>(limit, minLimit, acceptableSize, initialSize, newThread, false, null, timeDecay);
+    cache = new ConcurrentLFUCache<>(limit, minLimit, acceptableSize, initialSize, newThread, false, null, timeDecay);
     cache.setAlive(false);
 
     statsList = (List<ConcurrentLFUCache.Stats>) persistence;
@@ -117,7 +122,7 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
       // must be the first time a cache of this type is being created
       // Use a CopyOnWriteArrayList since puts are very rare and iteration may be a frequent operation
       // because it is used in getStatistics()
-      statsList = new CopyOnWriteArrayList<ConcurrentLFUCache.Stats>();
+      statsList = new CopyOnWriteArrayList<>();
 
       // the first entry will be for cumulative stats of caches that have been closed.
       statsList.add(new ConcurrentLFUCache.Stats());
@@ -126,39 +131,47 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
     return statsList;
   }
 
+  @Override
   public String name() {
     return name;
   }
 
+  @Override
   public int size() {
     return cache.size();
 
   }
 
+  @Override
   public V put(K key, V value) {
     return cache.put(key, value);
   }
 
+  @Override
   public V get(K key) {
     return cache.get(key);
   }
 
+  @Override
   public void clear() {
     cache.clear();
   }
 
+  @Override
   public void setState(State state) {
     this.state = state;
     cache.setAlive(state == State.LIVE);
   }
 
+  @Override
   public State getState() {
     return state;
   }
 
-  public void warm(SolrIndexSearcher searcher, SolrCache old) throws IOException {
+  @Override
+  public void warm(SolrIndexSearcher searcher, SolrCache old) {
     if (regenerator == null) return;
-    long warmingStartTime = System.currentTimeMillis();
+    long warmingStartTime = System.nanoTime();
     LFUCache other = (LFUCache) old;
     // warm entries
     if (autowarmCount != 0) {
@@ -175,15 +188,16 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
           boolean continueRegen = regenerator.regenerateItem(searcher,
               this, old, itemsArr[i].getKey(), itemsArr[i].getValue());
           if (!continueRegen) break;
-        } catch (Throwable e) {
+        } catch (Exception e) {
           SolrException.log(log, "Error during auto-warming of key:" + itemsArr[i].getKey(), e);
         }
       }
     }
-    warmupTime = System.currentTimeMillis() - warmingStartTime;
+    warmupTime = TimeUnit.MILLISECONDS.convert(System.nanoTime() - warmingStartTime, TimeUnit.NANOSECONDS);
   }
 
 
+  @Override
   public void close() {
     // add the stats to the cumulative stats object (the first in the statsList)
     statsList.get(0).add(cache.getStats());
@@ -192,30 +206,32 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
   }
 
   //////////////////////// SolrInfoMBeans methods //////////////////////
+  @Override
   public String getName() {
     return LFUCache.class.getName();
   }
 
+  @Override
   public String getVersion() {
     return SolrCore.version;
   }
 
+  @Override
   public String getDescription() {
     return description;
   }
 
+  @Override
   public Category getCategory() {
     return Category.CACHE;
   }
 
-  public String getSourceId() {
-    return "$Id: LFUCache.java 1170772 2011-09-14 19:09:56Z sarowe $";
-  }
-
+  @Override
   public String getSource() {
-    return "$URL: http://svn.apache.org/repos/asf/lucene/dev/branches/branch_3x/solr/core/src/java/org/apache/solr/search/LFUCache.java $";
+    return null;
   }
 
+  @Override
   public URL[] getDocs() {
     return null;
   }
@@ -229,8 +245,9 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
     return "0." + hundredths;
   }
 
+  @Override
   public NamedList getStatistics() {
-    NamedList<Serializable> lst = new SimpleOrderedMap<Serializable>();
+    NamedList<Serializable> lst = new SimpleOrderedMap<>();
     if (cache == null) return lst;
     ConcurrentLFUCache.Stats stats = cache.getStats();
     long lookups = stats.getCumulativeLookups();
@@ -255,11 +272,11 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
     long cevictions = 0;
 
     // NOTE: It is safe to iterate on a CopyOnWriteArrayList
-    for (ConcurrentLFUCache.Stats statistiscs : statsList) {
-      clookups += statistiscs.getCumulativeLookups();
-      chits += statistiscs.getCumulativeHits();
-      cinserts += statistiscs.getCumulativePuts();
-      cevictions += statistiscs.getCumulativeEvictions();
+    for (ConcurrentLFUCache.Stats statistics : statsList) {
+      clookups += statistics.getCumulativeLookups();
+      chits += statistics.getCumulativeHits();
+      cinserts += statistics.getCumulativePuts();
+      cevictions += statistics.getCumulativeEvictions();
     }
     lst.add("cumulative_lookups", clookups);
     lst.add("cumulative_hits", chits);
@@ -288,6 +305,3 @@ public class LFUCache<K, V> implements SolrCache<K, V> {
     return name + getStatistics().toString();
   }
 }
-
-
-

@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,8 +14,9 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.io.IOException;
+
 import java.util.Collection;
 import java.util.Map;
 
@@ -34,26 +33,22 @@ public class TestIndexCommit extends LuceneTestCase {
     
     IndexCommit ic1 = new IndexCommit() {
       @Override public String getSegmentsFileName() { return "a"; }
-      @Override public long getVersion() { return 12; }
       @Override public Directory getDirectory() { return dir; }
-      @Override public Collection<String> getFileNames() throws IOException { return null; }
+      @Override public Collection<String> getFileNames() { return null; }
       @Override public void delete() {}
       @Override public long getGeneration() { return 0; }
-      @Override public long getTimestamp() throws IOException { return 1;}
-      @Override public Map<String, String> getUserData() throws IOException { return null; }
+      @Override public Map<String, String> getUserData() { return null; }
       @Override public boolean isDeleted() { return false; }
       @Override public int getSegmentCount() { return 2; }
     };
     
     IndexCommit ic2 = new IndexCommit() {
       @Override public String getSegmentsFileName() { return "b"; }
-      @Override public long getVersion() { return 12; }
       @Override public Directory getDirectory() { return dir; }
-      @Override public Collection<String> getFileNames() throws IOException { return null; }
+      @Override public Collection<String> getFileNames() { return null; }
       @Override public void delete() {}
       @Override public long getGeneration() { return 0; }
-      @Override public long getTimestamp() throws IOException { return 1;}
-      @Override public Map<String, String> getUserData() throws IOException { return null; }
+      @Override public Map<String, String> getUserData() { return null; }
       @Override public boolean isDeleted() { return false; }
       @Override public int getSegmentCount() { return 2; }
     };

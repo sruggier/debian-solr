@@ -1,5 +1,4 @@
-package org.apache.solr.handler.dataimport;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.handler.dataimport;
 import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -23,21 +22,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 
 /**
  * Tests exception handling during imports in DataImportHandler
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class TestErrorHandling extends AbstractDataImportHandlerTestCase {
 
+  //TODO: fix this test to not require FSDirectory.
+  static String savedFactory;
   @BeforeClass
   public static void beforeClass() throws Exception {
+    savedFactory = System.getProperty("solr.DirectoryFactory");
+    System.setProperty("solr.directoryFactory", "solr.MockFSDirectoryFactory");
     initCore("dataimport-solrconfig.xml", "dataimport-schema.xml");
     ignoreException("Unexpected close tag");
+  }
+  
+  @AfterClass
+  public static void afterClass() {
+    if (savedFactory == null) {
+      System.clearProperty("solr.directoryFactory");
+    } else {
+      System.setProperty("solr.directoryFactory", savedFactory);
+    }
   }
   
   @Before @Override
@@ -69,7 +82,7 @@ public class TestErrorHandling extends AbstractDataImportHandlerTestCase {
 
   public void testTransformerErrorContinue() throws Exception {
     StringDataSource.xml = wellformedXml;
-    List<Map<String, Object>> rows = new ArrayList<Map<String, Object>>();
+    List<Map<String, Object>> rows = new ArrayList<>();
     rows.add(createMap("id", "3", "desc", "exception-transformer"));
     MockDataSource.setIterator("select * from foo", rows.iterator());
     runFullImport(dataConfigWithTransformer);

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,12 +17,16 @@
 package org.apache.solr.handler.dataimport;
 
 import org.apache.solr.common.SolrException;
+import org.apache.solr.handler.dataimport.config.ConfigNameConstants;
+import org.apache.solr.handler.dataimport.config.Entity;
+
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.*;
 import static org.apache.solr.handler.dataimport.EntityProcessorBase.*;
 import static org.apache.solr.handler.dataimport.EntityProcessorBase.SKIP;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,26 +36,29 @@ import java.util.Map;
 /**
  * A Wrapper over {@link EntityProcessor} instance which performs transforms and handles multi-row outputs correctly.
  *
- * @version $Id$
  * @since solr 1.4
  */
 public class EntityProcessorWrapper extends EntityProcessor {
-  private static final Logger log = LoggerFactory.getLogger(EntityProcessorWrapper.class);
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
-  EntityProcessor delegate;
+  private EntityProcessor delegate;
+  private Entity entity;
+  private DataSource datasource;
+  private List<EntityProcessorWrapper> children = new ArrayList<>();
   private DocBuilder docBuilder;
-
-  String onError;
-  Context context;
-  protected VariableResolverImpl resolver;
-  String entityName;
+  private boolean initialized;
+  private String onError;
+  private Context context;
+  private VariableResolver resolver;
+  private String entityName;
 
   protected List<Transformer> transformers;
 
   protected List<Map<String, Object>> rowcache;
-
-  public EntityProcessorWrapper(EntityProcessor delegate, DocBuilder docBuilder) {
+  
+  public EntityProcessorWrapper(EntityProcessor delegate, Entity entity, DocBuilder docBuilder) {
     this.delegate = delegate;
+    this.entity = entity;
     this.docBuilder = docBuilder;
   }
 
@@ -59,14 +66,11 @@ public class EntityProcessorWrapper extends EntityProcessor {
   public void init(Context context) {
     rowcache = null;
     this.context = context;
-    resolver = (VariableResolverImpl) context.getVariableResolver();
-    //context has to be set correctly . keep the copy of the old one so that it can be restored in destroy
+    resolver = (VariableResolver) context.getVariableResolver();
     if (entityName == null) {
       onError = resolver.replaceTokens(context.getEntityAttribute(ON_ERROR));
-      if (onError == null) {
-          onError = ABORT;
-      }
-      entityName = context.getEntityAttribute(DataConfig.NAME);
+      if (onError == null) onError = ABORT;
+      entityName = context.getEntityAttribute(ConfigNameConstants.NAME);
     }
     delegate.init(context);
 
@@ -152,52 +156,28 @@ public class EntityProcessorWrapper extends EntityProcessor {
   }
 
   protected Map<String, Object> getFromRowCache() {
-    if (rowcache.isEmpty()){
-      return null;
-    }
-    return rowcache.remove(0);
+    Map<String, Object> r = rowcache.remove(0);
+    if (rowcache.isEmpty())
+      rowcache = null;
+    return r;
   }
 
-  /**
-   * handles null-on-null invocation
-   * 
-   * call transformers via {@link #transformRow}, then assigns the result into row cache, and delegates to {@link #getFromRowCache}
-   * */
+  @SuppressWarnings("unchecked")
   protected Map<String, Object> applyTransformer(Map<String, Object> row) {
     if(row == null) return null;
-    
-    List<Map<String, Object>> result = transformRow(row);
-    if(!result.isEmpty()){
-        rowcache = result;
-        return getFromRowCache();
-    } else {
-        return null;
-    }
-  }
-  /**
-   * Initialises transformers, applies them on the given row. returned collection is mutable
-   * @return several rows emitted by transformers. if there are no transformers, 
-   * returns single element list contains the given row; if transformer returns null,
-   * returns empty collection.
-   * **/
-  protected List<Map<String, Object>> transformRow(Map<String, Object> row) {
-    if (transformers == null){
+    if (transformers == null)
       loadTransformers();
-    }
-    if (transformers == Collections.EMPTY_LIST){
-        List<Map<String, Object>> same = new ArrayList<Map<String, Object>>();
-        same.add(row);
-        return same;
-    }else{
+    if (transformers == Collections.EMPTY_LIST)
+      return row;
     Map<String, Object> transformedRow = row;
     List<Map<String, Object>> rows = null;
     boolean stopTransform = checkStopTransform(row);
-    VariableResolverImpl resolver = (VariableResolverImpl) context.getVariableResolver();
+    VariableResolver resolver = (VariableResolver) context.getVariableResolver();
     for (Transformer t : transformers) {
       if (stopTransform) break;
       try {
         if (rows != null) {
-          List<Map<String, Object>> tmpRows = new ArrayList<Map<String, Object>>();
+          List<Map<String, Object>> tmpRows = new ArrayList<>();
           for (Map<String, Object> map : rows) {
             resolver.addNamespace(entityName, map);
             Object o = t.transformRow(map, context);
@@ -217,10 +197,8 @@ public class EntityProcessorWrapper extends EntityProcessor {
         } else {
           resolver.addNamespace(entityName, transformedRow);
           Object o = t.transformRow(transformedRow, context);
-          if (o == null){
-						transformedRow = null;
-						break;
-          }
+          if (o == null)
+            return null;
           if (o instanceof Map) {
             Map oMap = (Map) o;
             stopTransform = checkStopTransform(oMap);
@@ -239,107 +217,50 @@ public class EntityProcessorWrapper extends EntityProcessor {
           wrapAndThrow(DataImportHandlerException.SKIP, e);
         }
         // onError = continue
-      } // catch
-    }// for each transformers
-    if(rows == null){ // legacy behavior 
-        List<Map<String, Object>> box = new ArrayList<Map<String, Object>>();
-        if(transformedRow!=null){
-            box.add(transformedRow);
-        }// otherwise give an empty box
-        return box;
-    }else{
-        return rows;
+      }
     }
-    }// !transformers.isEmpty()
-}
+    if (rows == null) {
+      return transformedRow;
+    } else {
+      rowcache = rows;
+      return getFromRowCache();
+    }
+
+  }
 
   private boolean checkStopTransform(Map oMap) {
     return oMap.get("$stopTransform") != null
             && Boolean.parseBoolean(oMap.get("$stopTransform").toString());
   }
 
-  /**
-   * for root entity it retrieves single row, transforms it, 
-   *    and loop until transfomer passes the first row
-   *    
-   * for child entities whole page is pulled. where the page is non-null children entity rows.
-   * then the whole page is transformed and emitted to the row cache.
-   * 
-   * the rationale is avoid stealing child rows by parent entity threads. For every parent row 
-   * the linked children rows (page) is pulled under lock obtained on delegate EntityProcessor   
-   **/
   @Override
   public Map<String, Object> nextRow() {
     if (rowcache != null) {
-      Map<String,Object> rowFromCache = getFromRowCache();
-      if(rowFromCache != null || !context.isRootEntity()){
-        return rowFromCache;
-      } 
+      return getFromRowCache();
     }
-    
-    List<Map<String, Object>> transformedRows = new ArrayList<Map<String,Object>>();
-    boolean eof = false;
-    while (transformedRows.isEmpty() && !eof) { // looping while transformer bans raw rows
-        List<Map<String, Object>> rawRows = new ArrayList<Map<String, Object>>();
-      synchronized (delegate) {
-          Map<String, Object> arow = null;
-          // for paginated case we need to loop through whole page, other wise single row is enough
-          boolean retrieveWholePage = !context.isRootEntity();
-          
-          if(((EntityProcessorBase) delegate).context==null || retrieveWholePage){
-            delegate.init(context);
-          }
-          
-          for (int i = 0; 
-              retrieveWholePage ? !eof : i==0; // otherwise only single row
-                  i++) {
-              arow = pullRow();
-              if (arow != null) {
-                  rawRows.add(arow);
-              }else { // there is no row, eof
-                  eof = true;
-              }
-          }
+    while (true) {
+      Map<String, Object> arow = null;
+      try {
+        arow = delegate.nextRow();
+      } catch (Exception e) {
+        if(ABORT.equals(onError)){
+          wrapAndThrow(SEVERE, e);
+        } else {
+          //SKIP is not really possible. If this calls the nextRow() again the Entityprocessor would be in an inconisttent state           
+          SolrException.log(log, "Exception in entity : "+ entityName, e);
+          return null;
+        }
       }
-      for(Map<String, Object> rawRow : rawRows){
-          // transforming emits N rows
-          List<Map<String, Object>> result = transformRow(rawRow);
-       // but post-transforming is applied only to the first one (legacy as-is)
-          if(!result.isEmpty() && result.get(0) != null){ 
-              delegate.postTransform(result.get(0));
-              transformedRows.addAll(result);
-          }
-      }
-    }
-    if(!transformedRows.isEmpty()){
-        rowcache = transformedRows;
-        return getFromRowCache();
-    }else{ // caused by eof
+      if (arow == null) {
         return null;
-    }
-  }
-  
-  /**
-   * pulls single row from the delegate EntityProcessor.
-   * it expect to be called in synchronized(delegate) section
-   * @return row from delegate
-   * */
-  protected Map<String,Object> pullRow() {
-    Map<String,Object> arow = null;
-    try {
-      arow = delegate.nextRow();
-    } catch (Exception e) {
-      if (ABORT.equals(onError)) {
-        wrapAndThrow(SEVERE, e);
       } else {
-        // SKIP is not really possible. If this calls the nextRow() again the
-        // Entityprocessor would be in an inconistent state
-        log.error("Exception in entity : " + entityName, e);
-        return null;
+        arow = applyTransformer(arow);
+        if (arow != null) {
+          delegate.postTransform(arow);
+          return arow;
+        }
       }
     }
-    log.debug("arow : {}", arow);
-    return arow;
   }
 
   @Override
@@ -368,8 +289,8 @@ public class EntityProcessorWrapper extends EntityProcessor {
     delegate.destroy();
   }
 
-  public VariableResolverImpl getVariableResolver() {
-    return (VariableResolverImpl) context.getVariableResolver();
+  public VariableResolver getVariableResolver() {
+    return (VariableResolver) context.getVariableResolver();
   }
 
   public Context getContext() {
@@ -379,5 +300,29 @@ public class EntityProcessorWrapper extends EntityProcessor {
   @Override
   public void close() {
     delegate.close();
+  }
+
+  public Entity getEntity() {
+    return entity;
+  }
+
+  public List<EntityProcessorWrapper> getChildren() {
+    return children;
+  }
+
+  public DataSource getDatasource() {
+    return datasource;
+  }
+
+  public void setDatasource(DataSource datasource) {
+    this.datasource = datasource;
+  }
+
+  public boolean isInitialized() {
+    return initialized;
+  }
+
+  public void setInitialized(boolean initialized) {
+    this.initialized = initialized;
   }
 }

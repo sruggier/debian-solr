@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,160 +16,150 @@
  */
 package org.apache.solr.schema;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.nio.ByteBuffer;
-import java.util.List;
-
-import org.apache.commons.io.IOUtils;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.SystemPropertiesRestoreRule;
+import com.google.common.base.Charsets;
+import org.apache.commons.io.FileUtils;
+import org.apache.solr.SolrJettyTestBase;
+import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.SolrTestCaseJ4.SuppressSSL;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.beans.Field;
-import org.apache.solr.client.solrj.embedded.JettySolrRunner;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.core.SolrResourceLoader;
-import org.junit.Rule;
-import org.junit.rules.RuleChain;
-import org.junit.rules.TestRule;
+import org.junit.BeforeClass;
 
-public class TestBinaryField extends LuceneTestCase {
-  CommonsHttpSolrServer server;
-  JettySolrRunner jetty;
+import java.io.File;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.util.List;
+import java.util.Properties;
 
-  int port = 0;
-  static final String context = "/example";
+@SuppressSSL(bugUrl = "https://issues.apache.org/jira/browse/SOLR-5776")
+public class TestBinaryField extends SolrJettyTestBase {
 
-  @Rule
-  public TestRule solrTestRules = 
-    RuleChain.outerRule(new SystemPropertiesRestoreRule());
+  @BeforeClass
+  public static void beforeTest() throws Exception {
+    File homeDir = createTempDir().toFile();
 
-  @Override
-  public void setUp() throws Exception {
-    super.setUp();
-
-    File home = new File(TEMP_DIR,
-        "solrtest-TestBinaryField-" + System.currentTimeMillis());
-
-    File homeDir = new File(home, "example");
-    File dataDir = new File(homeDir, "data");
-    File confDir = new File(homeDir, "conf");
+    File collDir = new File(homeDir, "collection1");
+    File dataDir = new File(collDir, "data");
+    File confDir = new File(collDir, "conf");
 
     homeDir.mkdirs();
+    collDir.mkdirs();
     dataDir.mkdirs();
     confDir.mkdirs();
 
-    SolrResourceLoader loader = new SolrResourceLoader(null, null);
-    File f = new File(confDir, "solrconfig.xml");
-    String fname = "solr/conf/solrconfig-slave1.xml";
-    FileOutputStream out = new FileOutputStream(f);
-    IOUtils.copy(loader.openResource(fname), out);
-    out.close();
-    f = new File(confDir, "schema.xml");
-    fname = "solr/conf/schema-binaryfield.xml";
-    out = new FileOutputStream(f);
-    IOUtils.copy(loader.openResource(fname), out);
-    out.close();
-    System.setProperty("solr.solr.home", homeDir.getAbsolutePath());
-    System.setProperty("solr.data.dir", dataDir.getAbsolutePath());
-    System.setProperty("solr.test.sys.prop1", "propone");
-    System.setProperty("solr.test.sys.prop2", "proptwo");
+    FileUtils.copyFile(new File(SolrTestCaseJ4.TEST_HOME(), "solr.xml"), new File(homeDir, "solr.xml"));
 
-    jetty = new JettySolrRunner(context, 0);
-    jetty.start();
-    port = jetty.getLocalPort();
+    String src_dir = TEST_HOME() + "/collection1/conf";
+    FileUtils.copyFile(new File(src_dir, "schema-binaryfield.xml"), 
+                       new File(confDir, "schema.xml"));
+    FileUtils.copyFile(new File(src_dir, "solrconfig-basic.xml"), 
+                       new File(confDir, "solrconfig.xml"));
+    FileUtils.copyFile(new File(src_dir, "solrconfig.snippet.randomindexconfig.xml"), 
+                       new File(confDir, "solrconfig.snippet.randomindexconfig.xml"));
 
-    String url = "http://localhost:" + jetty.getLocalPort() + context;
-    server = new CommonsHttpSolrServer(url);
+    try (Writer w = new OutputStreamWriter(Files.newOutputStream(collDir.toPath().resolve("core.properties")), Charsets.UTF_8)) {
+      Properties coreProps = new Properties();
+      coreProps.put("name", "collection1");
+      coreProps.store(w, "");
+    }
+
+    createJetty(homeDir.getAbsolutePath());
   }
 
+
   public void testSimple() throws Exception {
-    byte[] buf = new byte[10];
-    for (int i = 0; i < 10; i++) {
-      buf[i] = (byte) i;
-    }
-    SolrInputDocument doc = null;
-    doc = new SolrInputDocument();
-    doc.addField("id", 1);
-    doc.addField("data", ByteBuffer.wrap(buf, 2, 5));
-    server.add(doc);
+    try (SolrClient client = getSolrClient()) {
+      byte[] buf = new byte[10];
+      for (int i = 0; i < 10; i++) {
+        buf[i] = (byte) i;
+      }
+      SolrInputDocument doc = null;
+      doc = new SolrInputDocument();
+      doc.addField("id", 1);
+      doc.addField("data", ByteBuffer.wrap(buf, 2, 5));
+      client.add(doc);
 
-    doc = new SolrInputDocument();
-    doc.addField("id", 2);
-    doc.addField("data", ByteBuffer.wrap(buf, 4, 3));
-    server.add(doc);
+      doc = new SolrInputDocument();
+      doc.addField("id", 2);
+      doc.addField("data", ByteBuffer.wrap(buf, 4, 3));
+      client.add(doc);
 
-    doc = new SolrInputDocument();
-    doc.addField("id", 3);
-    doc.addField("data", buf);
-    server.add(doc);
+      doc = new SolrInputDocument();
+      doc.addField("id", 3);
+      doc.addField("data", buf);
+      client.add(doc);
 
-    server.commit();
+      client.commit();
 
-    QueryResponse resp = server.query(new SolrQuery("*:*"));
-    SolrDocumentList res = resp.getResults();
-    List<Bean> beans = resp.getBeans(Bean.class);
-    assertEquals(3, res.size());
-    assertEquals(3, beans.size());
-    for (SolrDocument d : res) {
-      Integer id = (Integer) d.getFieldValue("id");
-      byte[] data = (byte[]) d.getFieldValue("data");
-      if (id == 1) {
-        assertEquals(5, data.length);
-        for (int i = 0; i < data.length; i++) {
-          byte b = data[i];
-          assertEquals((byte)(i + 2), b);
-        }
+      QueryResponse resp = client.query(new SolrQuery("*:*"));
+      SolrDocumentList res = resp.getResults();
+      List<Bean> beans = resp.getBeans(Bean.class);
+      assertEquals(3, res.size());
+      assertEquals(3, beans.size());
+      for (SolrDocument d : res) {
 
-      } else if (id == 2) {
-        assertEquals(3, data.length);
-        for (int i = 0; i < data.length; i++) {
-          byte b = data[i];
-          assertEquals((byte)(i + 4), b);
-        }
+        Integer id = (Integer) d.getFieldValue("id");
+        byte[] data = (byte[]) d.getFieldValue("data");
+        if (id == 1) {
+          assertEquals(5, data.length);
+          for (int i = 0; i < data.length; i++) {
+            byte b = data[i];
+            assertEquals((byte) (i + 2), b);
+          }
+
+        } else if (id == 2) {
+          assertEquals(3, data.length);
+          for (int i = 0; i < data.length; i++) {
+            byte b = data[i];
+            assertEquals((byte) (i + 4), b);
+          }
 
 
-      } else if (id == 3) {
-        assertEquals(10, data.length);
-        for (int i = 0; i < data.length; i++) {
-          byte b = data[i];
-          assertEquals((byte)i, b);
+        } else if (id == 3) {
+          assertEquals(10, data.length);
+          for (int i = 0; i < data.length; i++) {
+            byte b = data[i];
+            assertEquals((byte) i, b);
+          }
+
         }
 
       }
+      for (Bean d : beans) {
+        Integer id = d.id;
+        byte[] data = d.data;
+        if (id == 1) {
+          assertEquals(5, data.length);
+          for (int i = 0; i < data.length; i++) {
+            byte b = data[i];
+            assertEquals((byte) (i + 2), b);
+          }
 
-    }
-    for (Bean d : beans) {
-      Integer id = d.id;
-      byte[] data = d.data;
-      if (id == 1) {
-        assertEquals(5, data.length);
-        for (int i = 0; i < data.length; i++) {
-          byte b = data[i];
-          assertEquals((byte)(i + 2), b);
-        }
-
-      } else if (id == 2) {
-        assertEquals(3, data.length);
-        for (int i = 0; i < data.length; i++) {
-          byte b = data[i];
-          assertEquals((byte)(i + 4), b);
-        }
+        } else if (id == 2) {
+          assertEquals(3, data.length);
+          for (int i = 0; i < data.length; i++) {
+            byte b = data[i];
+            assertEquals((byte) (i + 4), b);
+          }
 
 
-      } else if (id == 3) {
-        assertEquals(10, data.length);
-        for (int i = 0; i < data.length; i++) {
-          byte b = data[i];
-          assertEquals((byte)i, b);
+        } else if (id == 3) {
+          assertEquals(10, data.length);
+          for (int i = 0; i < data.length; i++) {
+            byte b = data[i];
+            assertEquals((byte) i, b);
+          }
+
         }
 
       }
-
     }
 
   }
@@ -180,10 +170,4 @@ public class TestBinaryField extends LuceneTestCase {
     byte [] data;
   }
 
-
-  @Override
-  public void tearDown() throws Exception {
-    jetty.stop();
-    super.tearDown();
-  }
 }

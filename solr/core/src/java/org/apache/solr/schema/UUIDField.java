@@ -1,6 +1,4 @@
-package org.apache.solr.schema;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,27 +14,38 @@ package org.apache.solr.schema;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.schema;
 
 import java.io.IOException;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
-import org.apache.lucene.document.Fieldable;
+import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.search.SortField;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.response.TextResponseWriter;
-import org.apache.solr.response.XMLWriter;
-
+import org.apache.solr.update.processor.UUIDUpdateProcessorFactory; // jdoc
 /**
+ * <p>
  * This FieldType accepts UUID string values, as well as the special value 
  * of "NEW" which triggers generation of a new random UUID.
- *
+ * </p>
+ * <p>
+ * <b>NOTE:</b> Configuring a <code>UUIDField</code> 
+ * instance with a default value of "<code>NEW</code>" is not advisable for 
+ * most users when using SolrCloud (and not possible if the UUID value is 
+ * configured as the unique key field) since the result will be that each 
+ * replica of each document will get a unique UUID value.  
+ * Using {@link UUIDUpdateProcessorFactory} to generate UUID values when 
+ * documents are added is recommended instead.
+ * </p>
+ * 
  * @see UUID#toString
  * @see UUID#randomUUID
- * @version $Id$
+ *
  */
-public class UUIDField extends FieldType {
+public class UUIDField extends StrField {
   private static final String NEW = "NEW";
   private static final char DASH='-';
 
@@ -54,13 +63,7 @@ public class UUIDField extends FieldType {
   }
 
   @Override
-  public void write(XMLWriter xmlWriter, String name, Fieldable f)
-      throws IOException {
-    xmlWriter.writeStr(name, f.stringValue());
-  }
-
-  @Override
-  public void write(TextResponseWriter writer, String name, Fieldable f)
+  public void write(TextResponseWriter writer, String name, IndexableField f)
       throws IOException {
     writer.writeStr(name, f.stringValue(), false);
   }
@@ -77,7 +80,7 @@ public class UUIDField extends FieldType {
   @Override
   public String toInternal(String val) {
     if (val == null || 0==val.length() || NEW.equals(val)) {
-      return UUID.randomUUID().toString().toLowerCase(Locale.ENGLISH);
+      return UUID.randomUUID().toString().toLowerCase(Locale.ROOT);
     } else {
       // we do some basic validation if 'val' looks like an UUID
       if (val.length() != 36 || val.charAt(8) != DASH || val.charAt(13) != DASH
@@ -86,16 +89,16 @@ public class UUIDField extends FieldType {
             "Invalid UUID String: '" + val + "'");
       }
 
-      return val.toLowerCase(Locale.ENGLISH);
+      return val.toLowerCase(Locale.ROOT);
     }
   }
 
   public String toInternal(UUID uuid) {
-    return uuid.toString().toLowerCase(Locale.ENGLISH);
+    return uuid.toString().toLowerCase(Locale.ROOT);
   }
 
   @Override
-  public UUID toObject(Fieldable f) {
+  public UUID toObject(IndexableField f) {
     return UUID.fromString(f.stringValue());
   }
 }

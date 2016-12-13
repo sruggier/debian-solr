@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,21 +14,24 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 
 import java.io.IOException;
 import java.util.BitSet;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
 
-import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.LuceneTestCase;
 
 /**
  * Test class to illustrate using IndexDeletionPolicy to provide multi-level rollback capability.
@@ -40,56 +41,61 @@ import org.apache.lucene.store.Directory;
  */
 
 public class TestTransactionRollback extends LuceneTestCase {
-	
+
   private static final String FIELD_RECORD_ID = "record_id";
   private Directory dir;
-	
+
   //Rolls back index to a chosen ID
   private void rollBackLast(int id) throws Exception {
-		
+
     // System.out.println("Attempting to rollback to "+id);
     String ids="-"+id;
     IndexCommit last=null;
-    Collection<IndexCommit> commits = IndexReader.listCommits(dir);
+    Collection<IndexCommit> commits = DirectoryReader.listCommits(dir);
     for (Iterator<IndexCommit> iterator = commits.iterator(); iterator.hasNext();) {
       IndexCommit commit =  iterator.next();
       Map<String,String> ud=commit.getUserData();
-      if (ud.size() > 0)
-        if (ud.get("index").endsWith(ids))
-          last=commit;
+      if (ud.size() > 0) {
+        if (ud.get("index").endsWith(ids)) {
+          last = commit;
+        }
+      }
     }
 
-    if (last==null)
+    if (last==null) {
       throw new RuntimeException("Couldn't find commit point "+id);
-		
-    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random)).setIndexDeletionPolicy(
-        new RollbackDeletionPolicy(id)).setIndexCommit(last));
-    Map<String,String> data = new HashMap<String,String>();
+    }
+
+    IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                           .setIndexDeletionPolicy(new RollbackDeletionPolicy(id))
+                                           .setIndexCommit(last));
+    Map<String,String> data = new HashMap<>();
     data.put("index", "Rolled back to 1-"+id);
-    w.commit(data);
+    w.setLiveCommitData(data.entrySet());
     w.close();
   }
 
-  public void testRepeatedRollBacks() throws Exception {		
+  public void testRepeatedRollBacks() throws Exception {
 
-    int expectedLastRecordId=100;
+    int expectedLastRecordId = 100;
     while (expectedLastRecordId>10) {
-      expectedLastRecordId -=10;			
+      expectedLastRecordId -= 10;
       rollBackLast(expectedLastRecordId);
       
       BitSet expecteds = new BitSet(100);
-      expecteds.set(1,(expectedLastRecordId+1),true);
-      checkExpecteds(expecteds);			
+      expecteds.set(1, (expectedLastRecordId+1), true);
+      checkExpecteds(expecteds);
     }
   }
-	
+
   private void checkExpecteds(BitSet expecteds) throws Exception {
-    IndexReader r = IndexReader.open(dir, true);
-		
-    //Perhaps not the most efficient approach but meets our needs here.
+    IndexReader r = DirectoryReader.open(dir);
+
+    //Perhaps not the most efficient approach but meets our
+    //needs here.
+    final Bits liveDocs = MultiFields.getLiveDocs(r);
     for (int i = 0; i < r.maxDoc(); i++) {
-      if(!r.isDeleted(i)) {
+      if (liveDocs == null || liveDocs.get(i)) {
         String sval=r.document(i).get(FIELD_RECORD_ID);
         if(sval!=null) {
           int val=Integer.parseInt(sval);
@@ -104,14 +110,14 @@ public class TestTransactionRollback extends LuceneTestCase {
 
   /*
   private void showAvailableCommitPoints() throws Exception {
-    Collection commits = IndexReader.listCommits(dir);
+    Collection commits = DirectoryReader.listCommits(dir);
     for (Iterator iterator = commits.iterator(); iterator.hasNext();) {
       IndexCommit comm = (IndexCommit) iterator.next();
       System.out.print("\t Available commit point:["+comm.getUserData()+"] files=");
       Collection files = comm.getFileNames();
       for (Iterator iterator2 = files.iterator(); iterator2.hasNext();) {
         String filename = (String) iterator2.next();
-        System.out.print(filename+", ");				
+        System.out.print(filename+", ");
       }
       System.out.println();
     }
@@ -122,18 +128,22 @@ public class TestTransactionRollback extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     dir = newDirectory();
+
     //Build index, of records 1 to 100, committing after each batch of 10
     IndexDeletionPolicy sdp=new KeepAllDeletionPolicy();
-    IndexWriter w=new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)).setIndexDeletionPolicy(sdp));
+    IndexWriter w=new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                          .setIndexDeletionPolicy(sdp));
+
     for(int currentRecordId=1;currentRecordId<=100;currentRecordId++) {
       Document doc=new Document();
-      doc.add(newField(FIELD_RECORD_ID,""+currentRecordId,Field.Store.YES,Field.Index.ANALYZED));
+      doc.add(newTextField(FIELD_RECORD_ID, ""+currentRecordId, Field.Store.YES));
       w.addDocument(doc);
-			
+
       if (currentRecordId%10 == 0) {
-        Map<String,String> data = new HashMap<String,String>();
+        Map<String,String> data = new HashMap<>();
         data.put("index", "records 1-"+currentRecordId);
-        w.commit(data);
+        w.setLiveCommitData(data.entrySet());
+        w.commit();
       }
     }
 
@@ -147,16 +157,18 @@ public class TestTransactionRollback extends LuceneTestCase {
   }
 
   // Rolls back to previous commit point
-  class RollbackDeletionPolicy implements IndexDeletionPolicy {
+  class RollbackDeletionPolicy extends IndexDeletionPolicy {
     private int rollbackPoint;
 
     public RollbackDeletionPolicy(int rollbackPoint) {
       this.rollbackPoint = rollbackPoint;
     }
 
+    @Override
     public void onCommit(List<? extends IndexCommit> commits) throws IOException {
     }
 
+    @Override
     public void onInit(List<? extends IndexCommit> commits) throws IOException {
       for (final IndexCommit commit : commits) {
         Map<String,String> userData=commit.getUserData();
@@ -173,42 +185,47 @@ public class TestTransactionRollback extends LuceneTestCase {
                              " UserData="+commit.getUserData() +")  ("+(commits.size()-1)+" commit points left) files=");
             Collection files = commit.getFileNames();
             for (Iterator iterator2 = files.iterator(); iterator2.hasNext();) {
-              System.out.print(" "+iterator2.next());				
+              System.out.print(" "+iterator2.next());
             }
             System.out.println();
             */
-						
-            commit.delete();									
+
+            commit.delete();
           }
         }
       }
-    }		
+    }
   }
 
-  class DeleteLastCommitPolicy implements IndexDeletionPolicy {
+  class DeleteLastCommitPolicy extends IndexDeletionPolicy {
 
+    @Override
     public void onCommit(List<? extends IndexCommit> commits) throws IOException {}
 
+    @Override
     public void onInit(List<? extends IndexCommit> commits) throws IOException {
       commits.get(commits.size()-1).delete();
     }
   }
 
-  public void testRollbackDeletionPolicy() throws Exception {		
+  public void testRollbackDeletionPolicy() throws Exception {
+
     for(int i=0;i<2;i++) {
       // Unless you specify a prior commit point, rollback
       // should not work:
-      new IndexWriter(dir, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random))
+      new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
           .setIndexDeletionPolicy(new DeleteLastCommitPolicy())).close();
-      IndexReader r = IndexReader.open(dir, true);
+      IndexReader r = DirectoryReader.open(dir);
       assertEquals(100, r.numDocs());
       r.close();
     }
   }
-	
+
   // Keeps all commit points (used to build index)
-  class KeepAllDeletionPolicy implements IndexDeletionPolicy {
+  class KeepAllDeletionPolicy extends IndexDeletionPolicy {
+    @Override
     public void onCommit(List<? extends IndexCommit> commits) throws IOException {}
+    @Override
     public void onInit(List<? extends IndexCommit> commits) throws IOException {}
   }
 }

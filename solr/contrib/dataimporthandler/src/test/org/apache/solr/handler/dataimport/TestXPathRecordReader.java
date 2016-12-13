@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -9,24 +9,24 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed onT an "AS IS" BASIS,
+ * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
 package org.apache.solr.handler.dataimport;
 
-import org.junit.Test;
-
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.junit.Test;
+
 /**
  * <p> Test for XPathRecordReader </p>
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
@@ -136,14 +136,12 @@ public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
     rr.addField("a", "/root/x/b/@a", false);
     rr.addField("b", "/root/x/b/@b", false);
 
-    final List<Map<String, Object>> a = new ArrayList<Map<String, Object>>();
-    final List<Map<String, Object>> x = new ArrayList<Map<String, Object>>();
-    rr.streamRecords(new StringReader(xml), new XPathRecordReader.Handler() {
-      public void handle(Map<String, Object> record, String xpath) {
-        if (record == null) return;
-        if (xpath.equals("/root/a")) a.add(record);
-        if (xpath.equals("/root/x")) x.add(record);
-      }
+    final List<Map<String, Object>> a = new ArrayList<>();
+    final List<Map<String, Object>> x = new ArrayList<>();
+    rr.streamRecords(new StringReader(xml), (record, xpath) -> {
+      if (record == null) return;
+      if (xpath.equals("/root/a")) a.add(record);
+      if (xpath.equals("/root/x")) x.add(record);
     });
 
     assertEquals(1, a.size());
@@ -393,7 +391,7 @@ public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
              + "  this <boo>top level</boo> is ignored because it is external to the forEach\n"
              + "  <status>as is <boo>this element</boo></status>\n"
              + "  <contenido id=\"10097\" idioma=\"cat\">\n"
-             + "    This one is <boo>not ignored as its</boo> inside a forEach\n"
+             + "    This one is <boo>not ignored as it's</boo> inside a forEach\n"
              + "    <antetitulo><i> big <boo>antler</boo></i></antetitulo>\n"
              + "    <titulo>  My <i>flattened <boo>title</boo></i> </titulo>\n"
              + "    <resumen> My summary <i>skip this!</i>  </resumen>\n"
@@ -406,15 +404,15 @@ public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
     assertEquals(1, l.size());
     Map<String, Object> m = l.get(0);
     assertEquals("This one is  inside a forEach", m.get("cont").toString().trim());
-    assertEquals("10097"             ,m.get("id"));
-    assertEquals("My flattened title",m.get("title").toString().trim());
-    assertEquals("My summary"        ,m.get("resume").toString().trim());
-    assertEquals("My text"           ,m.get("text").toString().trim());
-    assertEquals("not ignored as its",(String) ((List) m.get("descdend")).get(0) );
-    assertEquals("antler"            ,(String) ((List) m.get("descdend")).get(1) );
-    assertEquals("Within the body of",(String) ((List) m.get("descdend")).get(2) );
-    assertEquals("inner  as well"    ,(String) ((List) m.get("descdend")).get(3) );
-    assertEquals("sub clauses"       ,m.get("inr_descd").toString().trim());
+    assertEquals("10097"              ,m.get("id"));
+    assertEquals("My flattened title" ,m.get("title").toString().trim());
+    assertEquals("My summary"         ,m.get("resume").toString().trim());
+    assertEquals("My text"            ,m.get("text").toString().trim());
+    assertEquals("not ignored as it's",(String) ((List) m.get("descdend")).get(0) );
+    assertEquals("antler"             ,(String) ((List) m.get("descdend")).get(1) );
+    assertEquals("Within the body of" ,(String) ((List) m.get("descdend")).get(2) );
+    assertEquals("inner  as well"     ,(String) ((List) m.get("descdend")).get(3) );
+    assertEquals("sub clauses"        ,m.get("inr_descd").toString().trim());
   }
 
   @Test
@@ -427,7 +425,7 @@ public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
              + "  this <boo>top level</boo> is ignored because it is external to the forEach\n"
              + "  <status>as is <boo>this element</boo></status>\n"
              + "  <contenido id=\"10097\" idioma=\"cat\">\n"
-             + "    This one is <boo>not ignored as its</boo> inside a forEach\n"
+             + "    This one is <boo>not ignored as it's</boo> inside a forEach\n"
              + "    <antetitulo><i> big <boo>antler</boo></i></antetitulo>\n"
              + "    <titulo>  My <i>flattened <boo>title</boo></i> </titulo>\n"
              + "    <resumen> My summary <i>skip this!</i>  </resumen>\n"
@@ -439,13 +437,13 @@ public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
     List<Map<String, Object>> l = rr.getAllRecords(new StringReader(xml));
     assertEquals(1, l.size());
     Map<String, Object> m = l.get(0);
-    assertEquals("top level"         ,(String) ((List) m.get("descdend")).get(0) );
-    assertEquals("this element"      ,(String) ((List) m.get("descdend")).get(1) );
-    assertEquals("not ignored as its",(String) ((List) m.get("descdend")).get(2) );
-    assertEquals("antler"            ,(String) ((List) m.get("descdend")).get(3) );
-    assertEquals("title"             ,(String) ((List) m.get("descdend")).get(4) );
-    assertEquals("Within the body of",(String) ((List) m.get("descdend")).get(5) );
-    assertEquals("inner  as well"    ,(String) ((List) m.get("descdend")).get(6) );
+    assertEquals("top level"          ,(String) ((List) m.get("descdend")).get(0) );
+    assertEquals("this element"       ,(String) ((List) m.get("descdend")).get(1) );
+    assertEquals("not ignored as it's",(String) ((List) m.get("descdend")).get(2) );
+    assertEquals("antler"             ,(String) ((List) m.get("descdend")).get(3) );
+    assertEquals("title"              ,(String) ((List) m.get("descdend")).get(4) );
+    assertEquals("Within the body of" ,(String) ((List) m.get("descdend")).get(5) );
+    assertEquals("inner  as well"     ,(String) ((List) m.get("descdend")).get(6) );
   }
 
   @Test
@@ -458,7 +456,7 @@ public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
              + "  this <boo>top level</boo> is ignored because it is external to the forEach\n"
              + "  <status>as is <boo>this element</boo></status>\n"
              + "  <contenido id=\"10097\" idioma=\"cat\">\n"
-             + "    This one is <boo>not ignored as its</boo> inside a forEach\n"
+             + "    This one is <boo>not ignored as it's</boo> inside a forEach\n"
              + "    <antetitulo><i> big <boo>antler</boo></i></antetitulo>\n"
              + "    <titulo>  My <i>flattened <boo>title</boo></i> </titulo>\n"
              + "    <resumen> My summary <i>skip this!</i>  </resumen>\n"
@@ -470,11 +468,11 @@ public class TestXPathRecordReader extends AbstractDataImportHandlerTestCase {
     List<Map<String, Object>> l = rr.getAllRecords(new StringReader(xml));
     assertEquals(1, l.size());
     Map<String, Object> m = l.get(0);
-    assertEquals("not ignored as its",((List) m.get("descdend")).get(0) );
-    assertEquals("antler"            ,((List) m.get("descdend")).get(1) );
-    assertEquals("title"             ,((List) m.get("descdend")).get(2) );
-    assertEquals("Within the body of",((List) m.get("descdend")).get(3) );
-    assertEquals("inner  as well"    ,((List) m.get("descdend")).get(4) );
+    assertEquals("not ignored as it's",((List) m.get("descdend")).get(0) );
+    assertEquals("antler"             ,((List) m.get("descdend")).get(1) );
+    assertEquals("title"              ,((List) m.get("descdend")).get(2) );
+    assertEquals("Within the body of" ,((List) m.get("descdend")).get(3) );
+    assertEquals("inner  as well"     ,((List) m.get("descdend")).get(4) );
   }
   
   @Test

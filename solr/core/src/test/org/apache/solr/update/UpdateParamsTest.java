@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,40 +14,39 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
 
 import java.util.HashMap;
 
 import org.apache.solr.common.params.MapSolrParams;
 import org.apache.solr.common.params.UpdateParams;
-import org.apache.solr.core.*;
-import org.apache.solr.handler.XmlUpdateRequestHandler;
+import org.apache.solr.core.SolrCore;
+import org.apache.solr.handler.UpdateRequestHandler;
 import org.apache.solr.request.SolrQueryRequestBase;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
 
 
 public class UpdateParamsTest extends AbstractSolrTestCase {
 
-  @Override
-  public String getSchemaFile() { return "schema.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solrconfig.xml"; }
-
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solrconfig.xml", "schema.xml");
+  }
+  
   /**
-   * Tests that both update.chain and update.processor works
-   * NOTE: This test will fail when support for update.processor is removed and should then be removed
+   * Tests that only update.chain and not update.processor works (SOLR-2105)
    */
-  public void testUpdateProcessorParamDeprecation() throws Exception {
+  public void testUpdateProcessorParamDeprecationRemoved() throws Exception {
     SolrCore core = h.getCore();
     
-    XmlUpdateRequestHandler handler = new XmlUpdateRequestHandler();
+    UpdateRequestHandler handler = new UpdateRequestHandler();
     handler.init( null );
     
     MapSolrParams params = new MapSolrParams( new HashMap<String, String>() );
-    params.getMap().put(UpdateParams.UPDATE_CHAIN_DEPRECATED, "nonexistant");
+    params.getMap().put("update.processor", "nonexistant");
 
     // Add a single document
     SolrQueryResponse rsp = new SolrQueryResponse();
@@ -55,21 +54,21 @@ public class UpdateParamsTest extends AbstractSolrTestCase {
     
     // First check that the old param behaves as it should
     try {
-    	handler.handleRequestBody(req, rsp);
-    	assertFalse("Faulty update.processor parameter (deprecated but should work) not causing an error - i.e. it is not detected", true);
+      handler.handleRequestBody(req, rsp);
+      assertTrue("Old param update.processor should not have any effect anymore", true);
     } catch (Exception e) {
-    	assertEquals("Got wrong exception while testing update.chain", e.getMessage(), "unknown UpdateRequestProcessorChain: nonexistant");
+      assertFalse("Got wrong exception while testing update.chain", e.getMessage().equals("unknown UpdateRequestProcessorChain: nonexistant"));
     }
     
     // Then check that the new param behaves correctly
-    params.getMap().remove(UpdateParams.UPDATE_CHAIN_DEPRECATED);
+    params.getMap().remove("update.processor");
     params.getMap().put(UpdateParams.UPDATE_CHAIN, "nonexistant");    
     req.setParams(params);
     try {
-    	handler.handleRequestBody(req, rsp);
-    	assertFalse("Faulty update.chain parameter not causing an error - i.e. it is not detected", true);
+      handler.handleRequestBody(req, rsp);
+      assertFalse("Faulty update.chain parameter not causing an error - i.e. it is not detected", true);
     } catch (Exception e) {
-    	assertEquals("Got wrong exception while testing update.chain", e.getMessage(), "unknown UpdateRequestProcessorChain: nonexistant");
+      assertEquals("Got wrong exception while testing update.chain", e.getMessage(), "unknown UpdateRequestProcessorChain: nonexistant");
     }
     
   }

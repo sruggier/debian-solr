@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,18 +14,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search.function;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.ValueSource;
-
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.MultiReader;
+import org.apache.lucene.index.ReaderUtil;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.docvalues.IntDocValues;
+import org.apache.lucene.search.SortedSetSelector;
+import org.apache.lucene.util.mutable.MutableValue;
+import org.apache.lucene.util.mutable.MutableValueInt;
+import org.apache.solr.index.SlowCompositeReaderWrapper;
+import org.apache.solr.schema.SchemaField;
+import org.apache.solr.search.Insanity;
+import org.apache.solr.search.SolrIndexSearcher;
+
 /**
- * Obtains the ordinal of the field value from the default Lucene {@link org.apache.lucene.search.FieldCache} using getStringIndex().
+ * Obtains the ordinal of the field value from {@link org.apache.lucene.index.LeafReader#getSortedDocValues}.
  * <br>
  * The native lucene index order is used to assign an ordinal value for each field value.
  * <br>Field values (terms) are lexicographically ordered by unicode value, and numbered starting at 1.
@@ -39,11 +53,11 @@ import java.util.Map;
  * <br>WARNING: as of Solr 1.4, ord() and rord() can cause excess memory use since they must use a FieldCache entry
  * at the top level reader, while sorting and function queries now use entries at the segment level.  Hence sorting
  * or using a different function query, in addition to ord()/rord() will double memory use.
- * @version $Id$
+ *
  */
 
 public class OrdFieldSource extends ValueSource {
-  protected String field;
+  protected final String field;
 
   public OrdFieldSource(String field) {
     this.field = field;
@@ -56,55 +70,83 @@ public class OrdFieldSource extends ValueSource {
 
 
   @Override
-  public DocValues getValues(Map context, IndexReader reader) throws IOException {
-    return new StringIndexDocValues(this, reader, field) {
-      @Override
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
+    final int off = readerContext.docBase;
+    final LeafReader r;
+    Object o = context.get("searcher");
+    if (o instanceof SolrIndexSearcher) {
+      SolrIndexSearcher is = (SolrIndexSearcher) o;
+      SchemaField sf = is.getSchema().getFieldOrNull(field);
+      if (sf != null && sf.hasDocValues() == false && sf.multiValued() == false && sf.getType().getNumericType() != null) {
+        // it's a single-valued numeric field: we must currently create insanity :(
+        List<LeafReaderContext> leaves = is.getIndexReader().leaves();
+        LeafReader insaneLeaves[] = new LeafReader[leaves.size()];
+        int upto = 0;
+        for (LeafReaderContext raw : leaves) {
+          insaneLeaves[upto++] = Insanity.wrapInsanity(raw.reader(), field);
+        }
+        r = SlowCompositeReaderWrapper.wrap(new MultiReader(insaneLeaves));
+      } else {
+        // reuse ordinalmap
+        r = ((SolrIndexSearcher)o).getSlowAtomicReader();
+      }
+    } else {
+      IndexReader topReader = ReaderUtil.getTopLevelContext(readerContext).reader();
+      r = SlowCompositeReaderWrapper.wrap(topReader);
+    }
+    // if it's e.g. tokenized/multivalued, emulate old behavior of single-valued fc
+    final SortedDocValues sindex = SortedSetSelector.wrap(DocValues.getSortedSet(r, field), SortedSetSelector.Type.MIN);
+    return new IntDocValues(this) {
       protected String toTerm(String readableValue) {
         return readableValue;
       }
-      
-      @Override
-      public float floatVal(int doc) {
-        return (float)order[doc];
-      }
-
       @Override
       public int intVal(int doc) {
-        return order[doc];
+        return sindex.getOrd(doc+off);
+      }
+      @Override
+      public int ordVal(int doc) {
+        return sindex.getOrd(doc+off);
+      }
+      @Override
+      public int numOrd() {
+        return sindex.getValueCount();
       }
 
       @Override
-      public long longVal(int doc) {
-        return (long)order[doc];
+      public boolean exists(int doc) {
+        return sindex.getOrd(doc+off) != 0;
       }
 
       @Override
-      public double doubleVal(int doc) {
-        return (double)order[doc];
-      }
+      public ValueFiller getValueFiller() {
+        return new ValueFiller() {
+          private final MutableValueInt mval = new MutableValueInt();
 
-      @Override
-      public String strVal(int doc) {
-        // the string value of the ordinal, not the string itself
-        return Integer.toString(order[doc]);
-      }
+          @Override
+          public MutableValue getValue() {
+            return mval;
+          }
 
-      @Override
-      public String toString(int doc) {
-        return description() + '=' + intVal(doc);
+          @Override
+          public void fillValue(int doc) {
+            mval.value = sindex.getOrd(doc);
+            mval.exists = mval.value!=0;
+          }
+        };
       }
     };
   }
 
   @Override
   public boolean equals(Object o) {
-    return o.getClass() == OrdFieldSource.class && this.field.equals(((OrdFieldSource)o).field);
+    return o != null && o.getClass() == OrdFieldSource.class && this.field.equals(((OrdFieldSource)o).field);
   }
 
   private static final int hcode = OrdFieldSource.class.hashCode();
   @Override
   public int hashCode() {
     return hcode + field.hashCode();
-  };
+  }
 
 }

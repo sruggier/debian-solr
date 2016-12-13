@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.admin;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
+import java.util.Arrays;
 
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -26,24 +26,24 @@ import org.apache.solr.common.util.SimpleOrderedMap;
 
 public class SystemInfoHandlerTest extends LuceneTestCase {
 
-  public void testMagickGetter() {
+  public void testMagickGetter() throws Exception {
 
     OperatingSystemMXBean os = ManagementFactory.getOperatingSystemMXBean();
 
     // make one directly
-    SimpleOrderedMap<Object> info = new SimpleOrderedMap<Object>();
+    SimpleOrderedMap<Object> info = new SimpleOrderedMap<>();
     info.add( "name", os.getName() );
     info.add( "version", os.getVersion() );
     info.add( "arch", os.getArch() );
 
-    // make another using addGetterIfAvaliable 
-    SimpleOrderedMap<Object> info2 = new SimpleOrderedMap<Object>();
-    SystemInfoHandler.addGetterIfAvaliable( os, "name", info2 );
-    SystemInfoHandler.addGetterIfAvaliable( os, "version", info2 );
-    SystemInfoHandler.addGetterIfAvaliable( os, "arch", info2 );
-    
+    // make another using addMXBeanProperties() 
+    SimpleOrderedMap<Object> info2 = new SimpleOrderedMap<>();
+    SystemInfoHandler.addMXBeanProperties( os, OperatingSystemMXBean.class, info2 );
+
     // make sure they got the same thing
-    assertEquals( info.toString(), info2.toString() );
+    for (String p : Arrays.asList("name", "version", "arch")) {
+      assertEquals(info.get(p), info2.get(p));
+    }
   }
 
 }

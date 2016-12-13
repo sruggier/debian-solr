@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,22 +14,28 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
+
 
 import org.apache.lucene.analysis.MockAnalyzer;
-
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.queryParser.QueryParser;
 import org.apache.lucene.search.CheckHits;
 import org.apache.lucene.search.Explanation;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.Weight;
 import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.Weight;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
+
+import static org.apache.lucene.search.spans.SpanTestUtil.assertFinished;
+import static org.apache.lucene.search.spans.SpanTestUtil.assertNext;
 
 public class TestNearSpansOrdered extends LuceneTestCase {
   protected IndexSearcher searcher;
@@ -39,12 +43,9 @@ public class TestNearSpansOrdered extends LuceneTestCase {
   protected IndexReader reader;
 
   public static final String FIELD = "field";
-  public static final QueryParser qp =
-    new QueryParser(TEST_VERSION_CURRENT, FIELD, new MockAnalyzer(random));
 
   @Override
   public void tearDown() throws Exception {
-    searcher.close();
     reader.close();
     directory.close();
     super.tearDown();
@@ -54,22 +55,26 @@ public class TestNearSpansOrdered extends LuceneTestCase {
   public void setUp() throws Exception {
     super.setUp();
     directory = newDirectory();
-    RandomIndexWriter writer= new RandomIndexWriter(random, directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter writer= new RandomIndexWriter(random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
     for (int i = 0; i < docFields.length; i++) {
       Document doc = new Document();
-      doc.add(newField(FIELD, docFields[i], Field.Store.NO, Field.Index.ANALYZED));
+      doc.add(newTextField(FIELD, docFields[i], Field.Store.NO));
       writer.addDocument(doc);
     }
+    writer.forceMerge(1);
     reader = writer.getReader();
     writer.close();
-    searcher = newSearcher(reader);
+    searcher = newSearcher(getOnlyLeafReader(reader));
   }
 
   protected String[] docFields = {
     "w1 w2 w3 w4 w5",
     "w1 w3 w2 w3 zz",
     "w1 xx w2 yy w3",
-    "w1 w3 xx w2 yy w3 zz"
+    "w1 w3 xx w2 yy w3 zz",
+    "t1 t2 t2 t1",
+    "g x x g g x x x g g x x g",
+      "go to webpage"
   };
 
   protected SpanNearQuery makeQuery(String s1, String s2, String s3,
@@ -85,14 +90,30 @@ public class TestNearSpansOrdered extends LuceneTestCase {
   protected SpanNearQuery makeQuery() {
     return makeQuery("w1","w2","w3",1,true);
   }
+
+  protected SpanNearQuery makeOverlappedQuery(
+      String sqt1, String sqt2, boolean sqOrdered,
+      String t3, boolean ordered) {
+    return new SpanNearQuery(
+      new SpanQuery[] {
+        new SpanNearQuery(new SpanQuery[] {
+          new SpanTermQuery(new Term(FIELD, sqt1)),
+            new SpanTermQuery(new Term(FIELD, sqt2)) },
+            1,
+            sqOrdered
+          ),
+          new SpanTermQuery(new Term(FIELD, t3)) },
+          0,
+          ordered);
+  }
   
   public void testSpanNearQuery() throws Exception {
     SpanNearQuery q = makeQuery();
-    CheckHits.checkHits(random, q, FIELD, searcher, new int[] {0,1});
+    CheckHits.checkHits(random(), q, FIELD, searcher, new int[] {0,1});
   }
 
   public String s(Spans span) {
-    return s(span.doc(), span.start(), span.end());
+    return s(span.docID(), span.startPosition(), span.endPosition());
   }
   public String s(int doc, int start, int end) {
     return "s(" + doc + "," + start + "," + end +")";
@@ -100,12 +121,10 @@ public class TestNearSpansOrdered extends LuceneTestCase {
   
   public void testNearSpansNext() throws Exception {
     SpanNearQuery q = makeQuery();
-    Spans span = q.getSpans(searcher.getIndexReader());
-    assertEquals(true, span.next());
-    assertEquals(s(0,0,3), s(span));
-    assertEquals(true, span.next());
-    assertEquals(s(1,0,4), s(span));
-    assertEquals(false, span.next());
+    Spans span = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(span,0,0,3);
+    assertNext(span,1,0,4);
+    assertFinished(span);
   }
 
   /**
@@ -113,51 +132,58 @@ public class TestNearSpansOrdered extends LuceneTestCase {
    * same as next -- it's only applicable in this case since we know doc
    * does not contain more than one span
    */
-  public void testNearSpansSkipToLikeNext() throws Exception {
+  public void testNearSpansAdvanceLikeNext() throws Exception {
     SpanNearQuery q = makeQuery();
-    Spans span = q.getSpans(searcher.getIndexReader());
-    assertEquals(true, span.skipTo(0));
+    Spans span = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertEquals(0, span.advance(0));
+    assertEquals(0, span.nextStartPosition());
     assertEquals(s(0,0,3), s(span));
-    assertEquals(true, span.skipTo(1));
+    assertEquals(1, span.advance(1));
+    assertEquals(0, span.nextStartPosition());
     assertEquals(s(1,0,4), s(span));
-    assertEquals(false, span.skipTo(2));
+    assertEquals(Spans.NO_MORE_DOCS, span.advance(2));
   }
   
-  public void testNearSpansNextThenSkipTo() throws Exception {
+  public void testNearSpansNextThenAdvance() throws Exception {
     SpanNearQuery q = makeQuery();
-    Spans span = q.getSpans(searcher.getIndexReader());
-    assertEquals(true, span.next());
+    Spans span = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNotSame(Spans.NO_MORE_DOCS, span.nextDoc());
+    assertEquals(0, span.nextStartPosition());
     assertEquals(s(0,0,3), s(span));
-    assertEquals(true, span.skipTo(1));
+    assertNotSame(Spans.NO_MORE_DOCS, span.advance(1));
+    assertEquals(0, span.nextStartPosition());
     assertEquals(s(1,0,4), s(span));
-    assertEquals(false, span.next());
+    assertEquals(Spans.NO_MORE_DOCS, span.nextDoc());
   }
   
-  public void testNearSpansNextThenSkipPast() throws Exception {
+  public void testNearSpansNextThenAdvancePast() throws Exception {
     SpanNearQuery q = makeQuery();
-    Spans span = q.getSpans(searcher.getIndexReader());
-    assertEquals(true, span.next());
+    Spans span = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNotSame(Spans.NO_MORE_DOCS, span.nextDoc());
+    assertEquals(0, span.nextStartPosition());
     assertEquals(s(0,0,3), s(span));
-    assertEquals(false, span.skipTo(2));
+    assertEquals(Spans.NO_MORE_DOCS, span.advance(2));
   }
   
-  public void testNearSpansSkipPast() throws Exception {
+  public void testNearSpansAdvancePast() throws Exception {
     SpanNearQuery q = makeQuery();
-    Spans span = q.getSpans(searcher.getIndexReader());
-    assertEquals(false, span.skipTo(2));
+    Spans span = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertEquals(Spans.NO_MORE_DOCS, span.advance(2));
   }
   
-  public void testNearSpansSkipTo0() throws Exception {
+  public void testNearSpansAdvanceTo0() throws Exception {
     SpanNearQuery q = makeQuery();
-    Spans span = q.getSpans(searcher.getIndexReader());
-    assertEquals(true, span.skipTo(0));
+    Spans span = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertEquals(0, span.advance(0));
+    assertEquals(0, span.nextStartPosition());
     assertEquals(s(0,0,3), s(span));
   }
 
-  public void testNearSpansSkipTo1() throws Exception {
+  public void testNearSpansAdvanceTo1() throws Exception {
     SpanNearQuery q = makeQuery();
-    Spans span = q.getSpans(searcher.getIndexReader());
-    assertEquals(true, span.skipTo(1));
+    Spans span = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertEquals(1, span.advance(1));
+    assertEquals(0, span.nextStartPosition());
     assertEquals(s(1,0,4), s(span));
   }
 
@@ -167,11 +193,58 @@ public class TestNearSpansOrdered extends LuceneTestCase {
    */
   public void testSpanNearScorerSkipTo1() throws Exception {
     SpanNearQuery q = makeQuery();
-    Weight w = searcher.createNormalizedWeight(q);
-    Scorer s = w.scorer(searcher.getIndexReader(), true, false);
-    assertEquals(1, s.advance(1));
+    Weight w = searcher.createNormalizedWeight(q, true);
+    IndexReaderContext topReaderContext = searcher.getTopReaderContext();
+    LeafReaderContext leave = topReaderContext.leaves().get(0);
+    Scorer s = w.scorer(leave);
+    assertEquals(1, s.iterator().advance(1));
+  }
+
+  public void testOverlappedOrderedSpan() throws Exception {
+    SpanNearQuery q = makeOverlappedQuery("w5", "w3", false, "w4", true);
+    CheckHits.checkHits(random(), q, FIELD, searcher, new int[] {});
   }
   
+  public void testOverlappedNonOrderedSpan() throws Exception {
+    SpanNearQuery q = makeOverlappedQuery("w3", "w5", true, "w4", false);
+    CheckHits.checkHits(random(), q, FIELD, searcher, new int[] {0});
+  }
+
+  public void testNonOverlappedOrderedSpan() throws Exception {
+    SpanNearQuery q = makeOverlappedQuery("w3", "w4", true, "w5", true);
+    CheckHits.checkHits(random(), q, FIELD, searcher, new int[] {0});
+  }
+
+  public void testOrderedSpanIteration() throws Exception {
+    SpanNearQuery q = new SpanNearQuery(new SpanQuery[]{
+        new SpanOrQuery(new SpanTermQuery(new Term(FIELD, "w1")), new SpanTermQuery(new Term(FIELD, "w2"))),
+        new SpanTermQuery(new Term(FIELD, "w4"))
+    }, 10, true);
+    Spans spans = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans,0,0,4);
+    assertNext(spans,0,1,4);
+    assertFinished(spans);
+  }
+
+  public void testOrderedSpanIterationSameTerms1() throws Exception {
+    SpanNearQuery q = new SpanNearQuery(new SpanQuery[]{
+        new SpanTermQuery(new Term(FIELD, "t1")), new SpanTermQuery(new Term(FIELD, "t2"))
+    }, 1, true);
+    Spans spans = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans,4,0,2);
+    assertFinished(spans);
+  }
+
+  public void testOrderedSpanIterationSameTerms2() throws Exception {
+    SpanNearQuery q = new SpanNearQuery(new SpanQuery[]{
+        new SpanTermQuery(new Term(FIELD, "t2")), new SpanTermQuery(new Term(FIELD, "t1"))
+    }, 1, true);
+    Spans spans = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans,4,1,4);
+    assertNext(spans,4,2,4);
+    assertFinished(spans);
+  }
+
   /**
    * not a direct test of NearSpans, but a demonstration of how/when
    * this causes problems
@@ -181,7 +254,72 @@ public class TestNearSpansOrdered extends LuceneTestCase {
     Explanation e = searcher.explain(q, 1);
     assertTrue("Scorer explanation value for doc#1 isn't positive: "
                + e.toString(),
-               0.0f < e.getValue());
+               0.0f <= e.getValue());
   }
-  
+
+  public void testGaps() throws Exception {
+    SpanNearQuery q = SpanNearQuery.newOrderedNearQuery(FIELD)
+        .addClause(new SpanTermQuery(new Term(FIELD, "w1")))
+        .addGap(1)
+        .addClause(new SpanTermQuery(new Term(FIELD, "w2")))
+        .build();
+    Spans spans = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans, 1, 0, 3);
+    assertNext(spans, 2, 0, 3);
+    assertFinished(spans);
+
+    q = SpanNearQuery.newOrderedNearQuery(FIELD)
+        .addClause(new SpanTermQuery(new Term(FIELD, "w1")))
+        .addGap(1)
+        .addClause(new SpanTermQuery(new Term(FIELD, "w2")))
+        .addGap(1)
+        .addClause(new SpanTermQuery(new Term(FIELD, "w3")))
+        .setSlop(1)
+        .build();
+    spans = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans, 2, 0, 5);
+    assertNext(spans, 3, 0, 6);
+    assertFinished(spans);
+  }
+
+  public void testMultipleGaps() throws Exception {
+    SpanQuery q = SpanNearQuery.newOrderedNearQuery(FIELD)
+        .addClause(new SpanTermQuery(new Term(FIELD, "g")))
+        .addGap(2)
+        .addClause(new SpanTermQuery(new Term(FIELD, "g")))
+        .build();
+    Spans spans = q.createWeight(searcher, false).getSpans(searcher.getIndexReader().leaves().get(0), SpanWeight.Postings.POSITIONS);
+    assertNext(spans, 5, 0, 4);
+    assertNext(spans, 5, 9, 13);
+    assertFinished(spans);
+  }
+
+  public void testNestedGaps() throws Exception {
+    SpanQuery q = SpanNearQuery.newOrderedNearQuery(FIELD)
+        .addClause(new SpanOrQuery(
+            new SpanTermQuery(new Term(FIELD, "open")),
+            SpanNearQuery.newOrderedNearQuery(FIELD)
+                .addClause(new SpanTermQuery(new Term(FIELD, "go")))
+                .addGap(1)
+                .build()
+        ))
+        .addClause(new SpanTermQuery(new Term(FIELD, "webpage")))
+        .build();
+
+    TopDocs topDocs = searcher.search(q, 1);
+    assertEquals(6, topDocs.scoreDocs[0].doc);
+
+  }
+
+  /*
+    protected String[] docFields = {
+    "w1 w2 w3 w4 w5",
+    "w1 w3 w2 w3 zz",
+    "w1 xx w2 yy w3",
+    "w1 w3 xx w2 yy w3 zz",
+    "t1 t2 t2 t1",
+    "g x x g g x x x g g x x g",
+    "go to webpage"
+  };
+   */
 }

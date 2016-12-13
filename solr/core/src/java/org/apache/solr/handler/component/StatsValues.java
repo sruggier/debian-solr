@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,18 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
 package org.apache.solr.handler.component;
 
 
+import java.io.IOException;
 import java.util.Map;
 
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.util.BytesRef;
 import org.apache.solr.common.util.NamedList;
 
 /**
  * StatsValue defines the interface for the collection of statistical values about fields and facets.
  */
+// TODO: should implement Collector?
 public interface StatsValues {
 
   /**
@@ -35,12 +37,9 @@ public interface StatsValues {
    */
   void accumulate(NamedList stv);
 
-  /**
-   * Accumulate the values based on the given value
-   *
-   * @param value Value to use to accumulate the current values
-   */
-  void accumulate(String value);
+  /** Accumulate the value associated with <code>docID</code>.
+   *  @see #setNextReader(org.apache.lucene.index.LeafReaderContext) */
+  void accumulate(int docID);
 
   /**
    * Accumulate the values based on the given value
@@ -48,7 +47,7 @@ public interface StatsValues {
    * @param value Value to use to accumulate the current values
    * @param count number of times to accumulate this value
    */
-  void accumulate(String value, int count);
+  void accumulate(BytesRef value, int count);
 
   /**
    * Updates the statistics when a document is missing a value
@@ -76,4 +75,7 @@ public interface StatsValues {
    * @return NamedList representation of the current values
    */
   NamedList<?> getStatsValues();
+
+  /** Set the context for {@link #accumulate(int)}. */
+  void setNextReader(LeafReaderContext ctx) throws IOException;
 }

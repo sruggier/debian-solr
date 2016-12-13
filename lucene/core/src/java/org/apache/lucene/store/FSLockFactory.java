@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,38 +14,37 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
 
-import java.io.File;
+
+import java.io.IOException;
 
 /**
  * Base class for file system based locking implementation.
+ * This class is explicitly checking that the passed {@link Directory}
+ * is an {@link FSDirectory}.
  */
-
 public abstract class FSLockFactory extends LockFactory {
-
-  /**
-   * Directory for the lock files.
+  
+  /** Returns the default locking implementation for this platform.
+   * This method currently returns always {@link NativeFSLockFactory}.
    */
-  protected File lockDir = null;
+  public static final FSLockFactory getDefault() {
+    return NativeFSLockFactory.INSTANCE;
+  }
 
-  /**
-   * Set the lock directory. This method can be only called
-   * once to initialize the lock directory. It is used by {@link FSDirectory}
-   * to set the lock directory to itself.
-   * Subclasses can also use this method to set the directory
-   * in the constructor.
-   */
-  protected final void setLockDir(File lockDir) {
-    if (this.lockDir != null)
-      throw new IllegalStateException("You can set the lock directory for this factory only once.");
-    this.lockDir = lockDir;
+  @Override
+  public final Lock obtainLock(Directory dir, String lockName) throws IOException {
+    if (!(dir instanceof FSDirectory)) {
+      throw new UnsupportedOperationException(getClass().getSimpleName() + " can only be used with FSDirectory subclasses, got: " + dir);
+    }
+    return obtainFSLock((FSDirectory) dir, lockName);
   }
   
-  /**
-   * Retrieve the lock directory.
+  /** 
+   * Implement this method to obtain a lock for a FSDirectory instance. 
+   * @throws IOException if the lock could not be obtained.
    */
-  public File getLockDir() {
-    return lockDir;
-  }
+  protected abstract Lock obtainFSLock(FSDirectory dir, String lockName) throws IOException;
 
 }

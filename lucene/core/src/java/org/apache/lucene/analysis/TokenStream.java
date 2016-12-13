@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,15 +14,19 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
+
 
 import java.io.IOException;
 import java.io.Closeable;
 import java.lang.reflect.Modifier;
 
+import org.apache.lucene.analysis.tokenattributes.PackedTokenAttributeImpl;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.util.Attribute;
+import org.apache.lucene.util.AttributeFactory;
 import org.apache.lucene.util.AttributeImpl;
 import org.apache.lucene.util.AttributeSource;
 
@@ -74,7 +76,7 @@ import org.apache.lucene.util.AttributeSource;
  * <p>
  * Sometimes it is desirable to capture a current state of a <code>TokenStream</code>,
  * e.g., for buffering purposes (see {@link CachingTokenFilter},
- * {@link TeeSinkTokenFilter}). For this usecase
+ * TeeSinkTokenFilter). For this usecase
  * {@link AttributeSource#captureState} and {@link AttributeSource#restoreState}
  * can be used.
  * <p>The {@code TokenStream}-API in Lucene is based on the decorator pattern.
@@ -83,12 +85,16 @@ import org.apache.lucene.util.AttributeSource;
  * assertions are enabled.
  */
 public abstract class TokenStream extends AttributeSource implements Closeable {
+  
+  /** Default {@link AttributeFactory} instance that should be used for TokenStreams. */
+  public static final AttributeFactory DEFAULT_TOKEN_ATTRIBUTE_FACTORY =
+    AttributeFactory.getStaticImplementation(AttributeFactory.DEFAULT_ATTRIBUTE_FACTORY, PackedTokenAttributeImpl.class);
 
   /**
    * A TokenStream using the default attribute factory.
    */
   protected TokenStream() {
-    super();
+    super(DEFAULT_TOKEN_ATTRIBUTE_FACTORY);
     assert assertFinal();
   }
   
@@ -154,31 +160,44 @@ public abstract class TokenStream extends AttributeSource implements Closeable {
    * consumed, after {@link #incrementToken()} returned <code>false</code>
    * (using the new <code>TokenStream</code> API). Streams implementing the old API
    * should upgrade to use this feature.
-   * <p/>
+   * <p>
    * This method can be used to perform any end-of-stream operations, such as
    * setting the final offset of a stream. The final offset of a stream might
    * differ from the offset of the last token eg in case one or more whitespaces
-   * followed after the last token, but a {@link WhitespaceTokenizer} was used.
+   * followed after the last token, but a WhitespaceTokenizer was used.
+   * <p>
+   * Additionally any skipped positions (such as those removed by a stopfilter)
+   * can be applied to the position increment, or any adjustment of other
+   * attributes where the end-of-stream value may be important.
+   * <p>
+   * If you override this method, always call {@code super.end()}.
    * 
-   * @throws IOException
+   * @throws IOException If an I/O error occurs
    */
   public void end() throws IOException {
-    // do nothing by default
+    endAttributes(); // LUCENE-3849: don't consume dirty atts
   }
 
   /**
-   * Resets this stream to the beginning. This is an optional operation, so
-   * subclasses may or may not implement this method. {@link #reset()} is not needed for
-   * the standard indexing process. However, if the tokens of a
-   * <code>TokenStream</code> are intended to be consumed more than once, it is
-   * necessary to implement {@link #reset()}. Note that if your TokenStream
-   * caches tokens and feeds them back again after a reset, it is imperative
-   * that you clone the tokens when you store them away (on the first pass) as
-   * well as when you return them (on future passes after {@link #reset()}).
+   * This method is called by a consumer before it begins consumption using
+   * {@link #incrementToken()}.
+   * <p>
+   * Resets this stream to a clean state. Stateful implementations must implement
+   * this method so that they can be reused, just as if they had been created fresh.
+   * <p>
+   * If you override this method, always call {@code super.reset()}, otherwise
+   * some internal state will not be correctly reset (e.g., {@link Tokenizer} will
+   * throw {@link IllegalStateException} on further usage).
    */
   public void reset() throws IOException {}
   
-  /** Releases resources associated with this stream. */
+  /** Releases resources associated with this stream.
+   * <p>
+   * If you override this method, always call {@code super.close()}, otherwise
+   * some internal state will not be correctly reset (e.g., {@link Tokenizer} will
+   * throw {@link IllegalStateException} on reuse).
+   */
+  @Override
   public void close() throws IOException {}
   
 }

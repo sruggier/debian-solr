@@ -1,5 +1,3 @@
-package org.apache.solr.search;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,14 +14,52 @@ package org.apache.solr.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search;
+
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang.ArrayUtils;
-import org.apache.lucene.document.Fieldable;
-import org.apache.lucene.queryParser.ParseException;
-import org.apache.lucene.search.*;
-import org.apache.lucene.search.grouping.*;
-import org.apache.lucene.util.FixedBitSet;
-import org.apache.lucene.util.OpenBitSet;
+import org.apache.lucene.index.ExitableDirectoryReader;
+import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.queries.function.FunctionQuery;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.valuesource.QueryValueSource;
+import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.CachingCollector;
+import org.apache.lucene.search.Collector;
+import org.apache.lucene.search.MultiCollector;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.TimeLimitingCollector;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TopDocsCollector;
+import org.apache.lucene.search.TopFieldCollector;
+import org.apache.lucene.search.TopScoreDocCollector;
+import org.apache.lucene.search.TotalHitCountCollector;
+import org.apache.lucene.search.grouping.AbstractAllGroupHeadsCollector;
+import org.apache.lucene.search.grouping.GroupDocs;
+import org.apache.lucene.search.grouping.SearchGroup;
+import org.apache.lucene.search.grouping.TopGroups;
+import org.apache.lucene.search.grouping.function.FunctionAllGroupHeadsCollector;
+import org.apache.lucene.search.grouping.function.FunctionAllGroupsCollector;
+import org.apache.lucene.search.grouping.function.FunctionFirstPassGroupingCollector;
+import org.apache.lucene.search.grouping.function.FunctionSecondPassGroupingCollector;
+import org.apache.lucene.search.grouping.term.TermAllGroupHeadsCollector;
+import org.apache.lucene.search.grouping.term.TermAllGroupsCollector;
+import org.apache.lucene.search.grouping.term.TermFirstPassGroupingCollector;
+import org.apache.lucene.search.grouping.term.TermSecondPassGroupingCollector;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.mutable.MutableValue;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -31,36 +67,30 @@ import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.SchemaField;
 import org.apache.solr.schema.StrFieldSource;
-import org.apache.solr.search.function.OrdFieldSource;
-import org.apache.solr.search.function.ReverseOrdFieldSource;
-import org.apache.solr.search.function.ValueSource;
 import org.apache.solr.search.grouping.collector.FilterCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.util.*;
-
 /**
  * Basic Solr Grouping infrastructure.
- * Warning NOT thread save!
+ * Warning NOT thread safe!
  *
  * @lucene.experimental
  */
 public class Grouping {
 
-  private final static Logger logger = LoggerFactory.getLogger(Grouping.class);
+  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   private final SolrIndexSearcher searcher;
-  private final SolrIndexSearcher.QueryResult qr;
-  private final SolrIndexSearcher.QueryCommand cmd;
-  private final List<Command> commands = new ArrayList<Command>();
+  private final QueryResult qr;
+  private final QueryCommand cmd;
+  private final List<Command> commands = new ArrayList<>();
   private final boolean main;
   private final boolean cacheSecondPassSearch;
   private final int maxDocsPercentageToCache;
 
-  private Sort sort;
   private Sort groupSort;
+  private Sort withinGroupSort;
   private int limitDefault;
   private int docsPerGroupDefault;
   private int groupOffsetDefault;
@@ -76,9 +106,9 @@ public class Grouping {
   private DocSet filter;
   private Filter luceneFilter;
   private NamedList grouped = new SimpleOrderedMap();
-  private Set<Integer> idSet = new LinkedHashSet<Integer>();  // used for tracking unique docs when we need a doclist
+  private Set<Integer> idSet = new LinkedHashSet<>();  // used for tracking unique docs when we need a doclist
   private int maxMatches;  // max number of matches from any grouping command
-  private float maxScore = Float.NEGATIVE_INFINITY;  // max score seen in any doclist
+  private float maxScore = Float.NaN;  // max score seen in any doclist
   private boolean signalCacheWarning = false;
   private TimeLimitingCollector timeLimitingCollector;
 
@@ -86,18 +116,15 @@ public class Grouping {
   public DocList mainResult;  // output if one of the grouping commands should be used as the main result.
 
   /**
-   * @param searcher
-   * @param qr
-   * @param cmd
-   * @param cacheSecondPassSearch Whether to cache the documents and scores from the first pass search for the second
-   *                              pass search.
+   * @param cacheSecondPassSearch    Whether to cache the documents and scores from the first pass search for the second
+   *                                 pass search.
    * @param maxDocsPercentageToCache The maximum number of documents in a percentage relative from maxdoc
    *                                 that is allowed in the cache. When this threshold is met,
    *                                 the cache is not used in the second pass search.
    */
   public Grouping(SolrIndexSearcher searcher,
-                  SolrIndexSearcher.QueryResult qr,
-                  SolrIndexSearcher.QueryCommand cmd,
+                  QueryResult qr,
+                  QueryCommand cmd,
                   boolean cacheSecondPassSearch,
                   int maxDocsPercentageToCache,
                   boolean main) {
@@ -115,28 +142,29 @@ public class Grouping {
 
   /**
    * Adds a field command based on the specified field.
+   * If the field is not compatible with {@link CommandField} it invokes the
+   * {@link #addFunctionCommand(String, org.apache.solr.request.SolrQueryRequest)} method.
    *
    * @param field The fieldname to group by.
    */
-  public void addFieldCommand(String field, SolrQueryRequest request) throws ParseException {
+  public void addFieldCommand(String field, SolrQueryRequest request) throws SyntaxError {
     SchemaField schemaField = searcher.getSchema().getField(field); // Throws an exception when field doesn't exist. Bad request.
     FieldType fieldType = schemaField.getType();
     ValueSource valueSource = fieldType.getValueSource(schemaField, null);
-    if (!(valueSource instanceof OrdFieldSource
-        || valueSource instanceof ReverseOrdFieldSource
-        || valueSource instanceof StrFieldSource)) {
-      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, "Cannot group on non string like field.");
+    if (!(valueSource instanceof StrFieldSource)) {
+      addFunctionCommand(field, request);
+      return;
     }
 
     Grouping.CommandField gc = new CommandField();
-    gc.groupSort = groupSort;
+    gc.withinGroupSort = withinGroupSort;
     gc.groupBy = field;
     gc.key = field;
     gc.numGroups = limitDefault;
     gc.docsPerGroup = docsPerGroupDefault;
     gc.groupOffset = groupOffsetDefault;
     gc.offset = cmd.getOffset();
-    gc.sort = sort;
+    gc.groupSort = groupSort;
     gc.format = defaultFormat;
     gc.totalCount = defaultTotalCount;
 
@@ -151,12 +179,55 @@ public class Grouping {
     commands.add(gc);
   }
 
-  public void addQueryCommand(String groupByStr, SolrQueryRequest request) throws ParseException {
-    QParser parser = QParser.getParser(groupByStr, null, request);
+  public void addFunctionCommand(String groupByStr, SolrQueryRequest request) throws SyntaxError {
+    QParser parser = QParser.getParser(groupByStr, "func", request);
+    Query q = parser.getQuery();
+    final Grouping.Command gc;
+    if (q instanceof FunctionQuery) {
+      ValueSource valueSource = ((FunctionQuery) q).getValueSource();
+      if (valueSource instanceof StrFieldSource) {
+        String field = ((StrFieldSource) valueSource).getField();
+        CommandField commandField = new CommandField();
+        commandField.groupBy = field;
+        gc = commandField;
+      } else {
+        CommandFunc commandFunc = new CommandFunc();
+        commandFunc.groupBy = valueSource;
+        gc = commandFunc;
+      }
+    } else {
+      CommandFunc commandFunc = new CommandFunc();
+      commandFunc.groupBy = new QueryValueSource(q, 0.0f);
+      gc = commandFunc;
+    }
+    gc.withinGroupSort = withinGroupSort;
+    gc.key = groupByStr;
+    gc.numGroups = limitDefault;
+    gc.docsPerGroup = docsPerGroupDefault;
+    gc.groupOffset = groupOffsetDefault;
+    gc.offset = cmd.getOffset();
+    gc.groupSort = groupSort;
+    gc.format = defaultFormat;
+    gc.totalCount = defaultTotalCount;
+
+    if (main) {
+      gc.main = true;
+      gc.format = Grouping.Format.simple;
+    }
+
+    if (gc.format == Grouping.Format.simple) {
+      gc.groupOffset = 0;  // doesn't make sense
+    }
+
+    commands.add(gc);
+  }
+
+  public void addQueryCommand(String groupByStr, SolrQueryRequest request) throws SyntaxError {
+    QParser parser = QParser.getParser(groupByStr, request);
     Query gq = parser.getQuery();
     Grouping.CommandQuery gc = new CommandQuery();
     gc.query = gq;
-    gc.groupSort = groupSort;
+    gc.withinGroupSort = withinGroupSort;
     gc.key = groupByStr;
     gc.numGroups = limitDefault;
     gc.docsPerGroup = docsPerGroupDefault;
@@ -179,13 +250,13 @@ public class Grouping {
     commands.add(gc);
   }
 
-  public Grouping setSort(Sort sort) {
-    this.sort = sort;
+  public Grouping setGroupSort(Sort groupSort) {
+    this.groupSort = groupSort;
     return this;
   }
 
-  public Grouping setGroupSort(Sort groupSort) {
-    this.groupSort = groupSort;
+  public Grouping setWithinGroupSort(Sort withinGroupSort) {
+    this.withinGroupSort = withinGroupSort;
     return this;
   }
 
@@ -237,18 +308,10 @@ public class Grouping {
 
     needScores = (cmd.getFlags() & SolrIndexSearcher.GET_SCORES) != 0;
     boolean cacheScores = false;
-    // NOTE: Change this when groupSort can be specified per group
-    if (cacheSecondPassSearch && !needScores && !commands.isEmpty()) {
-      if (commands.get(0).groupSort == null) {
-        cacheScores = true;
-      } else {
-        for (SortField field : commands.get(0).groupSort.getSort()) {
-          if (field.getType() == SortField.SCORE) {
-            cacheScores = true;
-            break;
-          }
-        }
-      }
+    // NOTE: Change this when withinGroupSort can be specified per group
+    if (!needScores && !commands.isEmpty()) {
+      Sort withinGroupSort = commands.get(0).withinGroupSort;
+      cacheScores = withinGroupSort == null || withinGroupSort.needsScores();
     } else if (needScores) {
       cacheScores = needScores;
     }
@@ -261,7 +324,7 @@ public class Grouping {
     }
 
     AbstractAllGroupHeadsCollector<?> allGroupHeadsCollector = null;
-    List<Collector> collectors = new ArrayList<Collector>(commands.size());
+    List<Collector> collectors = new ArrayList<>(commands.size());
     for (Command cmd : commands) {
       Collector collector = cmd.createFirstPassCollector();
       if (collector != null) {
@@ -272,12 +335,12 @@ public class Grouping {
       }
     }
 
-    Collector allCollectors = MultiCollector.wrap(collectors.toArray(new Collector[collectors.size()]));
     DocSetCollector setCollector = null;
     if (getDocSet && allGroupHeadsCollector == null) {
-      setCollector = new DocSetDelegateCollector(maxDoc >> 6, maxDoc, allCollectors);
-      allCollectors = setCollector;
+      setCollector = new DocSetCollector(maxDoc);
+      collectors.add(setCollector);
     }
+    Collector allCollectors = MultiCollector.wrap(collectors);
 
     CachingCollector cachedCollector = null;
     if (cacheSecondPassSearch && allCollectors != null) {
@@ -296,13 +359,14 @@ public class Grouping {
 
     if (allCollectors != null) {
       searchWithTimeLimiter(luceneFilter, allCollectors);
+
+      if(allCollectors instanceof DelegatingCollector) {
+        ((DelegatingCollector) allCollectors).finish();
+      }
     }
 
     if (getGroupedDocSet && allGroupHeadsCollector != null) {
-      FixedBitSet fixedBitSet = allGroupHeadsCollector.retrieveGroupHeads(maxDoc);
-      long[] bits = fixedBitSet.getBits();
-      OpenBitSet openBitSet = new OpenBitSet(bits, bits.length);
-      qr.setDocSet(new BitDocSet(openBitSet));
+      qr.setDocSet(new BitDocSet(allGroupHeadsCollector.retrieveGroupHeads(maxDoc)));
     } else if (getDocSet) {
       qr.setDocSet(setCollector.getDocSet());
     }
@@ -322,7 +386,7 @@ public class Grouping {
             cachedCollector.replay(secondPhaseCollectors);
           } else {
             signalCacheWarning = true;
-            logger.warn(String.format("The grouping cache is active, but not used because it exceeded the max cache limit of %d percent", maxDocsPercentageToCache));
+            logger.warn(String.format(Locale.ROOT, "The grouping cache is active, but not used because it exceeded the max cache limit of %d percent", maxDocsPercentageToCache));
             logger.warn("Please increase cache size or disable group caching.");
             searchWithTimeLimiter(luceneFilter, secondPhaseCollectors);
           }
@@ -332,6 +396,9 @@ public class Grouping {
             secondPhaseCollectors = pf.postFilter;
           }
           searchWithTimeLimiter(luceneFilter, secondPhaseCollectors);
+        }
+        if (secondPhaseCollectors instanceof DelegatingCollector) {
+          ((DelegatingCollector) secondPhaseCollectors).finish();
         }
       }
     }
@@ -373,8 +440,15 @@ public class Grouping {
       collector = timeLimitingCollector;
     }
     try {
-      searcher.search(query, luceneFilter, collector);
-    } catch (TimeLimitingCollector.TimeExceededException x) {
+      Query q = query;
+      if (luceneFilter != null) {
+        q = new BooleanQuery.Builder()
+            .add(q, Occur.MUST)
+            .add(luceneFilter, Occur.FILTER)
+            .build();
+      }
+      searcher.search(q, collector);
+    } catch (TimeLimitingCollector.TimeExceededException | ExitableDirectoryReader.ExitingReaderException x) {
       logger.warn( "Query: " + query + "; " + x.getMessage() );
       qr.setPartialResults(true);
     }
@@ -384,11 +458,11 @@ public class Grouping {
    * Returns offset + len if len equals zero or higher. Otherwise returns max.
    *
    * @param offset The offset
-   * @param len The number of documents to return
-   * @param max The number of document to return if len < 0 or if offset + len < 0
+   * @param len    The number of documents to return
+   * @param max    The number of document to return if len &lt; 0 or if offset + len &gt; 0
    * @return offset + len if len equals zero or higher. Otherwise returns max
    */
-  int getMax(int offset, int len, int max) {
+  public static int getMax(int offset, int len, int max) {
     int v = len < 0 ? max : offset + len;
     if (v < 0 || v > max) v = max;
     return v;
@@ -435,15 +509,15 @@ public class Grouping {
   /**
    * General group command. A group command is responsible for creating the first and second pass collectors.
    * A group command is also responsible for creating the response structure.
-   * <p/>
+   * <p>
    * Note: Maybe the creating the response structure should be done in something like a ReponseBuilder???
    * Warning NOT thread save!
    */
   public abstract class Command<GROUP_VALUE_TYPE> {
 
     public String key;       // the name to use for this group in the response
-    public Sort groupSort;   // the sort of the documents *within* a single group.
-    public Sort sort;        // the sort between groups
+    public Sort withinGroupSort;   // the sort of the documents *within* a single group.
+    public Sort groupSort;        // the sort between groups
     public int docsPerGroup; // how many docs in each group - from "group.limit" param, default=1
     public int groupOffset;  // the offset within each group (for paging within each group)
     public int numGroups;    // how many groups - defaults to the "rows" parameter
@@ -555,7 +629,7 @@ public class Grouping {
       }
 
       float score = groups.maxScore;
-      maxScore = Math.max(maxScore, score);
+      maxScore = maxAvoidNaN(score, maxScore);
       DocSlice docs = new DocSlice(off, Math.max(0, ids.length - off), ids, scores, groups.totalHits, score);
 
       if (getDocList) {
@@ -574,17 +648,15 @@ public class Grouping {
     protected DocList createSimpleResponse() {
       GroupDocs[] groups = result != null ? result.groups : new GroupDocs[0];
 
-      List<Integer> ids = new ArrayList<Integer>();
-      List<Float> scores = new ArrayList<Float>();
+      List<Integer> ids = new ArrayList<>();
+      List<Float> scores = new ArrayList<>();
       int docsToGather = getMax(offset, numGroups, maxDoc);
       int docsGathered = 0;
-      float maxScore = Float.NEGATIVE_INFINITY;
+      float maxScore = Float.NaN;
 
       outer:
       for (GroupDocs group : groups) {
-        if (group.maxScore > maxScore) {
-          maxScore = group.maxScore;
-        }
+        maxScore = maxAvoidNaN(maxScore, group.maxScore);
 
         for (ScoreDoc scoreDoc : group.scoreDocs) {
           if (docsGathered >= docsToGather) {
@@ -613,10 +685,19 @@ public class Grouping {
 
   }
 
+  /** Differs from {@link Math#max(float, float)} in that if only one side is NaN, we return the other. */
+  private float maxAvoidNaN(float valA, float valB) {
+    if (Float.isNaN(valA) || valB > valA) {
+      return valB;
+    } else {
+      return valA;
+    }
+  }
+
   /**
    * A group command for grouping on a field.
    */
-  public class CommandField extends Command<String> {
+  public class CommandField extends Command<BytesRef> {
 
     public String groupBy;
     TermFirstPassGroupingCollector firstPass;
@@ -626,11 +707,12 @@ public class Grouping {
 
     // If offset falls outside the number of documents a group can provide use this collector instead of secondPass
     TotalHitCountCollector fallBackCollector;
-    Collection<SearchGroup<String>> topGroups;
+    Collection<SearchGroup<BytesRef>> topGroups;
 
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void prepare() throws IOException {
       actualGroupsToFind = getMax(offset, numGroups, maxDoc);
     }
@@ -638,6 +720,7 @@ public class Grouping {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected Collector createFirstPassCollector() throws IOException {
       // Ok we don't want groups, but do want a total count
       if (actualGroupsToFind <= 0) {
@@ -645,14 +728,15 @@ public class Grouping {
         return fallBackCollector;
       }
 
-      sort = sort == null ? Sort.RELEVANCE : sort;
-      firstPass = new TermFirstPassGroupingCollector(groupBy, sort, actualGroupsToFind);
+      groupSort = groupSort == null ? Sort.RELEVANCE : groupSort;
+      firstPass = new TermFirstPassGroupingCollector(groupBy, groupSort, actualGroupsToFind);
       return firstPass;
     }
 
     /**
      * {@inheritDoc}
      */
+    @Override
     protected Collector createSecondPassCollector() throws IOException {
       if (actualGroupsToFind <= 0) {
         allGroupsCollector = new TermAllGroupsCollector(groupBy);
@@ -673,8 +757,9 @@ public class Grouping {
 
       int groupedDocsToCollect = getMax(groupOffset, docsPerGroup, maxDoc);
       groupedDocsToCollect = Math.max(groupedDocsToCollect, 1);
+      Sort withinGroupSort = this.withinGroupSort != null ? this.withinGroupSort : Sort.RELEVANCE;
       secondPass = new TermSecondPassGroupingCollector(
-          groupBy, topGroups, sort, groupSort, groupedDocsToCollect, needScores, needScores, false
+          groupBy, topGroups, groupSort, withinGroupSort, groupedDocsToCollect, needScores, needScores, false
       );
 
       if (totalCount == TotalCount.grouped) {
@@ -690,13 +775,14 @@ public class Grouping {
      */
     @Override
     public AbstractAllGroupHeadsCollector<?> createAllGroupCollector() throws IOException {
-      Sort sortWithinGroup = groupSort != null ? groupSort : new Sort();
+      Sort sortWithinGroup = withinGroupSort != null ? withinGroupSort : Sort.RELEVANCE;
       return TermAllGroupHeadsCollector.create(groupBy, sortWithinGroup);
     }
 
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void finish() throws IOException {
       result = secondPass != null ? secondPass.getTopGroups(0) : null;
       if (main) {
@@ -721,7 +807,7 @@ public class Grouping {
       // handle case of rows=0
       if (numGroups == 0) return;
 
-      for (GroupDocs<String> group : result.groups) {
+      for (GroupDocs<BytesRef> group : result.groups) {
         NamedList nl = new SimpleOrderedMap();
         groupList.add(nl);                         // grouped={ key={ groups=[ {
 
@@ -732,8 +818,8 @@ public class Grouping {
         if (group.groupValue != null) {
           SchemaField schemaField = searcher.getSchema().getField(groupBy);
           FieldType fieldType = schemaField.getType();
-          String readableValue = fieldType.indexedToReadable(group.groupValue);
-          Fieldable field = schemaField.createField(readableValue, 0.0f);
+          String readableValue = fieldType.indexedToReadable(group.groupValue.utf8ToString());
+          IndexableField field = schemaField.createField(readableValue, 1.0f);
           nl.add("groupValue", fieldType.toObject(field));
         } else {
           nl.add("groupValue", null);
@@ -746,6 +832,7 @@ public class Grouping {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int getMatches() {
       if (result == null && fallBackCollector == null) {
         return 0;
@@ -757,6 +844,7 @@ public class Grouping {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected Integer getNumberOfGroups() {
       return allGroupsCollector == null ? null : allGroupsCollector.getGroupCount();
     }
@@ -775,6 +863,7 @@ public class Grouping {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void prepare() throws IOException {
       actualGroupsToFind = getMax(offset, numGroups, maxDoc);
     }
@@ -782,29 +871,31 @@ public class Grouping {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected Collector createFirstPassCollector() throws IOException {
       DocSet groupFilt = searcher.getDocSet(query);
-      topCollector = newCollector(groupSort, needScores);
+      topCollector = newCollector(withinGroupSort, needScores);
       collector = new FilterCollector(groupFilt, topCollector);
       return collector;
     }
 
     TopDocsCollector newCollector(Sort sort, boolean needScores) throws IOException {
       int groupDocsToCollect = getMax(groupOffset, docsPerGroup, maxDoc);
-      if (sort == null || sort == Sort.RELEVANCE) {
-        return TopScoreDocCollector.create(groupDocsToCollect, true);
+      if (sort == null || sort.equals(Sort.RELEVANCE)) {
+        return TopScoreDocCollector.create(groupDocsToCollect);
       } else {
-        return TopFieldCollector.create(searcher.weightSort(sort), groupDocsToCollect, false, needScores, needScores, true);
+        return TopFieldCollector.create(searcher.weightSort(sort), groupDocsToCollect, false, needScores, needScores);
       }
     }
 
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void finish() throws IOException {
       TopDocsCollector topDocsCollector = (TopDocsCollector) collector.getDelegate();
       TopDocs topDocs = topDocsCollector.topDocs();
-      GroupDocs<String> groupDocs = new GroupDocs<String>(topDocs.getMaxScore(), topDocs.totalHits, topDocs.scoreDocs, query.toString(), null);
+      GroupDocs<String> groupDocs = new GroupDocs<>(Float.NaN, topDocs.getMaxScore(), topDocs.totalHits, topDocs.scoreDocs, query.toString(), null);
       if (main) {
         mainResult = getDocList(groupDocs);
       } else {
@@ -816,9 +907,152 @@ public class Grouping {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int getMatches() {
       return collector.getMatches();
     }
+  }
+
+  /**
+   * A command for grouping on a function.
+   */
+  public class CommandFunc extends Command<MutableValue> {
+
+    public ValueSource groupBy;
+    Map context;
+
+    FunctionFirstPassGroupingCollector firstPass;
+    FunctionSecondPassGroupingCollector secondPass;
+    // If offset falls outside the number of documents a group can provide use this collector instead of secondPass
+    TotalHitCountCollector fallBackCollector;
+    FunctionAllGroupsCollector allGroupsCollector;
+    Collection<SearchGroup<MutableValue>> topGroups;
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected void prepare() throws IOException {
+      context = ValueSource.newContext(searcher);
+      groupBy.createWeight(context, searcher);
+      actualGroupsToFind = getMax(offset, numGroups, maxDoc);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected Collector createFirstPassCollector() throws IOException {
+      // Ok we don't want groups, but do want a total count
+      if (actualGroupsToFind <= 0) {
+        fallBackCollector = new TotalHitCountCollector();
+        return fallBackCollector;
+      }
+
+      groupSort = groupSort == null ? Sort.RELEVANCE : groupSort;
+      firstPass = new FunctionFirstPassGroupingCollector(groupBy, context, searcher.weightSort(groupSort), actualGroupsToFind);
+      return firstPass;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected Collector createSecondPassCollector() throws IOException {
+      if (actualGroupsToFind <= 0) {
+        allGroupsCollector = new FunctionAllGroupsCollector(groupBy, context);
+        return totalCount == TotalCount.grouped ? allGroupsCollector : null;
+      }
+
+      topGroups = format == Format.grouped ? firstPass.getTopGroups(offset, false) : firstPass.getTopGroups(0, false);
+      if (topGroups == null) {
+        if (totalCount == TotalCount.grouped) {
+          allGroupsCollector = new FunctionAllGroupsCollector(groupBy, context);
+          fallBackCollector = new TotalHitCountCollector();
+          return MultiCollector.wrap(allGroupsCollector, fallBackCollector);
+        } else {
+          fallBackCollector = new TotalHitCountCollector();
+          return fallBackCollector;
+        }
+      }
+
+      int groupdDocsToCollect = getMax(groupOffset, docsPerGroup, maxDoc);
+      groupdDocsToCollect = Math.max(groupdDocsToCollect, 1);
+      Sort withinGroupSort = this.withinGroupSort != null ? this.withinGroupSort : Sort.RELEVANCE;
+      secondPass = new FunctionSecondPassGroupingCollector(
+          topGroups, groupSort, withinGroupSort, groupdDocsToCollect, needScores, needScores, false, groupBy, context
+      );
+
+      if (totalCount == TotalCount.grouped) {
+        allGroupsCollector = new FunctionAllGroupsCollector(groupBy, context);
+        return MultiCollector.wrap(secondPass, allGroupsCollector);
+      } else {
+        return secondPass;
+      }
+    }
+
+    @Override
+    public AbstractAllGroupHeadsCollector<?> createAllGroupCollector() throws IOException {
+      Sort sortWithinGroup = withinGroupSort != null ? withinGroupSort : Sort.RELEVANCE;
+      return new FunctionAllGroupHeadsCollector(groupBy, context, sortWithinGroup);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected void finish() throws IOException {
+      result = secondPass != null ? secondPass.getTopGroups(0) : null;
+      if (main) {
+        mainResult = createSimpleResponse();
+        return;
+      }
+
+      NamedList groupResult = commonResponse();
+
+      if (format == Format.simple) {
+        groupResult.add("doclist", createSimpleResponse());
+        return;
+      }
+
+      List groupList = new ArrayList();
+      groupResult.add("groups", groupList);        // grouped={ key={ groups=[
+
+      if (result == null) {
+        return;
+      }
+
+      // handle case of rows=0
+      if (numGroups == 0) return;
+
+      for (GroupDocs<MutableValue> group : result.groups) {
+        NamedList nl = new SimpleOrderedMap();
+        groupList.add(nl);                         // grouped={ key={ groups=[ {
+        nl.add("groupValue", group.groupValue.toObject());
+        addDocList(nl, group);
+      }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public int getMatches() {
+      if (result == null && fallBackCollector == null) {
+        return 0;
+      }
+
+      return result != null ? result.totalHitCount : fallBackCollector.getTotalHits();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected Integer getNumberOfGroups() {
+      return allGroupsCollector == null ? null : allGroupsCollector.getGroupCount();
+    }
+
   }
 
 }

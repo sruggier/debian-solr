@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.distributed.responseprocessor;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.search.grouping.distributed.responseprocessor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.distributed.responseprocessor;
 
 import org.apache.lucene.search.FieldDoc;
 import org.apache.solr.common.SolrDocument;
@@ -35,6 +34,7 @@ public class StoredFieldsShardResponseProcessor implements ShardResponseProcesso
   /**
    * {@inheritDoc}
    */
+  @Override
   public void process(ResponseBuilder rb, ShardRequest shardRequest) {
     boolean returnScores = (rb.getFieldFlags() & SolrIndexSearcher.GET_SCORES) != 0;
     ShardResponse srsp = shardRequest.responses.get(0);

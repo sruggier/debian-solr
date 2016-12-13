@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,19 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.util;
 
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Locale;
 import java.io.IOException;
+import java.text.MessageFormat;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
 
 import org.apache.solr.common.SolrException;
 
 /**
- * @version $Id$
+ *
  */
 public class StrUtils {
   public static final char[] HEX_DIGITS = { '0', '1', '2', '3', '4', '5', '6',
@@ -38,7 +39,7 @@ public class StrUtils {
    * outside strings.
    */
   public static List<String> splitSmart(String s, char separator) {
-    ArrayList<String> lst = new ArrayList<String>(4);
+    ArrayList<String> lst = new ArrayList<>(4);
     int pos=0, start=0, end=s.length();
     char inString=0;
     char ch=0;
@@ -78,14 +79,14 @@ public class StrUtils {
    * <p>
    * Current backslash escaping supported:
    * <br> \n \t \r \b \f are escaped the same as a Java String
-   * <br> Other characters following a backslash are produced verbatim (\c => c)
+   * <br> Other characters following a backslash are produced verbatim (\c =&gt; c)
    *
    * @param s  the string to split
    * @param separator the separator to split on
    * @param decode decode backslash escaping
    */
   public static List<String> splitSmart(String s, String separator, boolean decode) {
-    ArrayList<String> lst = new ArrayList<String>(2);
+    ArrayList<String> lst = new ArrayList<>(2);
     StringBuilder sb = new StringBuilder();
     int pos=0, end=s.length();
     while (pos < end) {
@@ -135,7 +136,7 @@ public class StrUtils {
     if (fileNames == null)
       return Collections.<String>emptyList();
 
-    List<String> result = new ArrayList<String>();
+    List<String> result = new ArrayList<>();
     for (String file : fileNames.split("(?<!\\\\),")) {
       result.add(file.replaceAll("\\\\(?=,)", ""));
     }
@@ -143,23 +144,22 @@ public class StrUtils {
     return result;
   }
 
-  /** Creates a backslash escaped string, joining all the items. */
-  public static String join(List<String> items, char separator) {
+  /** 
+   * Creates a backslash escaped string, joining all the items. 
+   * @see #escapeTextWithSeparator
+   */
+  public static String join(Collection<?> items, char separator) {
+    if (items == null) return "";
     StringBuilder sb = new StringBuilder(items.size() << 3);
     boolean first=true;
-    for (String item : items) {
+    for (Object o : items) {
+      String item = String.valueOf(o);
       if (first) {
         first = false;
       } else {
         sb.append(separator);
       }
-      for (int i=0; i<item.length(); i++) {
-        char ch = item.charAt(i);
-        if (ch=='\\' || ch == separator) {
-          sb.append('\\');
-        }
-        sb.append(ch);
-      }
+      appendEscapedTextToBuilder(sb, item, separator);
     }
     return sb.toString();
   }
@@ -167,7 +167,7 @@ public class StrUtils {
 
 
   public static List<String> splitWS(String s, boolean decode) {
-    ArrayList<String> lst = new ArrayList<String>(2);
+    ArrayList<String> lst = new ArrayList<>(2);
     StringBuilder sb = new StringBuilder();
     int pos=0, end=s.length();
     while (pos < end) {
@@ -206,9 +206,9 @@ public class StrUtils {
   }
 
   public static List<String> toLower(List<String> strings) {
-    ArrayList<String> ret = new ArrayList<String>(strings.size());
+    ArrayList<String> ret = new ArrayList<>(strings.size());
     for (String str : strings) {
-      ret.add(str.toLowerCase(Locale.ENGLISH));
+      ret.add(str.toLowerCase(Locale.ROOT));
     }
     return ret;
   }
@@ -240,8 +240,6 @@ public class StrUtils {
 
   /**
    * {@link NullPointerException} and {@link SolrException} free version of {@link #parseBool(String)}
-   * @param s
-   * @param def
    * @return parsed boolean value (or def, if s is null or invalid)
    */
   public static boolean parseBool(String s, boolean def) {
@@ -262,7 +260,6 @@ public class StrUtils {
    * <p>
    * Characters with a numeric value less than 32 are encoded.
    * &amp;,=,%,+,space are encoded.
-   * <p>
    */
   public static void partialURLEncodeVal(Appendable dest, String val) throws IOException {
     for (int i=0; i<val.length(); i++) {
@@ -284,4 +281,35 @@ public class StrUtils {
     }
   }
 
+  /** 
+   * Creates a new copy of the string with the separator backslash escaped.
+   * @see #join
+   */
+  public static String escapeTextWithSeparator(String item, char separator) {
+    StringBuilder sb = new StringBuilder(item.length() * 2);
+    appendEscapedTextToBuilder(sb, item, separator);
+    return sb.toString();
+  }  
+
+  /**
+   * writes chars from item to out, backslash escaping as needed based on separator -- 
+   * but does not append the seperator itself
+   */
+  public static void appendEscapedTextToBuilder(StringBuilder out, 
+                                                 String item, 
+                                                 char separator) {
+    for (int i = 0; i < item.length(); i++) {
+      char ch = item.charAt(i);
+      if (ch == '\\' || ch == separator) { 
+        out.append('\\');
+      }
+      out.append(ch);
+    }
+  }
+
+  /**Format using MesssageFormat but with the ROOT locale
+   */
+  public static String formatString(String pattern, Object... args)  {
+    return new MessageFormat(pattern, Locale.ROOT).format(args);
+  }
 }

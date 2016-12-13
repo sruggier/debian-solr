@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,103 +14,137 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
+
 
 import java.io.IOException;
+import java.util.Objects;
 
-import org.apache.lucene.search.Explanation;
-import org.apache.lucene.search.Weight;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.Scorer;
-import org.apache.lucene.search.Similarity;
+import org.apache.lucene.search.TwoPhaseIterator;
+import org.apache.lucene.search.similarities.Similarity;
 
 /**
- * Public for extension only.
+ * A basic {@link Scorer} over {@link Spans}.
+ * @lucene.experimental
  */
 public class SpanScorer extends Scorer {
-  protected Spans spans;
-  protected byte[] norms;
-  protected float value;
 
-  protected boolean more = true;
+  protected final Spans spans;
+  protected final Similarity.SimScorer docScorer;
 
-  protected int doc;
-  protected float freq;
+  /** accumulated sloppy freq (computed in setFreqCurrentDoc) */
+  private float freq;
+  /** number of matches (computed in setFreqCurrentDoc) */
+  private int numMatches;
+  private int lastScoredDoc = -1; // last doc we called setFreqCurrentDoc() for
 
-  protected SpanScorer(Spans spans, Weight weight, Similarity similarity, byte[] norms)
-  throws IOException {
-    super(similarity, weight);
-    this.spans = spans;
-    this.norms = norms;
-    this.value = weight.getValue();
-    if (this.spans.next()) {
-      doc = -1;
-    } else {
-      doc = NO_MORE_DOCS;
-      more = false;
-    }
+  /** Sole constructor. */
+  public SpanScorer(SpanWeight weight, Spans spans, Similarity.SimScorer docScorer) {
+    super(weight);
+    this.spans = Objects.requireNonNull(spans);
+    this.docScorer = docScorer;
+  }
+
+  /** return the Spans for this Scorer **/
+  public Spans getSpans() {
+    return spans;
   }
 
   @Override
-  public int nextDoc() throws IOException {
-    if (!setFreqCurrentDoc()) {
-      doc = NO_MORE_DOCS;
-    }
-    return doc;
+  public int docID() {
+    return spans.docID();
   }
 
   @Override
-  public int advance(int target) throws IOException {
-    if (!more) {
-      return doc = NO_MORE_DOCS;
-    }
-    if (spans.doc() < target) { // setFreqCurrentDoc() leaves spans.doc() ahead
-      more = spans.skipTo(target);
-    }
-    if (!setFreqCurrentDoc()) {
-      doc = NO_MORE_DOCS;
-    }
-    return doc;
+  public DocIdSetIterator iterator() {
+    return spans;
   }
-  
-  protected boolean setFreqCurrentDoc() throws IOException {
-    if (!more) {
-      return false;
-    }
-    doc = spans.doc();
+
+  @Override
+  public TwoPhaseIterator twoPhaseIterator() {
+    return spans.asTwoPhaseIterator();
+  }
+
+  /**
+   * Score the current doc. The default implementation scores the doc
+   * with the similarity using the slop-adjusted {@link #freq}.
+   */
+  protected float scoreCurrentDoc() throws IOException {
+    assert docScorer != null : getClass() + " has a null docScorer!";
+    return docScorer.score(docID(), freq);
+  }
+
+  /**
+   * Sets {@link #freq} and {@link #numMatches} for the current document.
+   * <p>
+   * This will be called at most once per document.
+   */
+  protected final void setFreqCurrentDoc() throws IOException {
     freq = 0.0f;
+    numMatches = 0;
+
+    spans.doStartCurrentDoc();
+
+    assert spans.startPosition() == -1 : "incorrect initial start position, " + spans;
+    assert spans.endPosition() == -1 : "incorrect initial end position, " + spans;
+    int prevStartPos = -1;
+    int prevEndPos = -1;
+
+    int startPos = spans.nextStartPosition();
+    assert startPos != Spans.NO_MORE_POSITIONS : "initial startPos NO_MORE_POSITIONS, " + spans;
     do {
-      int matchLength = spans.end() - spans.start();
-      freq += getSimilarity().sloppyFreq(matchLength);
-      more = spans.next();
-    } while (more && (doc == spans.doc()));
-    return true;
+      assert startPos >= prevStartPos;
+      int endPos = spans.endPosition();
+      assert endPos != Spans.NO_MORE_POSITIONS;
+      // This assertion can fail for Or spans on the same term:
+      // assert (startPos != prevStartPos) || (endPos > prevEndPos) : "non increased endPos="+endPos;
+      assert (startPos != prevStartPos) || (endPos >= prevEndPos) : "decreased endPos="+endPos;
+      numMatches++;
+      if (docScorer == null) {  // scores not required, break out here
+        freq = 1;
+        return;
+      }
+      freq += docScorer.computeSlopFactor(spans.width());
+      spans.doCurrentSpans();
+      prevStartPos = startPos;
+      prevEndPos = endPos;
+      startPos = spans.nextStartPosition();
+    } while (startPos != Spans.NO_MORE_POSITIONS);
+
+    assert spans.startPosition() == Spans.NO_MORE_POSITIONS : "incorrect final start position, " + spans;
+    assert spans.endPosition() == Spans.NO_MORE_POSITIONS : "incorrect final end position, " + spans;
+  }
+
+  /**
+   * Ensure setFreqCurrentDoc is called, if not already called for the current doc.
+   */
+  private void ensureFreq() throws IOException {
+    int currentDoc = docID();
+    if (lastScoredDoc != currentDoc) {
+      setFreqCurrentDoc();
+      lastScoredDoc = currentDoc;
+    }
   }
 
   @Override
-  public int docID() { return doc; }
+  public final float score() throws IOException {
+    ensureFreq();
+    return scoreCurrentDoc();
+  }
 
   @Override
-  public float score() throws IOException {
-    float raw = getSimilarity().tf(freq) * value; // raw score
-    return norms == null? raw : raw * getSimilarity().decodeNormValue(norms[doc]); // normalize
+  public final int freq() throws IOException {
+    ensureFreq();
+    return numMatches;
   }
-  
-  @Override
-  public float freq() throws IOException {
+
+  /** Returns the intermediate "sloppy freq" adjusted for edit distance
+   *  @lucene.internal */
+  final float sloppyFreq() throws IOException {
+    ensureFreq();
     return freq;
-  }
-
-  /** This method is no longer an official member of {@link Scorer},
-   * but it is needed by SpanWeight to build an explanation. */
-  protected Explanation explain(final int doc) throws IOException {
-    Explanation tfExplanation = new Explanation();
-
-    int expDoc = advance(doc);
-
-    float phraseFreq = (expDoc == doc) ? freq : 0.0f;
-    tfExplanation.setValue(getSimilarity().tf(phraseFreq));
-    tfExplanation.setDescription("tf(phraseFreq=" + phraseFreq + ")");
-
-    return tfExplanation;
   }
 
 }

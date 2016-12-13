@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +16,7 @@
  */
 package org.apache.solr.handler.dataimport;
 
+import java.lang.invoke.MethodHandles;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,21 +28,19 @@ import java.util.regex.Pattern;
  * A {@link Transformer} implementation which uses Regular Expressions to extract, split
  * and replace data in fields.
  * </p>
- * <p/>
  * <p>
  * Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
  * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 1.3
  * @see Pattern
  */
 public class RegexTransformer extends Transformer {
-  private static final Logger LOG = LoggerFactory.getLogger(RegexTransformer.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   @Override
   @SuppressWarnings("unchecked")
@@ -76,7 +75,7 @@ public class RegexTransformer extends Transformer {
                   Map.Entry<String ,Object> entry = (Map.Entry<String, Object>) e;
                   List l = results;
                   if(!col.equals(entry.getKey())){
-                    if(otherVars == null) otherVars = new HashMap<String, List>();
+                    if(otherVars == null) otherVars = new HashMap<>();
                     l = otherVars.get(entry.getKey());
                     if(l == null){
                       l = new ArrayList();
@@ -123,7 +122,7 @@ public class RegexTransformer extends Transformer {
     } else if (replaceWith != null) {
       Pattern p = getPattern(reStr);
       Matcher m = p.matcher(value);
-      return m.find()? m.replaceAll(replaceWith): null;
+      return m.find() ? m.replaceAll(replaceWith) : value;
     } else {
       return readfromRegExp(reStr, value, col, groupNames);
     }
@@ -132,7 +131,7 @@ public class RegexTransformer extends Transformer {
   @SuppressWarnings("unchecked")
   private List<String> readBySplit(String splitBy, String value) {
     String[] vals = value.split(splitBy);
-    List<String> l = new ArrayList<String>();
+    List<String> l = new ArrayList<>();
     l.addAll(Arrays.asList(vals));
     return l;
   }
@@ -152,7 +151,7 @@ public class RegexTransformer extends Transformer {
         if(groupNames == null){
           l = new ArrayList();
         } else {
-          map =  new HashMap<String, String>();
+          map =  new HashMap<>();
         }
         for (int i = 1; i <= m.groupCount(); i++) {
           try {
@@ -187,7 +186,7 @@ public class RegexTransformer extends Transformer {
     return result;
   }
 
-  private HashMap<String, Pattern> PATTERN_CACHE = new HashMap<String, Pattern>();
+  private HashMap<String, Pattern> PATTERN_CACHE = new HashMap<>();
 
   public static final String REGEX = "regex";
 

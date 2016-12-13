@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,7 +17,6 @@
 package org.apache.solr.search;
 
 import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
 
 /**
@@ -26,10 +25,7 @@ import org.apache.solr.request.SolrQueryRequest;
  * <br>Example: <code>{!lucenePlusSort}myfield:foo +bar -baz;price asc</code>
  */
 public class OldLuceneQParserPlugin extends QParserPlugin {
-  public static String NAME = "lucenePlusSort";
-
-  public void init(NamedList args) {
-  }
+  public static final String NAME = "lucenePlusSort";
 
   @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {

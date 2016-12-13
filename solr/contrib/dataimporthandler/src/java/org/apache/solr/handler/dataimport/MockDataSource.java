@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,7 +16,6 @@
  */
 package org.apache.solr.handler.dataimport;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -26,25 +25,19 @@ import java.util.Properties;
  * <p>
  * A mock DataSource implementation which can be used for testing.
  * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public class MockDataSource extends
         DataSource<Iterator<Map<String, Object>>> {
 
-  private static Map<String, Object> cache = new HashMap<String, Object>();
+  private static Map<String, Iterator<Map<String, Object>>> cache = new HashMap<>();
 
   public static void setIterator(String query,
                                  Iterator<Map<String, Object>> iter) {
     cache.put(query, iter);
-  }
-  
-  public static void setCollection(String query,
-      Iterable<Map<String, Object>> collection) {
-        cache.put(query, collection);
   }
 
   public static void clearCache() {
@@ -57,9 +50,7 @@ public class MockDataSource extends
 
   @Override
   public Iterator<Map<String, Object>> getData(String query) {
-    Object data = cache.get(query);
-    return data == null ? Collections.emptyList().iterator():( 
-    data instanceof Iterator ? ((Iterator<Map<String, Object>>)data) : (((Iterable)data).iterator()));
+    return cache.get(query);
   }
 
   @Override

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.util;
 
 import java.io.*;
@@ -23,10 +22,10 @@ import java.io.*;
  *  Internal Solr use only, subject to change.
  */
 public class FastOutputStream extends OutputStream implements DataOutput {
-  private final OutputStream out;
-  private final byte[] buf;
-  private long written;  // how many bytes written
-  private int pos;
+  protected final OutputStream out;
+  protected byte[] buf;
+  protected long written;  // how many bytes written to the underlying stream
+  protected int pos;
 
   public FastOutputStream(OutputStream w) {
   // use default BUFSIZE of BufferedOutputStream so if we wrap that
@@ -57,8 +56,8 @@ public class FastOutputStream extends OutputStream implements DataOutput {
 
   public void write(byte b) throws IOException {
     if (pos >= buf.length) {
-      out.write(buf);
       written += pos;
+      flush(buf, 0, buf.length);
       pos=0;
     }
     buf[pos++] = b;
@@ -66,32 +65,42 @@ public class FastOutputStream extends OutputStream implements DataOutput {
 
   @Override
   public void write(byte arr[], int off, int len) throws IOException {
-    int space = buf.length - pos;
-    if (len < space) {
-      System.arraycopy(arr, off, buf, pos, len);
-      pos += len;
-    } else if (len<buf.length) {
-      // if the data to write is small enough, buffer it.
-      System.arraycopy(arr, off, buf, pos, space);
-      out.write(buf);
-      written += buf.length;
-      pos = len-space;
-      System.arraycopy(arr, off+space, buf, 0, pos);
-    } else {
-      if (pos>0) {
-        out.write(buf,0,pos);  // flush
-        written += pos;
-        pos=0;
+
+    for(;;) {
+      int space = buf.length - pos;
+
+      if (len <= space) {
+        System.arraycopy(arr, off, buf, pos, len);
+        pos += len;
+        return;
+      } else if (len > buf.length) {
+        if (pos>0) {
+          flush(buf,0,pos);  // flush
+          written += pos;
+          pos=0;
+        }
+        // don't buffer, just write to sink
+        flush(arr, off, len);
+        written += len;
+        return;
       }
-      // don't buffer, just write to sink
-      out.write(arr, off, len);
-      written += len;            
+
+      // buffer is too big to fit in the free space, but
+      // not big enough to warrant writing on its own.
+      // write whatever we can fit, then flush and iterate.
+
+      System.arraycopy(arr, off, buf, pos, space);
+      written += buf.length;  // important to do this first, since buf.length can change after a flush!
+      flush(buf, 0, buf.length);
+      pos = 0;
+      off += space;
+      len -= space;
     }
   }
 
+
   /** reserve at least len bytes at the end of the buffer.
-   * Invalid if len > buffer.length
-   * @param len
+   * Invalid if len &gt; buffer.length
    */
   public void reserve(int len) throws IOException {
     if (len > (buf.length - pos))
@@ -99,23 +108,28 @@ public class FastOutputStream extends OutputStream implements DataOutput {
   }
 
   ////////////////// DataOutput methods ///////////////////
+  @Override
   public void writeBoolean(boolean v) throws IOException {
     write(v ? 1:0);
   }
 
+  @Override
   public void writeByte(int v) throws IOException {
     write((byte)v);
   }
 
+  @Override
   public void writeShort(int v) throws IOException {
     write((byte)(v >>> 8));
     write((byte)v);
   }
 
+  @Override
   public void writeChar(int v) throws IOException {
     writeShort(v);
   }
 
+  @Override
   public void writeInt(int v) throws IOException {
     reserve(4);
     buf[pos] = (byte)(v>>>24);
@@ -125,6 +139,7 @@ public class FastOutputStream extends OutputStream implements DataOutput {
     pos+=4;
   }
 
+  @Override
   public void writeLong(long v) throws IOException {
     reserve(8);
     buf[pos] = (byte)(v>>>56);
@@ -138,26 +153,31 @@ public class FastOutputStream extends OutputStream implements DataOutput {
     pos+=8;
   }
 
+  @Override
   public void writeFloat(float v) throws IOException {
     writeInt(Float.floatToRawIntBits(v));
   }
 
+  @Override
   public void writeDouble(double v) throws IOException {
     writeLong(Double.doubleToRawLongBits(v));
   }
 
+  @Override
   public void writeBytes(String s) throws IOException {
     // non-optimized version, but this shouldn't be used anyway
     for (int i=0; i<s.length(); i++)
       write((byte)s.charAt(i));
   }
 
+  @Override
   public void writeChars(String s) throws IOException {
     // non-optimized version
     for (int i=0; i<s.length(); i++)
       writeChar(s.charAt(i)); 
   }
 
+  @Override
   public void writeUTF(String s) throws IOException {
     // non-optimized version, but this shouldn't be used anyway
     DataOutputStream daos = new DataOutputStream(this);
@@ -168,25 +188,45 @@ public class FastOutputStream extends OutputStream implements DataOutput {
   @Override
   public void flush() throws IOException {
     flushBuffer();
-    out.flush();
+    if (out != null) out.flush();
   }
 
   @Override
   public void close() throws IOException {
     flushBuffer();
-    out.close();
+    if (out != null) out.close();
   }
 
   /** Only flushes the buffer of the FastOutputStream, not that of the
    * underlying stream.
    */
   public void flushBuffer() throws IOException {
-    out.write(buf, 0, pos);
-    written += pos;
-    pos=0;
+    if (pos > 0) {
+      written += pos;
+      flush(buf, 0, pos);
+      pos=0;
+    }
+  }
+
+  /** All writes to the sink will go through this method */
+  public void flush(byte[] buf, int offset, int len) throws IOException {
+    out.write(buf, offset, len);
   }
 
   public long size() {
     return written + pos;
   }
+
+  /** Returns the number of bytes actually written to the underlying OutputStream, not including
+   * anything currently buffered by this class itself.
+   */
+  public long written() {
+    return written;
+  }
+
+  /** Resets the count returned by written() */
+  public void setWritten(long written) {
+    this.written = written;
+  }
+
 }

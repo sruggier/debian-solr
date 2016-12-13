@@ -1,6 +1,4 @@
-package org.apache.solr.handler.clustering.carrot2;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,9 +14,11 @@ package org.apache.solr.handler.clustering.carrot2;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.clustering.carrot2;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.lang.invoke.MethodHandles;
 import java.util.regex.Pattern;
 
 import org.apache.lucene.analysis.TokenStream;
@@ -32,17 +32,20 @@ import org.carrot2.text.util.MutableCharArray;
 import org.carrot2.util.ExceptionUtils;
 import org.carrot2.util.ReflectionUtils;
 import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * An implementation of Carrot2's {@link ITokenizerFactory} based on Lucene's
  * Smart Chinese tokenizer. If Smart Chinese tokenizer is not available in
  * classpath at runtime, the default Carrot2's tokenizer is used. Should the
  * Lucene APIs need to change, the changes can be made in this class.
+ * 
+ * @lucene.experimental
  */
 public class LuceneCarrot2TokenizerFactory implements ITokenizerFactory {
-  final static Logger logger = org.slf4j.LoggerFactory
-      .getLogger(LuceneCarrot2TokenizerFactory.class);
+  private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+  @Override
   public ITokenizer getTokenizer(LanguageCode language) {
     switch (language) {
     case CHINESE_SIMPLIFIED:
@@ -79,6 +82,9 @@ public class LuceneCarrot2TokenizerFactory implements ITokenizerFactory {
             .warn("Could not instantiate Smart Chinese Analyzer, clustering quality "
                 + "of Chinese content may be degraded. For best quality clusters, "
                 + "make sure Lucene's Smart Chinese Analyzer JAR is in the classpath");
+        if (e instanceof Error) {
+          throw (Error) e;
+        }
       }
     }
 
@@ -86,6 +92,9 @@ public class LuceneCarrot2TokenizerFactory implements ITokenizerFactory {
       try {
         return new ChineseTokenizer();
       } catch (Throwable e) {
+        if (e instanceof OutOfMemoryError) {
+          throw (OutOfMemoryError) e;
+        }
         return new ExtendedWhitespaceTokenizer();
       }
     }
@@ -114,6 +123,7 @@ public class LuceneCarrot2TokenizerFactory implements ITokenizerFactory {
             "org.apache.lucene.analysis.cn.smart.WordTokenFilter", false);
       }
 
+      @Override
       public short nextToken() throws IOException {
         final boolean hasNextToken = wordTokenFilter.incrementToken();
         if (hasNextToken) {
@@ -136,16 +146,18 @@ public class LuceneCarrot2TokenizerFactory implements ITokenizerFactory {
         return ITokenizer.TT_EOF;
       }
 
+      @Override
       public void setTermBuffer(MutableCharArray array) {
         array.reset(term.buffer(), 0, term.length());
       }
 
-      public void reset(Reader input) throws IOException {
+      @Override
+      public void reset(Reader input) {
         try {
-          sentenceTokenizer.reset(input);
+          sentenceTokenizer.setReader(input);
           wordTokenFilter = (TokenStream) tokenFilterClass.getConstructor(
               TokenStream.class).newInstance(sentenceTokenizer);
-					term = wordTokenFilter.addAttribute(CharTermAttribute.class);
+          term = wordTokenFilter.addAttribute(CharTermAttribute.class);
         } catch (Exception e) {
           throw ExceptionUtils.wrapAsRuntimeException(e);
         }

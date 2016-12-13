@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common;
 
 import java.util.ArrayList;
@@ -24,7 +23,7 @@ import java.util.ArrayList;
  * Represent a list of SolrDocuments returned from a search.  This includes
  * position and offset information.
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class SolrDocumentList extends ArrayList<SolrDocument>
@@ -61,7 +60,7 @@ public class SolrDocumentList extends ArrayList<SolrDocument>
   public String toString() {
     return "{numFound="+numFound
             +",start="+start
-            + (maxScore!=null ? ""+maxScore : "")
+            + (maxScore!=null ? ",maxScore="+maxScore : "")
             +",docs="+super.toString()
             +"}";
   }

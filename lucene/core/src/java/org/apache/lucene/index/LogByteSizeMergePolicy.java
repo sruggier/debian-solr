@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 
@@ -34,15 +34,18 @@ public class LogByteSizeMergePolicy extends LogMergePolicy {
    *  or larger will never be merged during forceMerge.  @see setMaxMergeMBForForceMerge */
   public static final double DEFAULT_MAX_MERGE_MB_FOR_FORCED_MERGE = Long.MAX_VALUE;
 
+  /** Sole constructor, setting all settings to their
+   *  defaults. */
   public LogByteSizeMergePolicy() {
     minMergeSize = (long) (DEFAULT_MIN_MERGE_MB*1024*1024);
     maxMergeSize = (long) (DEFAULT_MAX_MERGE_MB*1024*1024);
+    // NOTE: in Java, if you cast a too-large double to long, as we are doing here, then it becomes Long.MAX_VALUE
     maxMergeSizeForForcedMerge = (long) (DEFAULT_MAX_MERGE_MB_FOR_FORCED_MERGE*1024*1024);
   }
   
   @Override
-  protected long size(SegmentInfo info) throws IOException {
-    return sizeBytes(info);
+  protected long size(SegmentCommitInfo info, IndexWriter writer) throws IOException {
+    return sizeBytes(info, writer);
   }
 
   /** <p>Determines the largest segment (measured by total
@@ -68,13 +71,6 @@ public class LogByteSizeMergePolicy extends LogMergePolicy {
     return ((double) maxMergeSize)/1024/1024;
   }
 
-  /** @deprecated Renamed to {@link
-   * #setMaxMergeMBForForcedMerge} */
-  @Deprecated  
-  public void setMaxMergeMBForOptimize(double mb) {
-    setMaxMergeMBForForcedMerge(mb);
-  }
-
   /** <p>Determines the largest segment (measured by total
    *  byte size of the segment's files, in MB) that may be
    *  merged with other segments during forceMerge. Setting
@@ -82,13 +78,6 @@ public class LogByteSizeMergePolicy extends LogMergePolicy {
    *  even if {@link IndexWriter#forceMerge} is called.*/
   public void setMaxMergeMBForForcedMerge(double mb) {
     maxMergeSizeForForcedMerge = (long) (mb*1024*1024);
-  }
-
-  /** @deprecated Renamed to {@link
-   * #getMaxMergeMBForForcedMerge} */
-  @Deprecated  
-  public double getMaxMergeMBForOptimize() {
-    return getMaxMergeMBForForcedMerge();
   }
 
   /** Returns the largest segment (measured by total byte

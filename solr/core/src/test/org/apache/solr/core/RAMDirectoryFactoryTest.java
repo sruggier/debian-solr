@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.core;
 
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.util.LuceneTestCase;
 import java.io.IOException;
+
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockFactory;
+import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.util.LuceneTestCase;
+import org.apache.solr.core.DirectoryFactory.DirContext;
 
 /**
  * Test-case for RAMDirectoryFactory
@@ -32,26 +35,30 @@ public class RAMDirectoryFactoryTest extends LuceneTestCase {
   }
 
   private void dotestOpenReturnsTheSameForSamePath() throws IOException {
-    final Directory directory = new RefCntRamDirectory();
-    RAMDirectoryFactory factory = new RAMDirectoryFactory() {
+    final Directory directory = new RAMDirectory();
+    RAMDirectoryFactory factory = new RAMDirectoryFactory()  {
       @Override
-      Directory openNew(String path) throws IOException {
+      protected Directory create(String path, LockFactory lockFactory, DirContext dirContext) {
         return directory;
       }
     };
     String path = "/fake/path";
-    Directory dir1 = factory.open(path);
-    Directory dir2 = factory.open(path);
+    Directory dir1 = factory.get(path, DirContext.DEFAULT, DirectoryFactory.LOCK_TYPE_SINGLE);
+    Directory dir2 = factory.get(path, DirContext.DEFAULT, DirectoryFactory.LOCK_TYPE_SINGLE);
     assertEquals("RAMDirectoryFactory should not create new instance of RefCntRamDirectory " +
-        "every time open() is called for the same path", directory, dir1);
-    assertEquals("RAMDirectoryFactory should not create new instance of RefCntRamDirectory " +
-        "every time open() is called for the same path", directory, dir2);
+        "every time open() is called for the same path", dir1, dir2);
+
+    factory.release(dir1);
+    factory.release(dir2);
+    factory.close();
   }
 
   private void dotestOpenSucceedForEmptyDir() throws IOException {
     RAMDirectoryFactory factory = new RAMDirectoryFactory();
-    Directory dir = factory.open("/fake/path");
+    Directory dir = factory.get("/fake/path", DirContext.DEFAULT, DirectoryFactory.LOCK_TYPE_SINGLE);
     assertNotNull("RAMDirectoryFactory should create RefCntRamDirectory even if the path doen't lead " +
         "to index directory on the file system", dir);
+    factory.release(dir);
+    factory.close();
   }
 }

@@ -1,6 +1,4 @@
-package org.apache.solr.handler.dataimport;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,7 +14,8 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.dataimport;
 
 public enum DIHLogLevels {
-	START_ENTITY, END_ENTITY, TRANSFORMED_ROW, ENTITY_META, PRE_TRANSFORMER_ROW, START_DOC, END_DOC, ENTITY_OUT, ROW_END, TRANSFORMER_EXCEPTION, ENTITY_EXCEPTION, DISABLE_LOGGING, ENABLE_LOGGING, NONE
+  START_ENTITY, END_ENTITY, TRANSFORMED_ROW, ENTITY_META, PRE_TRANSFORMER_ROW, START_DOC, END_DOC, ENTITY_OUT, ROW_END, TRANSFORMER_EXCEPTION, ENTITY_EXCEPTION, DISABLE_LOGGING, ENABLE_LOGGING, NONE
 }

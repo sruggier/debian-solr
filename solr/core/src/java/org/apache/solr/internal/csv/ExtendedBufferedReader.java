@@ -5,9 +5,9 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
- *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -75,8 +75,9 @@ class ExtendedBufferedReader extends BufferedReader  {
    * Reads the next char from the input stream.
    * @return the next char or END_OF_STREAM if end of stream has been reached.
    */
+  @Override
   public int read() throws IOException {
-    // initalize the lookahead
+    // initialize the lookahead
     if (lookaheadChar == UNDEFINED) {
       lookaheadChar = super.read();
     }
@@ -105,7 +106,7 @@ class ExtendedBufferedReader extends BufferedReader  {
    * Non-blocking reading of len chars into buffer buf starting
    * at bufferposition off.
    * 
-   * performs an iteratative read on the underlying stream
+   * performs an iterative read on the underlying stream
    * as long as the following conditions hold:
    *   - less than len chars have been read
    *   - end of stream has not been reached
@@ -113,6 +114,7 @@ class ExtendedBufferedReader extends BufferedReader  {
    * 
    * @return nof chars actually read or END_OF_STREAM
    */
+  @Override
   public int read(char[] buf, int off, int len) throws IOException {
     // do not claim if len == 0
     if (len == 0) {
@@ -155,7 +157,7 @@ class ExtendedBufferedReader extends BufferedReader  {
   * 
   * @param c the character to read up to
   * @return the string up to the character <code>c</code>
-  * @throws IOException
+  * @throws IOException If there is a low-level I/O error.
   */
  public String readUntil(char c) throws IOException {
    if (lookaheadChar == UNDEFINED) {
@@ -178,6 +180,7 @@ class ExtendedBufferedReader extends BufferedReader  {
   *         including any line-termination characters, or null 
   *         if the end of the stream has been reached
   */
+  @Override
   public String readLine() throws IOException {
     
     if (lookaheadChar == UNDEFINED) {
@@ -223,6 +226,7 @@ class ExtendedBufferedReader extends BufferedReader  {
    * 
    * @return nof skiped chars
    */
+  @Override
   public long skip(long n) throws IllegalArgumentException, IOException  {
     
     if (lookaheadChar == UNDEFINED) {
@@ -253,10 +257,8 @@ class ExtendedBufferedReader extends BufferedReader  {
   /**
    * Skips all chars in the input until (but excluding) the given char
    * 
-   * @param c
-   * @return
-   * @throws IllegalArgumentException
-   * @throws IOException
+   * @return counter
+   * @throws IOException If there is a low-level I/O error.
    */
   public long skipUntil(char c) throws IllegalArgumentException, IOException {
     if (lookaheadChar == UNDEFINED) {
@@ -302,6 +304,7 @@ class ExtendedBufferedReader extends BufferedReader  {
       return -1;
     }
   }
+  @Override
   public boolean markSupported() {
     /* note uh: marking is not supported, cause we cannot
      *          see into the future...

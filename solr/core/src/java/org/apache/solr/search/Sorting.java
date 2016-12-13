@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,15 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import org.apache.lucene.search.*;
 
 /**
- * Extra lucene sorting utilities & convenience methods
+ * Extra lucene sorting utilities &amp; convenience methods
  *
- * @version $Id$
+ *
  *
  */
 
@@ -40,18 +39,35 @@ public class Sorting {
    * @return SortField
    */
   public static SortField getStringSortField(String fieldName, boolean reverse, boolean nullLast, boolean nullFirst) {
-    if (nullLast) {
-      if (!reverse) return new SortField(fieldName, nullStringLastComparatorSource);
-      else return new SortField(fieldName, SortField.STRING, true);
-    } else if (nullFirst) {
-      if (reverse) return new SortField(fieldName, nullStringLastComparatorSource, true);
-      else return new SortField(fieldName, SortField.STRING, false);
-    } else {
-      return new SortField(fieldName, SortField.STRING, reverse);
-    }
+    SortField sortField = new SortField(fieldName, SortField.Type.STRING, reverse);
+    applyMissingFirstLast(sortField, reverse, nullLast, nullFirst);
+    return sortField;
   }
 
-
-  static final FieldComparatorSource nullStringLastComparatorSource = new MissingStringLastComparatorSource(null);
+  /** Like {@link #getStringSortField}) except safe for tokenized fields */
+  public static SortField getTextSortField(String fieldName, boolean reverse, boolean nullLast, boolean nullFirst) {
+    SortField sortField = new SortedSetSortField(fieldName, reverse);
+    applyMissingFirstLast(sortField, reverse, nullLast, nullFirst);
+    return sortField;
+  }
+  
+  private static void applyMissingFirstLast(SortField in, boolean reverse, boolean nullLast, boolean nullFirst) {
+    if (nullFirst && nullLast) {
+      throw new IllegalArgumentException("Cannot specify missing values as both first and last");
+    }
+    
+    // 4 cases:
+    // missingFirst / forward: default lucene behavior
+    // missingFirst / reverse: set sortMissingLast
+    // missingLast  / forward: set sortMissingLast
+    // missingLast  / reverse: default lucene behavior
+    
+    if (nullFirst && reverse) {
+      in.setMissingValue(SortField.STRING_LAST);
+    } else if (nullLast && !reverse) {
+      in.setMissingValue(SortField.STRING_LAST);
+    }
+  }
+    
 }
 

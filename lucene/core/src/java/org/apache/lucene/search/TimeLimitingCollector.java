@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,14 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.util.Counter;
-import org.apache.lucene.util.ThreadInterruptedException;
 
 import java.io.IOException;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.util.Counter;
+import org.apache.lucene.util.ThreadInterruptedException;
 
 /**
  * The {@link TimeLimitingCollector} is used to timeout search requests that
@@ -29,7 +29,7 @@ import java.io.IOException;
  * exceeded, the search thread is stopped by throwing a
  * {@link TimeExceededException}.
  */
-public class TimeLimitingCollector extends Collector {
+public class TimeLimitingCollector implements Collector {
 
 
   /** Thrown when elapsed search time exceeds allowed search time. */
@@ -39,7 +39,7 @@ public class TimeLimitingCollector extends Collector {
     private long timeElapsed;
     private int lastDocCollected;
     private TimeExceededException(long timeAllowed, long timeElapsed, int lastDocCollected) {
-      super("Elapsed time: " + timeElapsed + "Exceeded allowed search time: " + timeAllowed + " ms.");
+      super("Elapsed time: " + timeElapsed + ".  Exceeded allowed search time: " + timeAllowed + " ms.");
       this.timeAllowed = timeAllowed;
       this.timeElapsed = timeElapsed;
       this.lastDocCollected = lastDocCollected;
@@ -86,7 +86,7 @@ public class TimeLimitingCollector extends Collector {
    * set the baseline through this method in your prelude.
    * <p>
    * Example usage:
-   * <pre>
+   * <pre class="prettyprint">
    *   Counter clock = ...;
    *   long baseline = clock.get();
    *   // ... prepare search
@@ -94,9 +94,7 @@ public class TimeLimitingCollector extends Collector {
    *   collector.setBaseline(baseline);
    *   indexSearcher.search(query, collector);
    * </pre>
-   * </p>
    * @see #setBaseline() 
-   * @param clockTime
    */
   public void setBaseline(long clockTime) {
     t0 = clockTime;
@@ -105,7 +103,7 @@ public class TimeLimitingCollector extends Collector {
   
   /**
    * Syntactic sugar for {@link #setBaseline(long)} using {@link Counter#get()}
-   * on the clock passed to the construcutor.
+   * on the clock passed to the constructor.
    */
   public void setBaseline() {
     setBaseline(clock.get());
@@ -116,7 +114,8 @@ public class TimeLimitingCollector extends Collector {
    * A non greedy collector, upon a timeout, would throw a {@link TimeExceededException} 
    * without allowing the wrapped collector to collect current doc. A greedy one would 
    * first allow the wrapped hit collector to collect current doc and only then 
-   * throw a {@link TimeExceededException}.
+   * throw a {@link TimeExceededException}.  However, if the timeout is detected in
+   * {@link #getLeafCollector} then no current document is collected.
    * @see #setGreedy(boolean)
    */
   public boolean isGreedy() {
@@ -132,47 +131,41 @@ public class TimeLimitingCollector extends Collector {
     this.greedy = greedy;
   }
   
-  /**
-   * Calls {@link Collector#collect(int)} on the decorated {@link Collector}
-   * unless the allowed time has passed, in which case it throws an exception.
-   * 
-   * @throws TimeExceededException
-   *           if the time allowed has exceeded.
-   */
   @Override
-  public void collect(final int doc) throws IOException {
-    final long time = clock.get();
-    if (timeout < time) {
-      if (greedy) {
-        //System.out.println(this+"  greedy: before failing, collecting doc: "+(docBase + doc)+"  "+(time-t0));
-        collector.collect(doc);
-      }
-      //System.out.println(this+"  failing on:  "+(docBase + doc)+"  "+(time-t0));
-      throw new TimeExceededException( timeout-t0, time-t0, docBase + doc );
-    }
-    //System.out.println(this+"  collecting: "+(docBase + doc)+"  "+(time-t0));
-    collector.collect(doc);
-  }
-  
-  @Override
-  public void setNextReader(IndexReader reader, int base) throws IOException {
-    collector.setNextReader(reader, base);
-    this.docBase = base;
+  public LeafCollector getLeafCollector(LeafReaderContext context) throws IOException {
+    this.docBase = context.docBase;
     if (Long.MIN_VALUE == t0) {
       setBaseline();
     }
-  }
-  
-  @Override
-  public void setScorer(Scorer scorer) throws IOException {
-    collector.setScorer(scorer);
+    final long time = clock.get();
+    if (time - timeout > 0L) {
+      throw new TimeExceededException(timeout - t0, time - t0, -1);
+    }
+    return new FilterLeafCollector(collector.getLeafCollector(context)) {
+      
+      @Override
+      public void collect(int doc) throws IOException {
+        final long time = clock.get();
+        if (time - timeout > 0L) {
+          if (greedy) {
+            //System.out.println(this+"  greedy: before failing, collecting doc: "+(docBase + doc)+"  "+(time-t0));
+            in.collect(doc);
+          }
+          //System.out.println(this+"  failing on:  "+(docBase + doc)+"  "+(time-t0));
+          throw new TimeExceededException( timeout-t0, time-t0, docBase + doc );
+        }
+        //System.out.println(this+"  collecting: "+(docBase + doc)+"  "+(time-t0));
+        in.collect(doc);
+      }
+      
+    };
   }
 
   @Override
-  public boolean acceptsDocsOutOfOrder() {
-    return collector.acceptsDocsOutOfOrder();
+  public boolean needsScores() {
+    return collector.needsScores();
   }
-  
+
   /**
    * This is so the same timer can be used with a multi-phase search process such as grouping. 
    * We don't want to create a new TimeLimitingCollector for each phase because that would 
@@ -225,6 +218,8 @@ public class TimeLimitingCollector extends Collector {
   }
 
   /**
+   * Thread used to timeout search requests.
+   * Can be stopped completely with {@link TimerThread#stopTimer()}
    * @lucene.experimental
    */
   public static final class TimerThread extends Thread  {

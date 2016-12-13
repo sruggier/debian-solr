@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,23 +14,29 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.analysis.MockAnalyzer;
+import org.apache.lucene.codecs.LiveDocsFormat;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.IntPoint;
+import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
-
-import static org.apache.lucene.index.TestIndexWriter.assertNoUnreferencedFiles;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Tests for IndexWriter when the disk runs out of space
@@ -51,15 +55,15 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
         System.out.println("TEST: pass=" + pass);
       }
       boolean doAbort = pass == 1;
-      long diskFree = _TestUtil.nextInt(random, 100, 300);
+      long diskFree = TestUtil.nextInt(random(), 100, 300);
+      boolean indexExists = false;
       while(true) {
         if (VERBOSE) {
           System.out.println("TEST: cycle: diskFree=" + diskFree);
         }
-        MockDirectoryWrapper dir = new MockDirectoryWrapper(random, new RAMDirectory());
+        MockDirectoryWrapper dir = new MockDirectoryWrapper(random(), new RAMDirectory());
         dir.setMaxSizeInBytes(diskFree);
-        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
-        writer.setInfoStream(VERBOSE ? System.out : null);
+        IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random())));
         MergeScheduler ms = writer.getConfig().getMergeScheduler();
         if (ms instanceof ConcurrentMergeScheduler) {
           // This test intentionally produces exceptions
@@ -77,6 +81,7 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
             System.out.println("TEST: done adding docs; now commit");
           }
           writer.commit();
+          indexExists = true;
         } catch (IOException e) {
           if (VERBOSE) {
             System.out.println("TEST: exception on addDoc");
@@ -103,23 +108,25 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
                 e.printStackTrace(System.out);
               }
               dir.setMaxSizeInBytes(0);
-              writer.close();
+              try {
+                writer.close();
+              } catch (AlreadyClosedException ace) {
+                // OK
+              }
             }
           }
 
           //_TestUtil.syncConcurrentMerges(ms);
 
-          if (_TestUtil.anyFilesExceptWriteLock(dir)) {
-            assertNoUnreferencedFiles(dir, "after disk full during addDocument");
-            
+          if (indexExists) {
             // Make sure reader can open the index:
-            IndexReader.open(dir, true).close();
+            DirectoryReader.open(dir).close();
           }
             
           dir.close();
           // Now try again w/ more space:
 
-          diskFree += TEST_NIGHTLY ? _TestUtil.nextInt(random, 400, 600) : _TestUtil.nextInt(random, 3000, 5000);
+          diskFree += TEST_NIGHTLY ? TestUtil.nextInt(random(), 400, 600) : TestUtil.nextInt(random(), 3000, 5000);
         } else {
           //_TestUtil.syncConcurrentMerges(writer);
           dir.setMaxSizeInBytes(0);
@@ -145,11 +152,20 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
   either all or none of the incoming documents were in
   fact added.
    */
-  public void testAddIndexOnDiskFull() throws IOException
-  {
+  public void testAddIndexOnDiskFull() throws IOException {
+    // MemoryCodec, since it uses FST, is not necessarily
+    // "additive", ie if you add up N small FSTs, then merge
+    // them, the merged result can easily be larger than the
+    // sum because the merged FST may use array encoding for
+    // some arcs (which uses more space):
+
+    final String idFormat = TestUtil.getPostingsFormat("id");
+    final String contentFormat = TestUtil.getPostingsFormat("content");
+    assumeFalse("This test cannot run with Memory codec", idFormat.equals("Memory") || contentFormat.equals("Memory"));
+
     int START_COUNT = 57;
-    int NUM_DIR = 50;
-    int END_COUNT = START_COUNT + NUM_DIR*25;
+    int NUM_DIR = TEST_NIGHTLY ? 50 : 5;
+    int END_COUNT = START_COUNT + NUM_DIR* (TEST_NIGHTLY ? 25 : 5);
     
     // Build up a bunch of dirs that have indexes which we
     // will then merge together by calling addIndexes(*):
@@ -157,7 +173,7 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
     long inputDiskUsage = 0;
     for(int i=0;i<NUM_DIR;i++) {
       dirs[i] = newDirectory();
-      IndexWriter writer = new IndexWriter(dirs[i], newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+      IndexWriter writer = new IndexWriter(dirs[i], newIndexWriterConfig(new MockAnalyzer(random())));
       for(int j=0;j<25;j++) {
         addDocWithIndex(writer, 25*i+j);
       }
@@ -170,8 +186,8 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
     
     // Now, build a starting index that has START_COUNT docs.  We
     // will then try to addIndexes into a copy of this:
-    MockDirectoryWrapper startDir = newDirectory();
-    IndexWriter writer = new IndexWriter(startDir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    MockDirectoryWrapper startDir = newMockDirectory();
+    IndexWriter writer = new IndexWriter(startDir, newIndexWriterConfig(new MockAnalyzer(random())));
     for(int j=0;j<START_COUNT;j++) {
       addDocWithIndex(writer, j);
     }
@@ -179,13 +195,12 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
     
     // Make sure starting index seems to be working properly:
     Term searchTerm = new Term("content", "aaa");        
-    IndexReader reader = IndexReader.open(startDir, true);
+    IndexReader reader = DirectoryReader.open(startDir);
     assertEquals("first docFreq", 57, reader.docFreq(searchTerm));
     
     IndexSearcher searcher = newSearcher(reader);
-    ScoreDoc[] hits = searcher.search(new TermQuery(searchTerm), null, 1000).scoreDocs;
+    ScoreDoc[] hits = searcher.search(new TermQuery(searchTerm), 1000).scoreDocs;
     assertEquals("first number of hits", 57, hits.length);
-    searcher.close();
     reader.close();
     
     // Iterate with larger and larger amounts of free
@@ -210,11 +225,12 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
 
     for(int iter=0;iter<3;iter++) {
       
-      if (VERBOSE)
+      if (VERBOSE) {
         System.out.println("TEST: iter=" + iter);
+      }
       
       // Start with 100 bytes more than we are currently using:
-      long diskFree = diskUsage+_TestUtil.nextInt(random, 50, 200);
+      long diskFree = diskUsage+ TestUtil.nextInt(random(), 50, 200);
       
       int method = iter;
       
@@ -236,21 +252,25 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
         }
         
         // Make a new dir that will enforce disk usage:
-        MockDirectoryWrapper dir = new MockDirectoryWrapper(random, new RAMDirectory(startDir));
-        writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).setOpenMode(OpenMode.APPEND).setMergePolicy(newLogMergePolicy()));
-        IOException err = null;
-        writer.setInfoStream(VERBOSE ? System.out : null);
+        MockDirectoryWrapper dir = new MockDirectoryWrapper(random(), TestUtil.ramCopyOf(startDir));
+        IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()))
+          .setOpenMode(OpenMode.APPEND)
+          .setMergePolicy(newLogMergePolicy(false));
+        writer = new IndexWriter(dir, iwc);
+        Exception err = null;
 
-        MergeScheduler ms = writer.getConfig().getMergeScheduler();
         for(int x=0;x<2;x++) {
-          if (ms instanceof ConcurrentMergeScheduler)
+          MergeScheduler ms = writer.getConfig().getMergeScheduler();
+          if (ms instanceof ConcurrentMergeScheduler) {
             // This test intentionally produces exceptions
             // in the threads that CMS launches; we don't
             // want to pollute test output with these.
-            if (0 == x)
+            if (0 == x) {
               ((ConcurrentMergeScheduler) ms).setSuppressExceptions();
-            else
+            } else {
               ((ConcurrentMergeScheduler) ms).clearSuppressExceptions();
+            }
+          }
           
           // Two loops: first time, limit disk space &
           // throw random IOExceptions; second time, no
@@ -263,6 +283,7 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
           String testName = null;
           
           if (0 == x) {
+            dir.setRandomIOExceptionRateOnOpen(random().nextDouble()*0.01);
             thisDiskFree = diskFree;
             if (diskRatio >= 2.0) {
               rate /= 2;
@@ -273,17 +294,21 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
             if (diskRatio >= 6.0) {
               rate = 0.0;
             }
-            if (VERBOSE)
+            if (VERBOSE) {
               testName = "disk full test " + methodName + " with disk full at " + diskFree + " bytes";
+            }
           } else {
+            dir.setRandomIOExceptionRateOnOpen(0.0);
             thisDiskFree = 0;
             rate = 0.0;
-            if (VERBOSE)
+            if (VERBOSE) {
               testName = "disk full test " + methodName + " with unlimited disk space";
+            }
           }
           
-          if (VERBOSE)
+          if (VERBOSE) {
             System.out.println("\ncycle: " + testName);
+          }
           
           dir.setTrackDiskUsage(true);
           dir.setMaxSizeInBytes(thisDiskFree);
@@ -301,12 +326,12 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
               }
               writer.forceMerge(1);
             } else if (1 == method) {
-              IndexReader readers[] = new IndexReader[dirs.length];
+              DirectoryReader readers[] = new DirectoryReader[dirs.length];
               for(int i=0;i<dirs.length;i++) {
-                readers[i] = IndexReader.open(dirs[i], true);
+                readers[i] = DirectoryReader.open(dirs[i]);
               }
               try {
-                writer.addIndexes(readers);
+                TestUtil.addIndexesSlowly(writer, readers);
               } finally {
                 for(int i=0;i<dirs.length;i++) {
                   readers[i].close();
@@ -325,11 +350,11 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
               done = true;
             }
             
-          } catch (IOException e) {
+          } catch (IllegalStateException | IOException e) {
             success = false;
             err = e;
             if (VERBOSE) {
-              System.out.println("  hit IOException: " + e);
+              System.out.println("  hit Exception: " + e);
               e.printStackTrace(System.out);
             }
             
@@ -339,9 +364,16 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
             }
           }
           
-          // Make sure all threads from
-          // ConcurrentMergeScheduler are done
-          _TestUtil.syncConcurrentMerges(writer);
+          if (x == 1) {
+            // Make sure all threads from ConcurrentMergeScheduler are done
+            TestUtil.syncConcurrentMerges(writer);
+          } else {
+            dir.setRandomIOExceptionRateOnOpen(0.0);
+            writer.rollback();
+            writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                     .setOpenMode(OpenMode.APPEND)
+                                     .setMergePolicy(newLogMergePolicy(false)));
+          }
           
           if (VERBOSE) {
             System.out.println("  now test readers");
@@ -351,8 +383,9 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
           // we succeeded, we see all docs added, and if we
           // failed, we see either all docs or no docs added
           // (transactional semantics):
+          dir.setRandomIOExceptionRateOnOpen(0.0);
           try {
-            reader = IndexReader.open(dir, true);
+            reader = DirectoryReader.open(dir);
           } catch (IOException e) {
             e.printStackTrace(System.out);
             fail(testName + ": exception when creating IndexReader: " + e);
@@ -373,7 +406,7 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
           
           searcher = newSearcher(reader);
           try {
-            hits = searcher.search(new TermQuery(searchTerm), null, END_COUNT).scoreDocs;
+            hits = searcher.search(new TermQuery(searchTerm), END_COUNT).scoreDocs;
           } catch (IOException e) {
             e.printStackTrace(System.out);
             fail(testName + ": exception when searching: " + e);
@@ -392,7 +425,6 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
             }
           }
           
-          searcher.close();
           reader.close();
           if (VERBOSE) {
             System.out.println("  count is " + result);
@@ -421,18 +453,14 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
         // Make sure we don't hit disk full during close below:
         dir.setMaxSizeInBytes(0);
         dir.setRandomIOExceptionRate(0.0);
+        dir.setRandomIOExceptionRateOnOpen(0.0);
         
         writer.close();
-        
-        // Wait for all BG threads to finish else
-        // dir.close() will throw IOException because
-        // there are still open files
-        _TestUtil.syncConcurrentMerges(ms);
         
         dir.close();
         
         // Try again with more free space:
-        diskFree += TEST_NIGHTLY ? _TestUtil.nextInt(random, 4000, 8000) : _TestUtil.nextInt(random, 40000, 80000);
+        diskFree += TEST_NIGHTLY ? TestUtil.nextInt(random(), 4000, 8000) : TestUtil.nextInt(random(), 40000, 80000);
       }
     }
     
@@ -452,13 +480,13 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
       }
       StackTraceElement[] trace = new Exception().getStackTrace();
       for (int i = 0; i < trace.length; i++) {
-        if ("org.apache.lucene.index.SegmentMerger".equals(trace[i].getClassName()) && "mergeTerms".equals(trace[i].getMethodName()) && !didFail1) {
+        if (SegmentMerger.class.getName().equals(trace[i].getClassName()) && "mergeTerms".equals(trace[i].getMethodName()) && !didFail1) {
           didFail1 = true;
           throw new IOException("fake disk full during mergeTerms");
         }
-        if ("org.apache.lucene.util.BitVector".equals(trace[i].getClassName()) && "write".equals(trace[i].getMethodName()) && !didFail2) {
+        if (LiveDocsFormat.class.getName().equals(trace[i].getClassName()) && "writeLiveDocs".equals(trace[i].getMethodName()) && !didFail2) {
           didFail2 = true;
-          throw new IOException("fake disk full while writing BitVector");
+          throw new IOException("fake disk full while writing LiveDocs");
         }
       }
     }
@@ -466,22 +494,21 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
   
   // LUCENE-2593
   public void testCorruptionAfterDiskFullDuringMerge() throws IOException {
-    MockDirectoryWrapper dir = newDirectory();
-    //IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).setReaderPooling(true));
+    MockDirectoryWrapper dir = newMockDirectory();
+    //IndexWriter w = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random)).setReaderPooling(true));
     IndexWriter w = new IndexWriter(
         dir,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).
-            setMergeScheduler(new SerialMergeScheduler()).
-            setReaderPooling(true).
-            setMergePolicy(newLogMergePolicy(2))
+        newIndexWriterConfig(new MockAnalyzer(random()))
+          .setMergeScheduler(new SerialMergeScheduler())
+          .setReaderPooling(true)
+          .setMergePolicy(newLogMergePolicy(2))
     );
-
-    _TestUtil.keepFullyDeletedSegments(w);
-
-    ((LogMergePolicy) w.getMergePolicy()).setMergeFactor(2);
+    // we can do this because we add/delete/add (and dont merge to "nothing")
+    w.setKeepFullyDeletedSegments(true);
 
     Document doc = new Document();
-    doc.add(newField("f", "doctor who", Field.Store.YES, Field.Index.ANALYZED));
+
+    doc.add(newTextField("f", "doctor who", Field.Store.NO));
     w.addDocument(doc);
     w.commit();
 
@@ -493,17 +520,16 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
     ftdm.setDoFail();
     dir.failOn(ftdm);
 
-    try {
+    expectThrows(IOException.class, () -> {
       w.commit();
-      fail("fake disk full IOExceptions not hit");
-    } catch (IOException ioe) {
-      // expected
-      assertTrue(ftdm.didFail1 || ftdm.didFail2);
-    }
-    _TestUtil.checkIndex(dir);
+    });
+    assertTrue(ftdm.didFail1 || ftdm.didFail2);
+
+    TestUtil.checkIndex(dir);
     ftdm.clearDoFail();
-    w.addDocument(doc);
-    w.close();
+    expectThrows(AlreadyClosedException.class, () -> {
+      w.addDocument(doc);
+    });
 
     dir.close();
   }
@@ -512,50 +538,43 @@ public class TestIndexWriterOnDiskFull extends LuceneTestCase {
   // an IndexWriter (hit during DW.ThreadState.init()) is
   // OK:
   public void testImmediateDiskFull() throws IOException {
-    MockDirectoryWrapper dir = newDirectory();
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setMaxBufferedDocs(2).setMergeScheduler(new ConcurrentMergeScheduler()));
+    MockDirectoryWrapper dir = newMockDirectory();
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                .setMaxBufferedDocs(2)
+                                                .setMergeScheduler(new ConcurrentMergeScheduler())
+                                                .setCommitOnClose(false));
+    writer.commit(); // empty commit, to not create confusing situation with first commit
     dir.setMaxSizeInBytes(Math.max(1, dir.getRecomputedActualSizeInBytes()));
     final Document doc = new Document();
-    doc.add(newField("field", "aaa bbb ccc ddd eee fff ggg hhh iii jjj", Field.Store.YES, Field.Index.ANALYZED, Field.TermVector.WITH_POSITIONS_OFFSETS));
-    try {
+    FieldType customType = new FieldType(TextField.TYPE_STORED);
+    doc.add(newField("field", "aaa bbb ccc ddd eee fff ggg hhh iii jjj", customType));
+    expectThrows(IOException.class, () -> {
       writer.addDocument(doc);
-      fail("did not hit disk full");
-    } catch (IOException ioe) {
-    }
-    // Without fix for LUCENE-1130: this call will hang:
-    try {
-      writer.addDocument(doc);
-      fail("did not hit disk full");
-    } catch (IOException ioe) {
-    }
-    try {
-      writer.close(false);
-      fail("did not hit disk full");
-    } catch (IOException ioe) {
-    }
+    });
+    assertTrue(writer.deleter.isClosed());
+    assertTrue(writer.isClosed());
 
-    // Make sure once disk space is avail again, we can
-    // cleanly close:
-    dir.setMaxSizeInBytes(0);
-    writer.close(false);
     dir.close();
   }
   
   // TODO: these are also in TestIndexWriter... add a simple doc-writing method
   // like this to LuceneTestCase?
-  private void addDoc(IndexWriter writer) throws IOException
-  {
-      Document doc = new Document();
-      doc.add(newField("content", "aaa", Field.Store.NO, Field.Index.ANALYZED));
-      writer.addDocument(doc);
+  private void addDoc(IndexWriter writer) throws IOException {
+    Document doc = new Document();
+    doc.add(newTextField("content", "aaa", Field.Store.NO));
+    doc.add(new NumericDocValuesField("numericdv", 1));
+    doc.add(new IntPoint("point", 1));
+    doc.add(new IntPoint("point2d", 1, 1));
+    writer.addDocument(doc);
   }
   
-  private void addDocWithIndex(IndexWriter writer, int index) throws IOException
-  {
-      Document doc = new Document();
-      doc.add(newField("content", "aaa " + index, Field.Store.YES, Field.Index.ANALYZED));
-      doc.add(newField("id", "" + index, Field.Store.YES, Field.Index.ANALYZED));
-      writer.addDocument(doc);
+  private void addDocWithIndex(IndexWriter writer, int index) throws IOException {
+    Document doc = new Document();
+    doc.add(newTextField("content", "aaa " + index, Field.Store.NO));
+    doc.add(newTextField("id", "" + index, Field.Store.NO));
+    doc.add(new NumericDocValuesField("numericdv", 1));
+    doc.add(new IntPoint("point", 1));
+    doc.add(new IntPoint("point2d", 1, 1));
+    writer.addDocument(doc);
   }
 }

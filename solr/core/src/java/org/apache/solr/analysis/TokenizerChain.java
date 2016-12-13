@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,49 +14,70 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.analysis;
 
-import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.analysis.CharStream;
-import org.apache.lucene.analysis.CharReader;
-import org.apache.lucene.analysis.Tokenizer;
+import org.apache.lucene.analysis.*;
+import org.apache.lucene.analysis.util.CharFilterFactory;
+import org.apache.lucene.analysis.util.MultiTermAwareComponent;
+import org.apache.lucene.analysis.util.TokenFilterFactory;
+import org.apache.lucene.analysis.util.TokenizerFactory;
 
 import java.io.Reader;
 
 /**
- * @version $Id$
+ * An analyzer that uses a tokenizer and a list of token filters to
+ * create a TokenStream.
  */
-
-//
-// An analyzer that uses a tokenizer and a list of token filters to
-// create a TokenStream.
-//
 public final class TokenizerChain extends SolrAnalyzer {
+  private static final CharFilterFactory[] EMPTY_CHAR_FITLERS = new CharFilterFactory[0];
+  private static final TokenFilterFactory[] EMPTY_TOKEN_FITLERS = new TokenFilterFactory[0];
+  
   final private CharFilterFactory[] charFilters;
   final private TokenizerFactory tokenizer;
   final private TokenFilterFactory[] filters;
 
+  /** 
+   * Creates a new TokenizerChain w/o any CharFilterFactories.
+   *
+   * @param tokenizer Factory for the Tokenizer to use, must not be null.
+   * @param filters Factories for the TokenFilters to use - if null, will be treated as if empty.
+   */
   public TokenizerChain(TokenizerFactory tokenizer, TokenFilterFactory[] filters) {
     this(null,tokenizer,filters);
   }
 
+  /** 
+   * Creates a new TokenizerChain.
+   *
+   * @param charFilters Factories for the CharFilters to use, if any - if null, will be treated as if empty.
+   * @param tokenizer Factory for the Tokenizer to use, must not be null.
+   * @param filters Factories for the TokenFilters to use if any- if null, will be treated as if empty.
+   */
   public TokenizerChain(CharFilterFactory[] charFilters, TokenizerFactory tokenizer, TokenFilterFactory[] filters) {
+    charFilters = null == charFilters ? EMPTY_CHAR_FITLERS : charFilters;
+    filters = null == filters ? EMPTY_TOKEN_FITLERS : filters;
+    if (null == tokenizer) {
+      throw new NullPointerException("TokenizerFactory must not be null");
+    }
+    
     this.charFilters = charFilters;
     this.tokenizer = tokenizer;
     this.filters = filters;
   }
 
+  /** @return array of CharFilterFactories, may be empty but never null */
   public CharFilterFactory[] getCharFilterFactories() { return charFilters; }
+  /** @return the TokenizerFactory in use, will never be null */
   public TokenizerFactory getTokenizerFactory() { return tokenizer; }
+  /** @return array of TokenFilterFactories, may be empty but never null */
   public TokenFilterFactory[] getTokenFilterFactories() { return filters; }
 
   @Override
-  public Reader charStream(Reader reader){
-    if( charFilters != null && charFilters.length > 0 ){
-      CharStream cs = CharReader.get( reader );
-      for (int i=0; i<charFilters.length; i++) {
-        cs = charFilters[i].create(cs);
+  public Reader initReader(String fieldName, Reader reader) {
+    if (charFilters != null && charFilters.length > 0) {
+      Reader cs = reader;
+      for (CharFilterFactory charFilter : charFilters) {
+        cs = charFilter.create(cs);
       }
       reader = cs;
     }
@@ -64,13 +85,38 @@ public final class TokenizerChain extends SolrAnalyzer {
   }
 
   @Override
-  public TokenStreamInfo getStream(String fieldName, Reader reader) {
-    Tokenizer tk = tokenizer.create(charStream(reader));
-    TokenStream ts = tk;
-    for (int i=0; i<filters.length; i++) {
-      ts = filters[i].create(ts);
+  protected Reader initReaderForNormalization(String fieldName, Reader reader) {
+    if (charFilters != null && charFilters.length > 0) {
+      for (CharFilterFactory charFilter : charFilters) {
+        if (charFilter instanceof MultiTermAwareComponent) {
+          charFilter = (CharFilterFactory) ((MultiTermAwareComponent) charFilter).getMultiTermComponent();
+          reader = charFilter.create(reader);
+        }
+      }
     }
-    return new TokenStreamInfo(tk,ts);
+    return reader;
+  }
+
+  @Override
+  protected TokenStreamComponents createComponents(String fieldName) {
+    Tokenizer tk = tokenizer.create(attributeFactory(fieldName));
+    TokenStream ts = tk;
+    for (TokenFilterFactory filter : filters) {
+      ts = filter.create(ts);
+    }
+    return new TokenStreamComponents(tk, ts);
+  }
+
+  @Override
+  protected TokenStream normalize(String fieldName, TokenStream in) {
+    TokenStream result = in;
+    for (TokenFilterFactory filter : filters) {
+      if (filter instanceof MultiTermAwareComponent) {
+        filter = (TokenFilterFactory) ((MultiTermAwareComponent) filter).getMultiTermComponent();
+        result = filter.create(in);
+      }
+    }
+    return result;
   }
 
   @Override

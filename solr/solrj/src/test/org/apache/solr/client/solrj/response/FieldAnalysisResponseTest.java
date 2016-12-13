@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.response;
 
 import org.apache.lucene.util.LuceneTestCase;
@@ -28,7 +27,7 @@ import java.util.List;
 /**
  * A test case for the {@link FieldAnalysisResponse} class.
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 @SuppressWarnings("unchecked")
@@ -42,14 +41,14 @@ public class FieldAnalysisResponseTest extends LuceneTestCase {
 
     // the parsing of the analysis phases is already tested in the AnalysisResponseBaseTest. So we can just fake
     // the phases list here and use it.
-    final List<AnalysisResponseBase.AnalysisPhase> phases = new ArrayList<AnalysisResponseBase.AnalysisPhase>(1);
+    final List<AnalysisResponseBase.AnalysisPhase> phases = new ArrayList<>(1);
     AnalysisResponseBase.AnalysisPhase expectedPhase = new AnalysisResponseBase.AnalysisPhase("Tokenizer");
     phases.add(expectedPhase);
 
     NamedList responseNL = buildResponse();
     FieldAnalysisResponse response = new FieldAnalysisResponse() {
       @Override
-      protected List<AnalysisPhase> buildPhases(NamedList<Object> phaseNL) {
+      protected List<AnalysisPhase> buildPhases(NamedList<List<NamedList<Object>>> phaseNL) {
         return phases;
       }
     };

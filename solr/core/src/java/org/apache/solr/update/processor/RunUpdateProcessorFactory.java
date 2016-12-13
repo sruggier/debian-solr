@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,26 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update.processor;
 
 import java.io.IOException;
-
+import org.apache.solr.common.SolrException;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.update.AddUpdateCommand;
-import org.apache.solr.update.CommitUpdateCommand;
-import org.apache.solr.update.DeleteUpdateCommand;
-import org.apache.solr.update.DocumentBuilder;
-import org.apache.solr.update.MergeIndexesCommand;
-import org.apache.solr.update.RollbackUpdateCommand;
-import org.apache.solr.update.UpdateHandler;
+import org.apache.solr.update.*;
 
 
 /**
- * Pass the command to the UpdateHandler without any modifications
+ * Executes the update commands using the underlying UpdateHandler.
+ * Almost all processor chains should end with an instance of 
+ * <code>RunUpdateProcessorFactory</code> unless the user is explicitly 
+ * executing the update commands in an alternative custom 
+ * <code>UpdateRequestProcessorFactory</code>
  * 
  * @since solr 1.3
+ * @see DistributingUpdateProcessorFactory
  */
 public class RunUpdateProcessorFactory extends UpdateRequestProcessorFactory 
 {
@@ -49,6 +47,8 @@ class RunUpdateProcessor extends UpdateRequestProcessor
   private final SolrQueryRequest req;
   private final UpdateHandler updateHandler;
 
+  private boolean changesSinceCommit = false;
+
   public RunUpdateProcessor(SolrQueryRequest req, UpdateRequestProcessor next) {
     super( next );
     this.req = req;
@@ -57,20 +57,28 @@ class RunUpdateProcessor extends UpdateRequestProcessor
 
   @Override
   public void processAdd(AddUpdateCommand cmd) throws IOException {
-    cmd.doc = DocumentBuilder.toDocument(cmd.getSolrInputDocument(), req.getSchema());
+    
+    if (AtomicUpdateDocumentMerger.isAtomicUpdate(cmd)) {
+      throw new SolrException
+        (SolrException.ErrorCode.BAD_REQUEST,
+         "RunUpdateProcessor has received an AddUpdateCommand containing a document that appears to still contain Atomic document update operations, most likely because DistributedUpdateProcessorFactory was explicitly disabled from this updateRequestProcessorChain");
+    }
+
     updateHandler.addDoc(cmd);
     super.processAdd(cmd);
+    changesSinceCommit = true;
   }
 
   @Override
   public void processDelete(DeleteUpdateCommand cmd) throws IOException {
-    if( cmd.id != null ) {
+    if( cmd.isDeleteById()) {
       updateHandler.delete(cmd);
     }
     else {
       updateHandler.deleteByQuery(cmd);
     }
     super.processDelete(cmd);
+    changesSinceCommit = true;
   }
 
   @Override
@@ -84,6 +92,10 @@ class RunUpdateProcessor extends UpdateRequestProcessor
   {
     updateHandler.commit(cmd);
     super.processCommit(cmd);
+    if (!cmd.softCommit) {
+      // a hard commit means we don't need to flush the transaction log
+      changesSinceCommit = false;
+    }
   }
 
   /**
@@ -94,6 +106,16 @@ class RunUpdateProcessor extends UpdateRequestProcessor
   {
     updateHandler.rollback(cmd);
     super.processRollback(cmd);
+    changesSinceCommit = false;
+  }
+
+
+  @Override
+  public void finish() throws IOException {
+    if (changesSinceCommit && updateHandler.getUpdateLog() != null) {
+      updateHandler.getUpdateLog().finish(null);
+    }
+    super.finish();
   }
 }
 

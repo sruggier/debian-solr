@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util.plugin;
 
 import org.apache.solr.common.util.NamedList;
@@ -22,7 +21,7 @@ import org.apache.solr.common.util.NamedList;
 /**
  * A plugin that can be initialized with a NamedList
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public interface NamedListInitializedPlugin {

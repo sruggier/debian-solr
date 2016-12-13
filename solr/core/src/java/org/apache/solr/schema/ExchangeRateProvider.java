@@ -1,5 +1,4 @@
-package org.apache.solr.schema;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,11 +14,11 @@ package org.apache.solr.schema;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.schema;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.solr.common.ResourceLoader;
+import org.apache.lucene.analysis.util.ResourceLoader;
 import org.apache.solr.common.SolrException;
 
 /**
@@ -27,11 +26,9 @@ import org.apache.solr.common.SolrException;
  */
 public interface ExchangeRateProvider {
   /**
-   * Get the exchange rate betwen the two given currencies
-   * @param sourceCurrencyCode
-   * @param targetCurrencyCode
-   * @return the exhange rate as a double
-   * @throws exception if the rate is not defined in the provider
+   * Get the exchange rate between the two given currencies
+   * @return the exchange rate as a double
+   * @throws SolrException if the rate is not defined in the provider
    */
   public double getExchangeRate(String sourceCurrencyCode, String targetCurrencyCode) throws SolrException;
   

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.response;
 
 import org.apache.solr.common.util.NamedList;
@@ -26,14 +25,14 @@ import java.util.Map;
 /**
  * A base class for all analysis responses.
  *
- * @version $Id$
+ *
  * @since solr 1.4
  */
 public class AnalysisResponseBase extends SolrResponseBase {
 
   /**
    * Parses the given named list and builds a list of analysis phases form it. Expects a named list of the form:
-   * <p/>
+   * <br>
    * <pre><code>
    *  &lt;lst name="index"&gt;
    *      &lt;arr name="Tokenizer"&gt;
@@ -62,12 +61,12 @@ public class AnalysisResponseBase extends SolrResponseBase {
    *
    * @return The built analysis phases list.
    */
-  protected List<AnalysisPhase> buildPhases(NamedList<Object> phaseNL) {
-    List<AnalysisPhase> phases = new ArrayList<AnalysisPhase>(phaseNL.size());
-    for (Map.Entry<String, Object> phaseEntry : phaseNL) {
+  protected List<AnalysisPhase> buildPhases(NamedList<List<NamedList<Object>>> phaseNL) {
+    List<AnalysisPhase> phases = new ArrayList<>(phaseNL.size());
+    for (Map.Entry<String, List<NamedList<Object>>> phaseEntry : phaseNL) {
       AnalysisPhase phase = new AnalysisPhase(phaseEntry.getKey());
-      List<NamedList> tokens = (List<NamedList>) phaseEntry.getValue();
-      for (NamedList token : tokens) {
+      List<NamedList<Object>> tokens = phaseEntry.getValue();
+      for (NamedList<Object> token : tokens) {
         TokenInfo tokenInfo = buildTokenInfo(token);
         phase.addTokenInfo(tokenInfo);
       }
@@ -78,7 +77,7 @@ public class AnalysisResponseBase extends SolrResponseBase {
 
   /**
    * Parses the given named list and builds a token infoform it. Expects a named list of the form:
-   * <p/>
+   * <br>
    * <pre><code>
    *  &lt;arr name="Tokenizer"&gt;
    *      &lt;str name="text"&gt;the_text&lt;/str&gt;
@@ -95,7 +94,7 @@ public class AnalysisResponseBase extends SolrResponseBase {
    *
    * @return The built token info.
    */
-  protected TokenInfo buildTokenInfo(NamedList tokenNL) {
+  protected TokenInfo buildTokenInfo(NamedList<Object> tokenNL) {
     String text = (String) tokenNL.get("text");
     String rawText = (String) tokenNL.get("rawText");
     String type = (String) tokenNL.get("type");
@@ -116,7 +115,7 @@ public class AnalysisResponseBase extends SolrResponseBase {
   public static class AnalysisPhase {
 
     private final String className;
-    private List<TokenInfo> tokens = new ArrayList<TokenInfo>();
+    private List<TokenInfo> tokens = new ArrayList<>();
 
     AnalysisPhase(String className) {
       this.className = className;

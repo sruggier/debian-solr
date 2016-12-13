@@ -1,6 +1,4 @@
-package org.apache.solr.update.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,91 +14,57 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.update.processor;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.apache.solr.core.SolrCore;
+import org.apache.solr.update.processor.FieldMutatingUpdateProcessor.FieldNameSelector;
 
-import org.apache.solr.common.SolrInputDocument;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.update.AddUpdateCommand;
+import static org.apache.solr.update.processor.FieldMutatingUpdateProcessor.SELECT_NO_FIELDS;
 
 /**
- * A non-duplicate processor. Removes duplicates in the specified fields.
+ * Removes duplicate values found in fields matching the specified conditions.  
+ * The existing field values are iterated in order, and values are removed when 
+ * they are equal to a value that has already been seen for this field.
+ * <p>
+ * By default this processor matches no fields.
+ * </p>
  * 
- * <pre class="prettyprint" >
- * &lt;updateRequestProcessorChain name="uniq-fields"&gt;
- *   &lt;processor class="org.apache.solr.update.processor.UniqFieldsUpdateProcessorFactory"&gt;
- *     &lt;lst name="fields"&gt;
- *       &lt;str&gt;uniq&lt;/str&gt;
- *       &lt;str&gt;uniq2&lt;/str&gt;
- *       &lt;str&gt;uniq3&lt;/str&gt;
- *     &lt;/lst&gt;      
- *   &lt;/processor&gt;
- *   &lt;processor class="solr.RunUpdateProcessorFactory" /&gt;
- * &lt;/updateRequestProcessorChain&gt;</pre>
- * 
+ * <p>
+ * In the example configuration below, if a document initially contains the values 
+ * <code>"Steve","Lucy","Jim",Steve","Alice","Bob","Alice"</code> in a field named 
+ * <code>foo_uniq</code> then using this processor will result in the final list of 
+ * field values being <code>"Steve","Lucy","Jim","Alice","Bob"</code>
+ * </p>
+ * <pre class="prettyprint">
+ *  &lt;processor class="solr.UniqFieldsUpdateProcessorFactory"&gt;
+ *    &lt;str name="fieldRegex"&gt;.*_uniq&lt;/str&gt;
+ *  &lt;/processor&gt;
+ * </pre> 
  */
-public class UniqFieldsUpdateProcessorFactory extends UpdateRequestProcessorFactory {
+public class UniqFieldsUpdateProcessorFactory extends FieldValueSubsetUpdateProcessorFactory {
 
-  private Set<String> fields;
+  @Override
+  public FieldNameSelector getDefaultSelector(SolrCore core) {
+    return SELECT_NO_FIELDS;
+  }
 
+  @Override
   @SuppressWarnings("unchecked")
-  @Override
-  public void init(@SuppressWarnings("rawtypes") NamedList args) {
-    NamedList<String> flst = (NamedList<String>)args.get("fields");
-    if(flst != null){
-      fields = new HashSet<String>();
-      for(int i = 0; i < flst.size(); i++){
-        fields.add(flst.getVal(i));
+  public Collection pickSubset(Collection values) {
+    Set<Object> uniqs = new HashSet<>();
+    List<Object> result = new ArrayList<>(values.size());
+    for (Object o : values) {
+      if (!uniqs.contains(o)) {
+        uniqs.add(o);
+        result.add(o);
       }
     }
-  }
-  
-  @Override
-  public UpdateRequestProcessor getInstance(SolrQueryRequest req,
-                                            SolrQueryResponse rsp,
-                                            UpdateRequestProcessor next) {
-    return new UniqFieldsUpdateProcessor(next, fields);
-  }
-  
-  public class UniqFieldsUpdateProcessor extends UpdateRequestProcessor {
-    
-    private final Set<String> fields;
-
-    public UniqFieldsUpdateProcessor(UpdateRequestProcessor next, 
-                                              Set<String> fields) {
-      super(next);
-      this.fields = fields;
-    }
-    
-    @Override
-    public void processAdd(AddUpdateCommand cmd) throws IOException {
-      if(fields != null){
-        SolrInputDocument solrInputDocument = cmd.getSolrInputDocument();
-        List<Object> uniqList = new ArrayList<Object>();
-        for (String field : fields) {
-          uniqList.clear();
-          Collection<Object> col = solrInputDocument.getFieldValues(field);
-          if (col != null) {
-            for (Object o : col) {
-              if(!uniqList.contains(o))
-                uniqList.add(o);
-            }
-            solrInputDocument.remove(field);
-            for (Object o : uniqList) {
-              solrInputDocument.addField(field, o);
-            }
-          }    
-        }
-      }
-      super.processAdd(cmd);
-    }
+    return result;
   }
 }
 

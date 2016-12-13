@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,71 +14,110 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 
+import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
-import org.apache.lucene.index.FilterIndexReader;
+import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiReader;
+import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.index.PointValues;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.index.SortedSetDocValues;
+import org.apache.lucene.index.StoredFieldVisitor;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.util.BitSetIterator;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.OpenBitSet;
-import org.apache.lucene.util.OpenBitSetIterator;
 
 /**
- * @version $Id$
+ *
  */
 public class TestDocSet extends LuceneTestCase {
-  Random rand = random;
+  Random rand;
   float loadfactor;
 
-  public OpenBitSet getRandomSet(int sz, int bitsToSet) {
-    OpenBitSet bs = new OpenBitSet(sz);
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    rand = random();
+  }
+
+  // test the DocSetCollector
+  public void collect(DocSet set, int maxDoc) {
+    int smallSetSize = maxDoc >> 64 + 3;
+    if (set.size() > 1) {
+      if (random().nextBoolean()) {
+        smallSetSize = set.size() + random().nextInt(3) - 1;  // test the bounds around smallSetSize
+      }
+    }
+    DocSetCollector collector = new DocSetCollector(smallSetSize, maxDoc);
+
+    for(DocIterator i1 = set.iterator(); i1.hasNext();) {
+      try {
+        collector.collect( i1.nextDoc() );
+      } catch (IOException e) {
+        throw new RuntimeException(e);  // should be impossible
+      }
+    }
+
+    DocSet result = collector.getDocSet();
+    iter(set, result);  // check that they are equal
+  }
+
+  public FixedBitSet getRandomSet(int sz, int bitsToSet) {
+    FixedBitSet bs = new FixedBitSet(sz);
     if (sz==0) return bs;
     for (int i=0; i<bitsToSet; i++) {
-      bs.fastSet(rand.nextInt(sz));
+      bs.set(rand.nextInt(sz));
     }
     return bs;
   }
 
-  public DocSet getHashDocSet(OpenBitSet bs) {
-    int[] docs = new int[(int)bs.cardinality()];
-    OpenBitSetIterator iter = new OpenBitSetIterator(bs);
+  public DocSet getHashDocSet(FixedBitSet bs) {
+    int[] docs = new int[bs.cardinality()];
+    BitSetIterator iter = new BitSetIterator(bs, 0);
     for (int i=0; i<docs.length; i++) {
       docs[i] = iter.nextDoc();
     }
     return new HashDocSet(docs,0,docs.length);
   }
 
-  public DocSet getIntDocSet(OpenBitSet bs) {
-    int[] docs = new int[(int)bs.cardinality()];
-    OpenBitSetIterator iter = new OpenBitSetIterator(bs);
+  public DocSet getIntDocSet(FixedBitSet bs) {
+    int[] docs = new int[bs.cardinality()];
+    BitSetIterator iter = new BitSetIterator(bs, 0);
     for (int i=0; i<docs.length; i++) {
       docs[i] = iter.nextDoc();
     }
     return new SortedIntDocSet(docs);
   }
 
-
-  public DocSet getBitDocSet(OpenBitSet bs) {
+  public DocSet getBitDocSet(FixedBitSet bs) {
     return new BitDocSet(bs);
   }
 
-  public DocSet getDocSlice(OpenBitSet bs) {
-    int len = (int)bs.cardinality();
+  public DocSet getDocSlice(FixedBitSet bs) {
+    int len = bs.cardinality();
     int[] arr = new int[len+5];
     arr[0]=10; arr[1]=20; arr[2]=30; arr[arr.length-1]=1; arr[arr.length-2]=2;
     int offset = 3;
     int end = offset + len;
 
-    OpenBitSetIterator iter = new OpenBitSetIterator(bs);
+    BitSetIterator iter = new BitSetIterator(bs, 0);
     // put in opposite order... DocLists are not ordered.
     for (int i=end-1; i>=offset; i--) {
       arr[i] = iter.nextDoc();
@@ -88,7 +127,7 @@ public class TestDocSet extends LuceneTestCase {
   }
 
 
-  public DocSet getDocSet(OpenBitSet bs) {
+  public DocSet getDocSet(FixedBitSet bs) {
     switch(rand.nextInt(10)) {
       case 0: return getHashDocSet(bs);
 
@@ -107,8 +146,8 @@ public class TestDocSet extends LuceneTestCase {
     return null;
   }
 
-  public void checkEqual(OpenBitSet bs, DocSet set) {
-    for (int i=0; i<bs.capacity(); i++) {
+  public void checkEqual(FixedBitSet bs, DocSet set) {
+    for (int i=0; i<set.size(); i++) {
       assertEquals(bs.get(i), set.exists(i));
     }
     assertEquals(bs.cardinality(), set.size());
@@ -135,8 +174,8 @@ public class TestDocSet extends LuceneTestCase {
   protected void doSingle(int maxSize) {
     int sz = rand.nextInt(maxSize+1);
     int sz2 = rand.nextInt(maxSize);
-    OpenBitSet bs1 = getRandomSet(sz, rand.nextInt(sz+1));
-    OpenBitSet bs2 = getRandomSet(sz, rand.nextInt(sz2+1));
+    FixedBitSet bs1 = getRandomSet(sz, rand.nextInt(sz+1));
+    FixedBitSet bs2 = getRandomSet(sz, rand.nextInt(sz2+1));
 
     DocSet a1 = new BitDocSet(bs1);
     DocSet a2 = new BitDocSet(bs2);
@@ -149,10 +188,13 @@ public class TestDocSet extends LuceneTestCase {
     iter(a1,b1);
     iter(a2,b2);
 
-    OpenBitSet a_and = (OpenBitSet) bs1.clone(); a_and.and(bs2);
-    OpenBitSet a_or = (OpenBitSet) bs1.clone(); a_or.or(bs2);
-    // OpenBitSet a_xor = (OpenBitSet)bs1.clone(); a_xor.xor(bs2);
-    OpenBitSet a_andn = (OpenBitSet) bs1.clone(); a_andn.andNot(bs2);
+    collect(a1, maxSize);
+    collect(a2, maxSize);
+
+    FixedBitSet a_and = bs1.clone(); a_and.and(bs2);
+    FixedBitSet a_or = bs1.clone(); a_or.or(bs2);
+    // FixedBitSet a_xor = bs1.clone(); a_xor.xor(bs2);
+    FixedBitSet a_andn = bs1.clone(); a_andn.andNot(bs2);
 
     checkEqual(a_and, b1.intersection(b2));
     checkEqual(a_or, b1.union(b2));
@@ -162,7 +204,6 @@ public class TestDocSet extends LuceneTestCase {
     assertEquals(a_or.cardinality(), b1.unionSize(b2));
     assertEquals(a_andn.cardinality(), b1.andNotSize(b2));
   }
-
 
   public void doMany(int maxSz, int iter) {
     for (int i=0; i<iter; i++) {
@@ -180,7 +221,7 @@ public class TestDocSet extends LuceneTestCase {
   }
 
   public DocSet getRandomDocSet(int n, int maxDoc) {
-    OpenBitSet obs = new OpenBitSet(maxDoc);
+    FixedBitSet obs = new FixedBitSet(maxDoc);
     int[] a = new int[n];
     for (int i=0; i<n; i++) {
       for(;;) {
@@ -218,7 +259,7 @@ public class TestDocSet extends LuceneTestCase {
     return sets;
   }
 
-  /**** needs code insertion into HashDocSet
+  /* needs code insertion into HashDocSet
   public void testCollisions() {
     loadfactor=.75f;
     rand=new Random(12345);  // make deterministic
@@ -247,10 +288,10 @@ public class TestDocSet extends LuceneTestCase {
   }
   ***/
 
-  public static int smallSetType = 0;  // 0==sortedint, 1==hash, 2==openbitset
+  public static int smallSetType = 0;  // 0==sortedint, 1==hash, 2==FixedBitSet
   public static int smallSetCuttoff=3000;
 
-  /***
+  /*
   public void testIntersectionSizePerformance() {
     loadfactor=.75f; // for HashDocSet    
     rand=new Random(1);  // make deterministic
@@ -283,7 +324,7 @@ public class TestDocSet extends LuceneTestCase {
   }
    ***/
 
-  /****
+  /*
   public void testExistsPerformance() {
     loadfactor=.75f;
     rand=new Random(12345);  // make deterministic
@@ -307,7 +348,7 @@ public class TestDocSet extends LuceneTestCase {
   }
    ***/
 
-   /**** needs code insertion into HashDocSet
+   /* needs code insertion into HashDocSet
    public void testExistsCollisions() {
     loadfactor=.75f;
     rand=new Random(12345);  // make deterministic
@@ -334,33 +375,108 @@ public class TestDocSet extends LuceneTestCase {
   }
   ***/
 
-  public IndexReader dummyIndexReader(final int maxDoc) {
-
-    IndexReader r = new FilterIndexReader(null) {
+  public LeafReader dummyIndexReader(final int maxDoc) {
+    return new LeafReader() {
       @Override
       public int maxDoc() {
         return maxDoc;
       }
 
       @Override
-      public boolean hasDeletions() {
-        return false;
+      public int numDocs() {
+        return maxDoc;
       }
 
       @Override
-      public IndexReader[] getSequentialSubReaders() {
-        return null;
+      public void addCoreClosedListener(CoreClosedListener listener) {
+        throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public void removeCoreClosedListener(CoreClosedListener listener) {
+        throw new UnsupportedOperationException();
       }
 
       @Override
       public FieldInfos getFieldInfos() {
-        return new FieldInfos();
+        return new FieldInfos(new FieldInfo[0]);
+      }
+
+      @Override
+      public Bits getLiveDocs() {
+        return null;
+      }
+
+      @Override
+      public Fields fields() {
+        return null;
+      }
+
+      @Override
+      public Fields getTermVectors(int doc) {
+        return null;
+      }
+
+      @Override
+      public NumericDocValues getNumericDocValues(String field) {
+        return null;
+      }
+
+      @Override
+      public BinaryDocValues getBinaryDocValues(String field) {
+        return null;
+      }
+
+      @Override
+      public SortedDocValues getSortedDocValues(String field) {
+        return null;
+      }
+      
+      @Override
+      public SortedNumericDocValues getSortedNumericDocValues(String field) {
+        return null;
+      }
+      
+      @Override
+      public SortedSetDocValues getSortedSetDocValues(String field) {
+        return null;
+      }
+
+      @Override
+      public Bits getDocsWithField(String field) throws IOException {
+        return null;
+      }
+
+      @Override
+      public NumericDocValues getNormValues(String field) {
+        return null;
+      }
+
+      @Override
+      public PointValues getPointValues() {
+        return null;
+      }
+
+      @Override
+      protected void doClose() {
+      }
+
+      @Override
+      public void document(int doc, StoredFieldVisitor visitor) {
+      }
+
+      @Override
+      public void checkIntegrity() throws IOException {
+      }
+
+      @Override
+      public Sort getIndexSort() {
+        return null;
       }
     };
-    return r;
   }
 
-  public IndexReader dummyMultiReader(int nSeg, int maxDoc) {
+  public IndexReader dummyMultiReader(int nSeg, int maxDoc) throws IOException {
     if (nSeg==1 && rand.nextBoolean()) return dummyIndexReader(rand.nextInt(maxDoc));
 
     IndexReader[] subs = new IndexReader[rand.nextInt(nSeg)+1];
@@ -409,32 +525,39 @@ public class TestDocSet extends LuceneTestCase {
     }
   }
 
-  public void doFilterTest(SolrIndexReader reader) throws IOException {
-    OpenBitSet bs = getRandomSet(reader.maxDoc(), rand.nextInt(reader.maxDoc()+1));
+  public void doFilterTest(IndexReader reader) throws IOException {
+    IndexReaderContext topLevelContext = reader.getContext();
+    FixedBitSet bs = getRandomSet(reader.maxDoc(), rand.nextInt(reader.maxDoc()+1));
     DocSet a = new BitDocSet(bs);
     DocSet b = getIntDocSet(bs);
 
     Filter fa = a.getTopFilter();
     Filter fb = b.getTopFilter();
 
+    /* top level filters are no longer supported
     // test top-level
-    DocIdSet da = fa.getDocIdSet(reader);
-    DocIdSet db = fb.getDocIdSet(reader);
+    DocIdSet da = fa.getDocIdSet(topLevelContext);
+    DocIdSet db = fb.getDocIdSet(topLevelContext);
     doTestIteratorEqual(da, db);
+    ***/
+
+    DocIdSet da;
+    DocIdSet db;
+    List<LeafReaderContext> leaves = topLevelContext.leaves();
 
     // first test in-sequence sub readers
-    for (SolrIndexReader sir : reader.getLeafReaders()) {
-      da = fa.getDocIdSet(sir);
-      db = fb.getDocIdSet(sir);
+    for (LeafReaderContext readerContext : leaves) {
+      da = fa.getDocIdSet(readerContext, null);
+      db = fb.getDocIdSet(readerContext, null);
       doTestIteratorEqual(da, db);
     }  
 
-    int nReaders = reader.getLeafReaders().length;
+    int nReaders = leaves.size();
     // now test out-of-sequence sub readers
     for (int i=0; i<nReaders; i++) {
-      SolrIndexReader sir = reader.getLeafReaders()[rand.nextInt(nReaders)];
-      da = fa.getDocIdSet(sir);
-      db = fb.getDocIdSet(sir);
+      LeafReaderContext readerContext = leaves.get(rand.nextInt(nReaders));
+      da = fa.getDocIdSet(readerContext, null);
+      db = fb.getDocIdSet(readerContext, null);
       doTestIteratorEqual(da, db);
     }
   }
@@ -446,8 +569,7 @@ public class TestDocSet extends LuceneTestCase {
 
     for (int i=0; i<5000; i++) {
       IndexReader r = dummyMultiReader(maxSeg, maxDoc);
-      SolrIndexReader sir = new SolrIndexReader(r, null, 0);
-      doFilterTest(sir);
+      doFilterTest(r);
     }
   }
 }

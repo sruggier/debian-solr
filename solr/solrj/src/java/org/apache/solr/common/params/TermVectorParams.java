@@ -1,5 +1,4 @@
-package org.apache.solr.common.params;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,8 +14,7 @@ package org.apache.solr.common.params;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
+package org.apache.solr.common.params;
 /**
  *
  *
@@ -34,6 +32,11 @@ public interface TermVectorParams {
   *
   * */
   public static final String POSITIONS = TV_PREFIX + "positions";
+  /**
+  * Return Term Vector payloads information
+  *
+  * */
+  public static final String PAYLOADS = TV_PREFIX + "payloads";
   /**
   * Return offset information, if available
   * */

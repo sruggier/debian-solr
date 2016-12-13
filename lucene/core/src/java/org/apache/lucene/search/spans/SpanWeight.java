@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,131 +14,156 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.search.*;
-import org.apache.lucene.search.Explanation.IDFExplanation;
 
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.Map;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.index.TermContext;
+import org.apache.lucene.search.CollectionStatistics;
+import org.apache.lucene.search.Explanation;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.TermStatistics;
+import org.apache.lucene.search.Weight;
+import org.apache.lucene.search.similarities.Similarity;
+import org.apache.lucene.search.similarities.Similarity.SimScorer;
 
 /**
  * Expert-only.  Public for use by other weight implementations
  */
-public class SpanWeight extends Weight {
-  protected Similarity similarity;
-  protected float value;
-  protected float idf;
-  protected float queryNorm;
-  protected float queryWeight;
+public abstract class SpanWeight extends Weight {
 
-  protected Set<Term> terms;
-  protected SpanQuery query;
-  private IDFExplanation idfExp;
+  /**
+   * Enumeration defining what postings information should be retrieved from the
+   * index for a given Spans
+   */
+  public enum Postings {
+    POSITIONS {
+      @Override
+      public int getRequiredPostings() {
+        return PostingsEnum.POSITIONS;
+      }
+    },
+    PAYLOADS {
+      @Override
+      public int getRequiredPostings() {
+        return PostingsEnum.PAYLOADS;
+      }
+    },
+    OFFSETS {
+      @Override
+      public int getRequiredPostings() {
+        return PostingsEnum.PAYLOADS | PostingsEnum.OFFSETS;
+      }
+    };
 
-  public SpanWeight(SpanQuery query, Searcher searcher)
-    throws IOException {
-    this.similarity = query.getSimilarity(searcher);
-    this.query = query;
-    
-    terms=new HashSet<Term>();
-    query.extractTerms(terms);
-    
-    idfExp = similarity.idfExplain(terms, searcher);
-    idf = idfExp.getIdf();
+    public abstract int getRequiredPostings();
+
+    public Postings atLeast(Postings postings) {
+      if (postings.compareTo(this) > 0)
+        return postings;
+      return this;
+    }
   }
 
-  @Override
-  public Query getQuery() { return query; }
+  protected final Similarity similarity;
+  protected final Similarity.SimWeight simWeight;
+  protected final String field;
 
-  @Override
-  public float getValue() { return value; }
-
-  @Override
-  public float sumOfSquaredWeights() throws IOException {
-    queryWeight = idf * query.getBoost();         // compute query weight
-    return queryWeight * queryWeight;             // square it
+  /**
+   * Create a new SpanWeight
+   * @param query the parent query
+   * @param searcher the IndexSearcher to query against
+   * @param termContexts a map of terms to termcontexts for use in building the similarity.  May
+   *                     be null if scores are not required
+   * @throws IOException on error
+   */
+  public SpanWeight(SpanQuery query, IndexSearcher searcher, Map<Term, TermContext> termContexts) throws IOException {
+    super(query);
+    this.field = query.getField();
+    this.similarity = searcher.getSimilarity(termContexts != null);
+    this.simWeight = buildSimWeight(query, searcher, termContexts);
   }
 
-  @Override
-  public void normalize(float queryNorm) {
-    this.queryNorm = queryNorm;
-    queryWeight *= queryNorm;                     // normalize query weight
-    value = queryWeight * idf;                    // idf for document
-  }
-
-  @Override
-  public Scorer scorer(IndexReader reader, boolean scoreDocsInOrder, boolean topScorer) throws IOException {
-    if (query.getField() == null) {
+  private Similarity.SimWeight buildSimWeight(SpanQuery query, IndexSearcher searcher, Map<Term, TermContext> termContexts) throws IOException {
+    if (termContexts == null || termContexts.size() == 0 || query.getField() == null)
       return null;
-    } else {
-      return new SpanScorer(query.getSpans(reader), this, similarity, reader
-          .norms(query.getField()));
+    TermStatistics[] termStats = new TermStatistics[termContexts.size()];
+    int i = 0;
+    for (Term term : termContexts.keySet()) {
+      termStats[i] = searcher.termStatistics(term, termContexts.get(term));
+      i++;
+    }
+    CollectionStatistics collectionStats = searcher.collectionStatistics(query.getField());
+    return similarity.computeWeight(collectionStats, termStats);
+  }
+
+  /**
+   * Collect all TermContexts used by this Weight
+   * @param contexts a map to add the TermContexts to
+   */
+  public abstract void extractTermContexts(Map<Term, TermContext> contexts);
+
+  /**
+   * Expert: Return a Spans object iterating over matches from this Weight
+   * @param ctx a LeafReaderContext for this Spans
+   * @return a Spans
+   * @throws IOException on error
+   */
+  public abstract Spans getSpans(LeafReaderContext ctx, Postings requiredPostings) throws IOException;
+
+  @Override
+  public float getValueForNormalization() throws IOException {
+    return simWeight == null ? 1.0f : simWeight.getValueForNormalization();
+  }
+
+  @Override
+  public void normalize(float queryNorm, float boost) {
+    if (simWeight != null) {
+      simWeight.normalize(queryNorm, boost);
     }
   }
 
   @Override
-  public Explanation explain(IndexReader reader, int doc)
-    throws IOException {
+  public SpanScorer scorer(LeafReaderContext context) throws IOException {
+    final Spans spans = getSpans(context, Postings.POSITIONS);
+    if (spans == null) {
+      return null;
+    }
+    final Similarity.SimScorer docScorer = getSimScorer(context);
+    return new SpanScorer(this, spans, docScorer);
+  }
 
-    ComplexExplanation result = new ComplexExplanation();
-    result.setDescription("weight("+getQuery()+" in "+doc+"), product of:");
-    String field = ((SpanQuery)getQuery()).getField();
+  /**
+   * Return a SimScorer for this context
+   * @param context the LeafReaderContext
+   * @return a SimWeight
+   * @throws IOException on error
+   */
+  public Similarity.SimScorer getSimScorer(LeafReaderContext context) throws IOException {
+    return simWeight == null ? null : similarity.simScorer(simWeight, context);
+  }
 
-    Explanation idfExpl =
-      new Explanation(idf, "idf(" + field + ": " + idfExp.explain() + ")");
+  @Override
+  public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+    SpanScorer scorer = scorer(context);
+    if (scorer != null) {
+      int newDoc = scorer.iterator().advance(doc);
+      if (newDoc == doc) {
+        float freq = scorer.sloppyFreq();
+        SimScorer docScorer = similarity.simScorer(simWeight, context);
+        Explanation freqExplanation = Explanation.match(freq, "phraseFreq=" + freq);
+        Explanation scoreExplanation = docScorer.explain(doc, freqExplanation);
+        return Explanation.match(scoreExplanation.getValue(),
+            "weight("+getQuery()+" in "+doc+") [" + similarity.getClass().getSimpleName() + "], result of:",
+            scoreExplanation);
+      }
+    }
 
-    // explain query weight
-    Explanation queryExpl = new Explanation();
-    queryExpl.setDescription("queryWeight(" + getQuery() + "), product of:");
-
-    Explanation boostExpl = new Explanation(getQuery().getBoost(), "boost");
-    if (getQuery().getBoost() != 1.0f)
-      queryExpl.addDetail(boostExpl);
-    queryExpl.addDetail(idfExpl);
-
-    Explanation queryNormExpl = new Explanation(queryNorm,"queryNorm");
-    queryExpl.addDetail(queryNormExpl);
-
-    queryExpl.setValue(boostExpl.getValue() *
-                       idfExpl.getValue() *
-                       queryNormExpl.getValue());
-
-    result.addDetail(queryExpl);
-
-    // explain field weight
-    ComplexExplanation fieldExpl = new ComplexExplanation();
-    fieldExpl.setDescription("fieldWeight("+field+":"+query.toString(field)+
-                             " in "+doc+"), product of:");
-
-    Explanation tfExpl = ((SpanScorer)scorer(reader, true, false)).explain(doc);
-    fieldExpl.addDetail(tfExpl);
-    fieldExpl.addDetail(idfExpl);
-
-    Explanation fieldNormExpl = new Explanation();
-    byte[] fieldNorms = reader.norms(field);
-    float fieldNorm =
-      fieldNorms!=null ? similarity.decodeNormValue(fieldNorms[doc]) : 1.0f;
-    fieldNormExpl.setValue(fieldNorm);
-    fieldNormExpl.setDescription("fieldNorm(field="+field+", doc="+doc+")");
-    fieldExpl.addDetail(fieldNormExpl);
-
-    fieldExpl.setMatch(Boolean.valueOf(tfExpl.isMatch()));
-    fieldExpl.setValue(tfExpl.getValue() *
-                       idfExpl.getValue() *
-                       fieldNormExpl.getValue());
-
-    result.addDetail(fieldExpl);
-    result.setMatch(fieldExpl.getMatch());
-
-    // combine them
-    result.setValue(queryExpl.getValue() * fieldExpl.getValue());
-
-    if (queryExpl.getValue() == 1.0f)
-      return fieldExpl;
-
-    return result;
+    return Explanation.noMatch("no matching term");
   }
 }

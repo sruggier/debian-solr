@@ -1,5 +1,4 @@
-package org.apache.solr.search.function;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,23 +14,29 @@ package org.apache.solr.search.function;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.search.function;
 import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
 
 /**
  *
- *
+ * @see TestSortByMinMaxFunction
  **/
 public class SortByFunctionTest extends AbstractSolrTestCase {
-  @Override
-  public String getSchemaFile() {
-    return "schema.xml";
+
+  
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solrconfig.xml", "schema.xml");
   }
 
+  
   @Override
-  public String getSolrConfigFile() {
-    return "solrconfig.xml";
+  public void setUp() throws Exception {
+    super.setUp();
+    assertU(delQ("*:*"));
+    assertU(commit());
   }
 
   public void test() throws Exception {
@@ -91,4 +96,120 @@ public class SortByFunctionTest extends AbstractSolrTestCase {
             "//result/doc[4]/int[@name='id'][.='3']"
     );
   }
+  
+  public void testSortJoinDocFreq() throws Exception
+  {
+    assertU(adoc("id", "4", "id_s1", "D", "links_mfacet", "A", "links_mfacet", "B", "links_mfacet", "C" ) );
+    assertU(adoc("id", "3", "id_s1", "C", "links_mfacet", "A", "links_mfacet", "B" ) );
+    assertU(commit()); // Make sure it uses two readers
+    assertU(adoc("id", "2", "id_s1", "B", "links_mfacet", "A" ) );
+    assertU(adoc("id", "1", "id_s1", "A"  ) );
+    assertU(commit());
+
+    assertQ(req("q", "links_mfacet:B", "fl", "id", "sort", "id asc"),
+            "//*[@numFound='2']",
+            "//result/doc[1]/int[@name='id'][.='3']",
+            "//result/doc[2]/int[@name='id'][.='4']"
+    );
+    
+    assertQ(req("q", "*:*", "fl", "id", "sort", "joindf(id_s1, links_mfacet) desc"),
+            "//*[@numFound='4']",
+            "//result/doc[1]/int[@name='id'][.='1']",
+            "//result/doc[2]/int[@name='id'][.='2']",
+            "//result/doc[3]/int[@name='id'][.='3']",
+            "//result/doc[4]/int[@name='id'][.='4']"
+    );
+
+    assertQ(req("q", "*:*", "fl", "id", "sort", "joindf(id_s1, links_mfacet) asc"),
+            "//*[@numFound='4']",
+            "//result/doc[1]/int[@name='id'][.='4']",
+            "//result/doc[2]/int[@name='id'][.='3']",
+            "//result/doc[3]/int[@name='id'][.='2']",
+            "//result/doc[4]/int[@name='id'][.='1']"
+    );
+  }
+  
+  /**
+   * The sort clauses to test in <code>testFieldSortSpecifiedAsFunction</code>.
+   *
+   * @see #testFieldSortSpecifiedAsFunction
+   */
+  protected String[] getFieldFunctionClausesToTest() {
+    return new String[] { "primary_tl1", "field(primary_tl1)" };
+  }
+  
+
+  /**
+   * Sort by function normally compares the double value, but if a function is specified that identifies
+   * a single field, we should use the underlying field's SortField to save of a lot of type converstion 
+   * (and RAM), and keep the sort precision as high as possible
+   *
+   * @see #getFieldFunctionClausesToTest
+   */
+  public void testFieldSortSpecifiedAsFunction() throws Exception {
+    final long A = Long.MIN_VALUE;
+    final long B = A + 1L;
+    final long C = B + 1L;
+    
+    final long Z = Long.MAX_VALUE;
+    final long Y = Z - 1L;
+    final long X = Y - 1L;
+    
+    // test is predicated on the idea that if long -> double converstion is happening under the hood
+    // then we lose precision in sorting; so lets sanity check that our JVM isn't doing something wacky
+    // in converstion that violates the principle of the test
+    
+    assertEquals("WTF? small longs cast to double aren't equivilent?",
+                 (double)A, (double)B, 0.0D);
+    assertEquals("WTF? small longs cast to double aren't equivilent?",
+                 (double)A, (double)C, 0.0D);
+    
+    assertEquals("WTF? big longs cast to double aren't equivilent?",
+                 (double)Z, (double)Y, 0.0D);
+    assertEquals("WTF? big longs cast to double aren't equivilent?",
+                 (double)Z, (double)X, 0.0D);
+    
+    int docId = 0;
+    for (int i = 0; i < 3; i++) {
+      assertU(adoc(sdoc("id", ++docId, "primary_tl1", X, "secondary_tl1", i,
+                        "multi_l_dv", X, "multi_l_dv", A)));
+      assertU(adoc(sdoc("id", ++docId, "primary_tl1", Y, "secondary_tl1", i,
+                        "multi_l_dv", Y, "multi_l_dv", B)));
+      assertU(adoc(sdoc("id", ++docId, "primary_tl1", Z, "secondary_tl1", i,
+                        "multi_l_dv", Z, "multi_l_dv", C)));
+    }
+    assertU(commit());
+
+    // all of these sorts should result in the exact same order
+    // min/max of a field is tested in TestSortByMinMaxFunction
+    for (String primarySort : getFieldFunctionClausesToTest()) {
+
+      assertQ(req("q", "*:*",
+                  "sort", primarySort + " asc, secondary_tl1 asc")
+              , "//*[@numFound='9']"
+              //
+              , "//result/doc[1]/long[@name='primary_tl1'][.='"+X+"']"
+              , "//result/doc[1]/long[@name='secondary_tl1'][.='0']"
+              , "//result/doc[2]/long[@name='primary_tl1'][.='"+X+"']"
+              , "//result/doc[2]/long[@name='secondary_tl1'][.='1']"
+              , "//result/doc[3]/long[@name='primary_tl1'][.='"+X+"']"
+              , "//result/doc[3]/long[@name='secondary_tl1'][.='2']"
+              //
+              , "//result/doc[4]/long[@name='primary_tl1'][.='"+Y+"']"
+              , "//result/doc[4]/long[@name='secondary_tl1'][.='0']"
+              , "//result/doc[5]/long[@name='primary_tl1'][.='"+Y+"']"
+              , "//result/doc[5]/long[@name='secondary_tl1'][.='1']"
+              , "//result/doc[6]/long[@name='primary_tl1'][.='"+Y+"']"
+              , "//result/doc[6]/long[@name='secondary_tl1'][.='2']"
+              //
+              , "//result/doc[7]/long[@name='primary_tl1'][.='"+Z+"']"
+              , "//result/doc[7]/long[@name='secondary_tl1'][.='0']"
+              , "//result/doc[8]/long[@name='primary_tl1'][.='"+Z+"']"
+              , "//result/doc[8]/long[@name='secondary_tl1'][.='1']"
+              , "//result/doc[9]/long[@name='primary_tl1'][.='"+Z+"']"
+              , "//result/doc[9]/long[@name='secondary_tl1'][.='2']"
+              );
+    }
+  }
+  
 }

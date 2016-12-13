@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.search;
 
 import org.apache.lucene.search.TermQuery;
@@ -23,18 +22,20 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.index.Term;
 import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
-import java.util.List;
+import java.util.Collection;
 
 /**
- * @version $Id$
+ *
  */
 public class TestQueryUtils extends AbstractSolrTestCase {
 
-  @Override
-  public String getSchemaFile() { return "schema.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solrconfig.xml"; }
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solrconfig.xml", "schema.xml");
+  }
+
 
   @Override
   public void setUp() throws Exception {
@@ -48,7 +49,7 @@ public class TestQueryUtils extends AbstractSolrTestCase {
   public void positive(Query q) {
     assertFalse(QueryUtils.isNegative(q));
     assertTrue(QueryUtils.getAbs(q)==q);
-    List<BooleanClause> clauses = (q instanceof BooleanQuery) ? ((BooleanQuery)q).clauses() : null;
+    Collection<BooleanClause> clauses = (q instanceof BooleanQuery) ? ((BooleanQuery)q).clauses() : null;
     if (clauses != null) {
       if (clauses.size() != 0) {
         assertTrue(QueryUtils.makeQueryable(q)==q);
@@ -71,21 +72,21 @@ public class TestQueryUtils extends AbstractSolrTestCase {
   public void testNegativeQueries() {
     TermQuery tq = new TermQuery(new Term("hi","there"));
     TermQuery tq2 = new TermQuery(new Term("wow","dude"));
-    BooleanQuery bq = new BooleanQuery();
+    BooleanQuery.Builder bq = new BooleanQuery.Builder();
 
     positive(tq);
     // positive(bq);
     bq.add(tq, BooleanClause.Occur.SHOULD);
-    positive(bq);
+    positive(bq.build());
     bq.add(tq2, BooleanClause.Occur.MUST_NOT);
-    positive(bq);
+    positive(bq.build());
 
-    bq = new BooleanQuery();
+    bq = new BooleanQuery.Builder();
     bq.add(tq,BooleanClause.Occur.MUST_NOT);
-    negative(bq);
+    negative(bq.build());
 
     bq.add(tq2,BooleanClause.Occur.MUST_NOT);
-    negative(bq);
+    negative(bq.build());
 
 
     String f = "name";  // name is whitespace tokenized

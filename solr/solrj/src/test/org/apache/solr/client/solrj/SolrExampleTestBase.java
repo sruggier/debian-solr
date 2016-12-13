@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,46 +14,52 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj;
 
-
 import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
 /**
  * This should include tests against the example solr config
  * 
  * This lets us try various SolrServer implementations with the same tests.
  * 
- * @version $Id$
- * @since solr 1.3
  */
-abstract public class SolrExampleTestBase extends AbstractSolrTestCase 
-{
+abstract public class SolrExampleTestBase extends AbstractSolrTestCase {
   @Override
-  public String getSolrHome() { return "../../../example/solr/"; }
+  public String getSolrHome() {
+    return "../../../example/solr/";
+  }
   
-  @Override public String getSchemaFile()     { return getSolrHome()+"conf/schema.xml";     }
-  @Override public String getSolrConfigFile() { return getSolrHome()+"conf/solrconfig.xml"; }
- 
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    
+  }
+  
   @Override
-  public void setUp() throws Exception
-  {
+  public void setUp() throws Exception {
     ignoreException("maxWarmingSearchers");
     super.setUp();
     
     // this sets the property for jetty starting SolrDispatchFilter
-    System.setProperty( "solr.solr.home", this.getSolrHome() ); 
-    System.setProperty( "solr.data.dir", this.dataDir.getCanonicalPath() ); 
+    System.setProperty("solr.solr.home", this.getSolrHome());
+    System.setProperty("solr.data.dir", this.initCoreDataDir.getCanonicalPath());
+  }
+  
+  @Override
+  public void tearDown() throws Exception {
+    System.clearProperty("solr.solr.home");
+    System.clearProperty("solr.data.dir");
+    super.tearDown();
   }
   
   /**
    * Subclasses need to initialize the server impl
    */
-  protected abstract SolrServer getSolrServer();
+  protected abstract SolrClient getSolrClient();
   
   /**
    * Create a new solr server
    */
-  protected abstract SolrServer createNewSolrServer();
+  protected abstract SolrClient createNewSolrClient();
 }

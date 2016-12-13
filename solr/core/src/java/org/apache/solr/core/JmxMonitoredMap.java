@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,39 +16,69 @@
  */
 package org.apache.solr.core;
 
-import org.apache.solr.common.SolrException;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.core.SolrConfig.JmxConfiguration;
-
-import javax.management.*;
+import javax.management.Attribute;
+import javax.management.AttributeList;
+import javax.management.AttributeNotFoundException;
+import javax.management.DynamicMBean;
+import javax.management.InvalidAttributeValueException;
+import javax.management.MBeanAttributeInfo;
+import javax.management.MBeanException;
+import javax.management.MBeanInfo;
+import javax.management.MBeanServer;
+import javax.management.MBeanServerFactory;
+import javax.management.MalformedObjectNameException;
+import javax.management.ObjectName;
+import javax.management.Query;
+import javax.management.QueryExp;
+import javax.management.ReflectionException;
+import javax.management.openmbean.OpenMBeanAttributeInfoSupport;
+import javax.management.openmbean.OpenType;
+import javax.management.openmbean.SimpleType;
 import javax.management.remote.JMXConnectorServer;
 import javax.management.remote.JMXConnectorServerFactory;
 import javax.management.remote.JMXServiceURL;
+
+import java.lang.invoke.MethodHandles;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Hashtable;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.lucene.store.AlreadyClosedException;
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.util.NamedList;
+import org.apache.solr.core.SolrConfig.JmxConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static org.apache.solr.common.params.CommonParams.NAME;
 
 /**
  * <p>
  * Responsible for finding (or creating) a MBeanServer from given configuration
  * and registering all SolrInfoMBean objects with JMX.
  * </p>
- * <p/>
  * <p>
  * Please see http://wiki.apache.org/solr/SolrJmx for instructions on usage and configuration
  * </p>
  *
- * @version $Id$
+ *
  * @see org.apache.solr.core.SolrConfig.JmxConfiguration
  * @since solr 1.3
  */
 public class JmxMonitoredMap<K, V> extends
         ConcurrentHashMap<String, SolrInfoMBean> {
-  private static final Logger LOG = LoggerFactory.getLogger(JmxMonitoredMap.class
-          .getName());
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+  // set to true to use cached statistics NamedLists between getMBeanInfo calls to work
+  // around over calling getStatistics on MBeanInfos when iterating over all attributes (SOLR-6586)
+  private boolean useCachedStatsBetweenGetMBeanInfoCalls = Boolean.getBoolean("useCachedStatsBetweenGetMBeanInfoCalls");
+  
   private MBeanServer server = null;
 
   private String jmxRootName;
@@ -56,13 +86,12 @@ public class JmxMonitoredMap<K, V> extends
   private String coreHashCode;
 
   public JmxMonitoredMap(String coreName, String coreHashCode,
-                          final JmxConfiguration jmxConfig) {
+                         final JmxConfiguration jmxConfig) {
     this.coreHashCode = coreHashCode;
-
-    jmxRootName = (null != jmxConfig.rootName ? 
+    jmxRootName = (null != jmxConfig.rootName ?
                    jmxConfig.rootName
                    : ("solr" + (null != coreName ? "/" + coreName : "")));
-    
+      
     if (jmxConfig.serviceUrl == null) {
       List<MBeanServer> servers = null;
 
@@ -79,11 +108,11 @@ public class JmxMonitoredMap<K, V> extends
       }
 
       if (servers == null || servers.isEmpty()) {
-        LOG.info("No JMX servers found, not exposing Solr information with JMX.");
+        log.debug("No JMX servers found, not exposing Solr information with JMX.");
         return;
       }
       server = servers.get(0);
-      LOG.info("JMX monitoring is enabled. Adding Solr mbeans to JMX Server: "
+      log.info("JMX monitoring is enabled. Adding Solr mbeans to JMX Server: "
                + server);
     } else {
       try {
@@ -93,7 +122,7 @@ public class JmxMonitoredMap<K, V> extends
                 .newJMXConnectorServer(new JMXServiceURL(jmxConfig.serviceUrl),
                         null, server);
         connector.start();
-        LOG.info("JMX monitoring is enabled at " + jmxConfig.serviceUrl);
+        log.info("JMX monitoring is enabled at " + jmxConfig.serviceUrl);
       } catch (Exception e) {
         // Release the reference
         server = null;
@@ -109,8 +138,24 @@ public class JmxMonitoredMap<K, V> extends
   @Override
   public void clear() {
     if (server != null) {
-      for (Map.Entry<String, SolrInfoMBean> entry : entrySet()) {
-        unregister(entry.getKey(), entry.getValue());
+      QueryExp exp = Query.eq(Query.attr("coreHashCode"), Query.value(coreHashCode));
+      
+      Set<ObjectName> objectNames = null;
+      try {
+        ObjectName instance = new ObjectName(jmxRootName + ":*");
+        objectNames = server.queryNames(instance, exp);
+      } catch (Exception e) {
+        log.warn("Exception querying for mbeans", e);
+      }
+      
+      if (objectNames != null)  {
+        for (ObjectName name : objectNames) {
+          try {
+            server.unregisterMBean(name);
+          } catch (Exception e) {
+            log.warn("Exception un-registering mbean {}", name, e);
+          }
+        }
       }
     }
 
@@ -133,10 +178,10 @@ public class JmxMonitoredMap<K, V> extends
         ObjectName name = getObjectName(key, infoBean);
         if (server.isRegistered(name))
           server.unregisterMBean(name);
-        SolrDynamicMBean mbean = new SolrDynamicMBean(coreHashCode, infoBean);
+        SolrDynamicMBean mbean = new SolrDynamicMBean(coreHashCode, infoBean, useCachedStatsBetweenGetMBeanInfoCalls);
         server.registerMBean(mbean, name);
       } catch (Exception e) {
-        LOG.warn( "Failed to register info bean: " + key, e);
+        log.warn( "Failed to register info bean: " + key, e);
       }
     }
 
@@ -156,7 +201,7 @@ public class JmxMonitoredMap<K, V> extends
       try {
         unregister((String) key, infoBean);
       } catch (RuntimeException e) {
-        LOG.warn( "Failed to unregister info bean: " + key, e);
+        log.warn( "Failed to unregister info bean: " + key, e);
       }
     }
     return super.remove(key);
@@ -168,11 +213,8 @@ public class JmxMonitoredMap<K, V> extends
 
     try {
       ObjectName name = getObjectName(key, infoBean);
-      if (server.isRegistered(name)) {
+      if (server.isRegistered(name) && coreHashCode.equals(server.getAttribute(name, "coreHashCode"))) {
         server.unregisterMBean(name);
-      } else {
-        LOG.info("Failed to unregister mbean: " + key
-                + " because it was not registered");
       }
     } catch (Exception e) {
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
@@ -182,12 +224,17 @@ public class JmxMonitoredMap<K, V> extends
 
   private ObjectName getObjectName(String key, SolrInfoMBean infoBean)
           throws MalformedObjectNameException {
-    Hashtable<String, String> map = new Hashtable<String, String>();
+    Hashtable<String, String> map = new Hashtable<>();
     map.put("type", key);
     if (infoBean.getName() != null && !"".equals(infoBean.getName())) {
       map.put("id", infoBean.getName());
     }
     return ObjectName.getInstance(jmxRootName, map);
+  }
+
+  /** For test verification */
+  public MBeanServer getServer() {
+    return server;
   }
 
   /**
@@ -200,23 +247,40 @@ public class JmxMonitoredMap<K, V> extends
     private HashSet<String> staticStats;
 
     private String coreHashCode;
-
+    
+    private volatile NamedList cachedDynamicStats;
+    
+    private boolean useCachedStatsBetweenGetMBeanInfoCalls;
+    
     public SolrDynamicMBean(String coreHashCode, SolrInfoMBean managedResource) {
-      this.infoBean = managedResource;
-      staticStats = new HashSet<String>();
+      this(coreHashCode, managedResource, false);
+    }
+
+    public SolrDynamicMBean(String coreHashCode, SolrInfoMBean managedResource, boolean useCachedStatsBetweenGetMBeanInfoCalls) {
+      this.useCachedStatsBetweenGetMBeanInfoCalls = useCachedStatsBetweenGetMBeanInfoCalls;
+      if (managedResource instanceof JmxAugmentedSolrInfoMBean) {
+        final JmxAugmentedSolrInfoMBean jmxSpecific = (JmxAugmentedSolrInfoMBean)managedResource;
+        this.infoBean = new SolrInfoMBeanWrapper(jmxSpecific) {
+          @Override
+          public NamedList getStatistics() { return jmxSpecific.getStatisticsForJmx(); }
+        };
+      } else {
+        this.infoBean = managedResource;
+      }
+      staticStats = new HashSet<>();
 
       // For which getters are already available in SolrInfoMBean
-      staticStats.add("name");
+      staticStats.add(NAME);
       staticStats.add("version");
       staticStats.add("description");
       staticStats.add("category");
-      staticStats.add("sourceId");
       staticStats.add("source");
       this.coreHashCode = coreHashCode;
     }
 
+    @Override
     public MBeanInfo getMBeanInfo() {
-      ArrayList<MBeanAttributeInfo> attrInfoList = new ArrayList<MBeanAttributeInfo>();
+      ArrayList<MBeanAttributeInfo> attrInfoList = new ArrayList<>();
 
       for (String stat : staticStats) {
         attrInfoList.add(new MBeanAttributeInfo(stat, String.class.getName(),
@@ -229,17 +293,33 @@ public class JmxMonitoredMap<K, V> extends
 
       try {
         NamedList dynamicStats = infoBean.getStatistics();
+        
+        if (useCachedStatsBetweenGetMBeanInfoCalls) {
+          cachedDynamicStats = dynamicStats;
+        }
+        
         if (dynamicStats != null) {
           for (int i = 0; i < dynamicStats.size(); i++) {
             String name = dynamicStats.getName(i);
-            if (!staticStats.contains(name))
+            if (staticStats.contains(name)) {
+              continue;
+            }
+            Class type = dynamicStats.get(name).getClass();
+            OpenType typeBox = determineType(type);
+            if (type.equals(String.class) || typeBox == null) {
               attrInfoList.add(new MBeanAttributeInfo(dynamicStats.getName(i),
-                      String.class.getName(), null, true, false, false));
+                  String.class.getName(), null, true, false, false));
+            } else {
+              attrInfoList.add(new OpenMBeanAttributeInfoSupport(
+                  dynamicStats.getName(i), dynamicStats.getName(i), typeBox,
+                  true, false, false));
+            }
           }
         }
       } catch (Exception e) {
-        LOG.warn( "Could not getStatistics on info bean "
-                + infoBean.getName(), e);
+        // don't log issue if the core is closing
+        if (!(SolrException.getRootCause(e) instanceof AlreadyClosedException))
+          log.warn("Could not getStatistics on info bean {}", infoBean.getName(), e);
       }
 
       MBeanAttributeInfo[] attrInfoArr = attrInfoList
@@ -248,6 +328,23 @@ public class JmxMonitoredMap<K, V> extends
               .getDescription(), attrInfoArr, null, null, null);
     }
 
+    private OpenType determineType(Class type) {
+      try {
+        for (Field field : SimpleType.class.getFields()) {
+          if (field.getType().equals(SimpleType.class)) {
+            SimpleType candidate = (SimpleType) field.get(SimpleType.class);
+            if (candidate.getTypeName().equals(type.getName())) {
+              return candidate;
+            }
+          }
+        }
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+      return null;
+    }
+
+    @Override
     public Object getAttribute(String attribute)
             throws AttributeNotFoundException, MBeanException, ReflectionException {
       Object val;
@@ -256,7 +353,7 @@ public class JmxMonitoredMap<K, V> extends
       } else if (staticStats.contains(attribute) && attribute != null
               && attribute.length() > 0) {
         try {
-          String getter = "get" + attribute.substring(0, 1).toUpperCase(Locale.ENGLISH)
+          String getter = "get" + attribute.substring(0, 1).toUpperCase(Locale.ROOT)
                   + attribute.substring(1);
           Method meth = infoBean.getClass().getMethod(getter);
           val = meth.invoke(infoBean);
@@ -264,43 +361,76 @@ public class JmxMonitoredMap<K, V> extends
           throw new AttributeNotFoundException(attribute);
         }
       } else {
-        NamedList list = infoBean.getStatistics();
-        val = list.get(attribute);
+        NamedList stats = null;
+        if (useCachedStatsBetweenGetMBeanInfoCalls) {
+          NamedList cachedStats = this.cachedDynamicStats;
+          if (cachedStats != null) {
+            stats = cachedStats;
+          }
+        }
+        if (stats == null) {
+          stats = infoBean.getStatistics();
+        }
+        val = stats.get(attribute);
       }
 
-      if (val != null)
+      if (val != null) {
+        // It's String or one of the simple types, just return it as JMX suggests direct support for such types
+        for (String simpleTypeName : SimpleType.ALLOWED_CLASSNAMES_LIST) {
+          if (val.getClass().getName().equals(simpleTypeName)) {
+            return val;
+          }
+        }
+        // It's an arbitrary object which could be something complex and odd, return its toString, assuming that is
+        // a workable representation of the object
         return val.toString();
-      else
-        return val;
-
+      }
+      return null;
     }
 
+    @Override
     public AttributeList getAttributes(String[] attributes) {
       AttributeList list = new AttributeList();
       for (String attribute : attributes) {
         try {
           list.add(new Attribute(attribute, getAttribute(attribute)));
         } catch (Exception e) {
-          LOG.warn("Could not get attribute " + attribute);
+          log.warn("Could not get attribute " + attribute);
         }
       }
 
       return list;
     }
 
+    @Override
     public void setAttribute(Attribute attribute)
             throws AttributeNotFoundException, InvalidAttributeValueException,
             MBeanException, ReflectionException {
       throw new UnsupportedOperationException("Operation not Supported");
     }
 
+    @Override
     public AttributeList setAttributes(AttributeList attributes) {
       throw new UnsupportedOperationException("Operation not Supported");
     }
 
+    @Override
     public Object invoke(String actionName, Object[] params, String[] signature)
             throws MBeanException, ReflectionException {
       throw new UnsupportedOperationException("Operation not Supported");
     }
+  }
+
+  /**
+   * SolrInfoMBean that provides JMX-specific statistics.  Used, for example,
+   * if generating full statistics is expensive; the expensive statistics can
+   * be generated normally for use with the web ui, while an abbreviated version
+   * are generated for period jmx use.
+   */
+  public interface JmxAugmentedSolrInfoMBean extends SolrInfoMBean {
+    /**
+     * JMX-specific statistics
+     */
+    public NamedList getStatisticsForJmx();
   }
 }

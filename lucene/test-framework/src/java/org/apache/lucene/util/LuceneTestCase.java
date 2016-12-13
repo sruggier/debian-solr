@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,222 +14,569 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
 
-import java.io.File;
+import java.io.Closeable;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
 import java.lang.annotation.Inherited;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.AccessControlContext;
+import java.security.AccessController;
+import java.security.Permission;
+import java.security.PermissionCollection;
+import java.security.Permissions;
+import java.security.PrivilegedActionException;
+import java.security.PrivilegedExceptionAction;
+import java.security.ProtectionDomain;
+import java.security.SecurityPermission;
+import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
 import java.util.TimeZone;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.TreeSet;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Logger;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.document.Field.Index;
+import org.apache.lucene.analysis.MockAnalyzer;
+import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
-import org.apache.lucene.document.Field.TermVector;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.index.LogByteSizeMergePolicy;
-import org.apache.lucene.index.LogDocMergePolicy;
-import org.apache.lucene.index.LogMergePolicy;
-import org.apache.lucene.index.MergePolicy;
-import org.apache.lucene.index.MockRandomMergePolicy;
-import org.apache.lucene.index.SerialMergeScheduler;
-import org.apache.lucene.index.SlowMultiReaderWrapper;
-import org.apache.lucene.index.TieredMergePolicy;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.StringField;
+import org.apache.lucene.document.TextField;
+import org.apache.lucene.index.*;
+import org.apache.lucene.index.IndexReader.ReaderClosedListener;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.TermsEnum.SeekStatus;
+import org.apache.lucene.mockfile.FilterPath;
+import org.apache.lucene.mockfile.VirusCheckingFS;
 import org.apache.lucene.search.AssertingIndexSearcher;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.FieldCache;
-import org.apache.lucene.search.FieldCache.CacheEntry;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.LRUQueryCache;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.QueryCache;
+import org.apache.lucene.search.QueryCachingPolicy;
+import org.apache.lucene.search.QueryUtils.FCInvisibleMultiReader;
+import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.FSLockFactory;
+import org.apache.lucene.store.FlushInfo;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.LockFactory;
+import org.apache.lucene.store.MergeInfo;
+import org.apache.lucene.store.MockDirectoryWrapper.Throttling;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.NRTCachingDirectory;
-import org.apache.lucene.util.FieldCacheSanityChecker.Insanity;
+import org.apache.lucene.store.RawDirectoryWrapper;
+import org.apache.lucene.util.automaton.AutomatonTestUtil;
+import org.apache.lucene.util.automaton.CompiledAutomaton;
+import org.apache.lucene.util.automaton.RegExp;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
-import org.junit.Ignore;
 import org.junit.Rule;
-import org.junit.internal.AssumptionViolatedException;
+import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.rules.TestRule;
-import org.junit.runner.Description;
 import org.junit.runner.RunWith;
-import org.junit.runner.Runner;
-import org.junit.runner.notification.RunListener;
-import org.junit.runners.model.MultipleFailureException;
-import org.junit.runners.model.Statement;
+
+import com.carrotsearch.randomizedtesting.JUnit4MethodProvider;
+import com.carrotsearch.randomizedtesting.LifecycleScope;
+import com.carrotsearch.randomizedtesting.MixWithSuiteName;
+import com.carrotsearch.randomizedtesting.RandomizedContext;
+import com.carrotsearch.randomizedtesting.RandomizedRunner;
+import com.carrotsearch.randomizedtesting.RandomizedTest;
+import com.carrotsearch.randomizedtesting.annotations.Listeners;
+import com.carrotsearch.randomizedtesting.annotations.SeedDecorators;
+import com.carrotsearch.randomizedtesting.annotations.TestGroup;
+import com.carrotsearch.randomizedtesting.annotations.TestMethodProviders;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakAction.Action;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakAction;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakFilters;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakGroup.Group;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakGroup;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakLingering;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakScope.Scope;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakScope;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakZombies.Consequence;
+import com.carrotsearch.randomizedtesting.annotations.ThreadLeakZombies;
+import com.carrotsearch.randomizedtesting.annotations.TimeoutSuite;
+import com.carrotsearch.randomizedtesting.generators.RandomPicks;
+import com.carrotsearch.randomizedtesting.rules.NoClassHooksShadowingRule;
+import com.carrotsearch.randomizedtesting.rules.NoInstanceHooksOverridesRule;
+import com.carrotsearch.randomizedtesting.rules.StaticFieldsInvariantRule;
+
+import junit.framework.AssertionFailedError;
+
+import static com.carrotsearch.randomizedtesting.RandomizedTest.systemPropertyAsBoolean;
+import static com.carrotsearch.randomizedtesting.RandomizedTest.systemPropertyAsInt;
 
 /**
  * Base class for all Lucene unit tests, Junit3 or Junit4 variant.
+ * 
+ * <h3>Class and instance setup.</h3>
+ * 
  * <p>
- * </p>
+ * The preferred way to specify class (suite-level) setup/cleanup is to use
+ * static methods annotated with {@link BeforeClass} and {@link AfterClass}. Any
+ * code in these methods is executed within the test framework's control and
+ * ensure proper setup has been made. <b>Try not to use static initializers
+ * (including complex final field initializers).</b> Static initializers are
+ * executed before any setup rules are fired and may cause you (or somebody 
+ * else) headaches.
+ * 
  * <p>
- * If you
- * override either <code>setUp()</code> or
- * <code>tearDown()</code> in your unit test, make sure you
- * call <code>super.setUp()</code> and
- * <code>super.tearDown()</code>
- * </p>
- *
- * <code>@After</code> - replaces setup
- * <code>@Before</code> - replaces teardown
- * <code>@Test</code> - any public method with this annotation is a test case, regardless
- * of its name
+ * For instance-level setup, use {@link Before} and {@link After} annotated
+ * methods. If you override either {@link #setUp()} or {@link #tearDown()} in
+ * your subclass, make sure you call <code>super.setUp()</code> and
+ * <code>super.tearDown()</code>. This is detected and enforced.
+ * 
+ * <h3>Specifying test cases</h3>
+ * 
  * <p>
+ * Any test method with a <code>testXXX</code> prefix is considered a test case.
+ * Any test method annotated with {@link Test} is considered a test case.
+ * 
+ * <h3>Randomized execution and test facilities</h3>
+ * 
  * <p>
- * See Junit4 <a href="http://junit.org/junit/javadoc/4.7/">documentation</a> for a complete list of features.
- * <p>
- * Import from org.junit rather than junit.framework.
- * <p>
- * You should be able to use this class anywhere you used LuceneTestCase
- * if you annotate your derived class correctly with the annotations above
- * @see #assertSaneFieldCaches(String)
+ * {@link LuceneTestCase} uses {@link RandomizedRunner} to execute test cases.
+ * {@link RandomizedRunner} has built-in support for tests randomization
+ * including access to a repeatable {@link Random} instance. See
+ * {@link #random()} method. Any test using {@link Random} acquired from
+ * {@link #random()} should be fully reproducible (assuming no race conditions
+ * between threads etc.). The initial seed for a test case is reported in many
+ * ways:
+ * <ul>
+ *   <li>as part of any exception thrown from its body (inserted as a dummy stack
+ *   trace entry),</li>
+ *   <li>as part of the main thread executing the test case (if your test hangs,
+ *   just dump the stack trace of all threads and you'll see the seed),</li>
+ *   <li>the master seed can also be accessed manually by getting the current
+ *   context ({@link RandomizedContext#current()}) and then calling
+ *   {@link RandomizedContext#getRunnerSeedAsString()}.</li>
+ * </ul>
  */
-
-@RunWith(LuceneTestCaseRunner.class)
+@RunWith(RandomizedRunner.class)
+@TestMethodProviders({
+  LuceneJUnit3MethodProvider.class,
+  JUnit4MethodProvider.class
+})
+@Listeners({
+  RunListenerPrintReproduceInfo.class,
+  FailureMarker.class
+})
+@SeedDecorators({MixWithSuiteName.class}) // See LUCENE-3995 for rationale.
+@ThreadLeakScope(Scope.SUITE)
+@ThreadLeakGroup(Group.MAIN)
+@ThreadLeakAction({Action.WARN, Action.INTERRUPT})
+@ThreadLeakLingering(linger = 20000) // Wait long for leaked threads to complete before failure. zk needs this.
+@ThreadLeakZombies(Consequence.IGNORE_REMAINING_TESTS)
+@TimeoutSuite(millis = 2 * TimeUnits.HOUR)
+@ThreadLeakFilters(defaultFilters = true, filters = {
+    QuickPatchThreadsFilter.class
+})
+@TestRuleLimitSysouts.Limit(bytes = TestRuleLimitSysouts.DEFAULT_SYSOUT_BYTES_THRESHOLD)
 public abstract class LuceneTestCase extends Assert {
-  /**
-   * true iff tests are run in verbose mode. Note: if it is false, tests are not
-   * expected to print any messages.
-   */
-  public static final boolean VERBOSE = Boolean.getBoolean("tests.verbose");
 
-  /** Use this constant when creating Analyzers and any other version-dependent stuff.
-   * <p><b>NOTE:</b> Change this when development starts for new Lucene version:
-   */
-  public static final Version TEST_VERSION_CURRENT = Version.LUCENE_36;
+  // --------------------------------------------------------------------
+  // Test groups, system properties and other annotations modifying tests
+  // --------------------------------------------------------------------
+
+  public static final String SYSPROP_NIGHTLY = "tests.nightly";
+  public static final String SYSPROP_WEEKLY = "tests.weekly";
+  public static final String SYSPROP_MONSTER = "tests.monster";
+  public static final String SYSPROP_AWAITSFIX = "tests.awaitsfix";
+  public static final String SYSPROP_SLOW = "tests.slow";
+  public static final String SYSPROP_BADAPPLES = "tests.badapples";
+
+  /** @see #ignoreAfterMaxFailures*/
+  public static final String SYSPROP_MAXFAILURES = "tests.maxfailures";
+
+  /** @see #ignoreAfterMaxFailures*/
+  public static final String SYSPROP_FAILFAST = "tests.failfast";
 
   /**
-   * If this is set, it is the only method that should run.
+   * Annotation for tests that should only be run during nightly builds.
    */
-  static final String TEST_METHOD;
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @TestGroup(enabled = false, sysProperty = SYSPROP_NIGHTLY)
+  public @interface Nightly {}
+
+  /**
+   * Annotation for tests that should only be run during weekly builds
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @TestGroup(enabled = false, sysProperty = SYSPROP_WEEKLY)
+  public @interface Weekly {}
   
-  /** Create indexes in this directory, optimally use a subdir, named after the test */
-  public static final File TEMP_DIR;
-  static {
-    String method = System.getProperty("testmethod", "").trim();
-    TEST_METHOD = method.length() == 0 ? null : method;
-    String s = System.getProperty("tempDir", System.getProperty("java.io.tmpdir"));
-    if (s == null)
-      throw new RuntimeException("To run tests, you need to define system property 'tempDir' or 'java.io.tmpdir'.");
-    TEMP_DIR = new File(s);
-    TEMP_DIR.mkdirs();
+  /**
+   * Annotation for monster tests that require special setup (e.g. use tons of disk and RAM)
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @TestGroup(enabled = false, sysProperty = SYSPROP_MONSTER)
+  public @interface Monster {
+    String value();
+  }
+
+  /**
+   * Annotation for tests which exhibit a known issue and are temporarily disabled.
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @TestGroup(enabled = false, sysProperty = SYSPROP_AWAITSFIX)
+  public @interface AwaitsFix {
+    /** Point to JIRA entry. */
+    public String bugUrl();
+  }
+
+  /**
+   * Annotation for tests that are slow. Slow tests do run by default but can be
+   * disabled if a quick run is needed.
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @TestGroup(enabled = true, sysProperty = SYSPROP_SLOW)
+  public @interface Slow {}
+
+  /**
+   * Annotation for tests that fail frequently and should
+   * be moved to a <a href="https://builds.apache.org/job/Lucene-BadApples-trunk-java7/">"vault" plan in Jenkins</a>.
+   *
+   * Tests annotated with this will be turned off by default. If you want to enable
+   * them, set:
+   * <pre>
+   * -Dtests.badapples=true
+   * </pre>
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @TestGroup(enabled = false, sysProperty = SYSPROP_BADAPPLES)
+  public @interface BadApple {
+    /** Point to JIRA entry. */
+    public String bugUrl();
+  }
+
+  /**
+   * Annotation for test classes that should avoid certain codec types
+   * (because they are expensive, for example).
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.TYPE)
+  public @interface SuppressCodecs {
+    String[] value();
   }
   
-  /** set of directories we created, in afterclass we try to clean these up */
-  private static final Map<File, StackTraceElement[]> tempDirs = Collections.synchronizedMap(new HashMap<File, StackTraceElement[]>());
+  /**
+   * Annotation for test classes that should avoid mock filesystem types
+   * (because they test a bug that only happens on linux, for example).
+   * <p>
+   * You can avoid specific names {@link Class#getSimpleName()} or use
+   * the special value {@code *} to disable all mock filesystems.
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.TYPE)
+  public @interface SuppressFileSystems {
+    String[] value();
+  }
+  
+  /**
+   * Annotation for test classes that should avoid always omit
+   * actual fsync calls from reaching the filesystem.
+   * <p>
+   * This can be useful, e.g. if they make many lucene commits.
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.TYPE)
+  public @interface SuppressFsync {}
+  
+  /**
+   * Marks any suites which are known not to close all the temporary
+   * files. This may prevent temp. files and folders from being cleaned
+   * up after the suite is completed.
+   * 
+   * @see LuceneTestCase#createTempDir()
+   * @see LuceneTestCase#createTempFile(String, String)
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.TYPE)
+  public @interface SuppressTempFileChecks {
+    /** Point to JIRA entry. */
+    public String bugUrl() default "None";
+  }
 
-  // by default we randomly pick a different codec for
-  // each test case (non-J4 tests) and each test class (J4
-  // tests)
-  /** Gets the locale to run tests with */
-  public static final String TEST_LOCALE = System.getProperty("tests.locale", "random");
-  /** Gets the timezone to run tests with */
-  public static final String TEST_TIMEZONE = System.getProperty("tests.timezone", "random");
-  /** Gets the directory to run tests with */
-  public static final String TEST_DIRECTORY = System.getProperty("tests.directory", "random");
-  /** Get the number of times to run tests */
-  public static final int TEST_ITER = Integer.parseInt(System.getProperty("tests.iter", "1"));
-  /** Get the minimum number of times to run tests until a failure happens */
-  public static final int TEST_ITER_MIN = Integer.parseInt(System.getProperty("tests.iter.min", Integer.toString(TEST_ITER)));
-  /** Get the random seed for tests */
-  public static final String TEST_SEED = System.getProperty("tests.seed", "random");
-  /** whether or not nightly tests should run */
-  public static final boolean TEST_NIGHTLY = Boolean.parseBoolean(System.getProperty("tests.nightly", "false"));
-  /** the line file used by LineFileDocs */
-  public static final String TEST_LINE_DOCS_FILE = System.getProperty("tests.linedocsfile", "europarl.lines.txt.gz");
-  /** whether or not to clean threads between test invocations: "false", "perMethod", "perClass" */
-  public static final String TEST_CLEAN_THREADS = System.getProperty("tests.cleanthreads", "perClass");
+  /**
+   * Ignore {@link TestRuleLimitSysouts} for any suite which is known to print 
+   * over the default limit of bytes to {@link System#out} or {@link System#err}.
+   * 
+   * @see TestRuleLimitSysouts
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.TYPE)
+  public @interface SuppressSysoutChecks {
+    /** Point to JIRA entry. */
+    public String bugUrl();
+  }
+
+  /**
+   * Suppress the default {@code reproduce with: ant test...}
+   * Your own listener can be added as needed for your build.
+   */
+  @Documented
+  @Inherited
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.TYPE)
+  public @interface SuppressReproduceLine {}
+  
+  // -----------------------------------------------------------------
+  // Truly immutable fields and constants, initialized once and valid 
+  // for all suites ever since.
+  // -----------------------------------------------------------------
+
+  /**
+   * True if and only if tests are run in verbose mode. If this flag is false
+   * tests are not expected to print any messages. Enforced with {@link TestRuleLimitSysouts}.
+   */
+  public static final boolean VERBOSE = systemPropertyAsBoolean("tests.verbose", false);
+
+  /**
+   * Enables or disables dumping of {@link InfoStream} messages. 
+   */
+  public static final boolean INFOSTREAM = systemPropertyAsBoolean("tests.infostream", VERBOSE);
 
   /**
    * A random multiplier which you should use when writing random tests:
-   * multiply it by the number of iterations
+   * multiply it by the number of iterations to scale your tests (for nightly builds).
    */
-  public static final int RANDOM_MULTIPLIER = Integer.parseInt(System.getProperty("tests.multiplier", "1"));
+  public static final int RANDOM_MULTIPLIER = systemPropertyAsInt("tests.multiplier", 1);
+
+  public static final boolean TEST_ASSERTS_ENABLED = systemPropertyAsBoolean("tests.asserts", true);
+
+  /** TODO: javadoc? */
+  public static final String DEFAULT_LINE_DOCS_FILE = "europarl.lines.txt.gz";
+
+  /** TODO: javadoc? */
+  public static final String JENKINS_LARGE_LINE_DOCS_FILE = "enwiki.random.lines.txt";
+
+  /** Gets the codec to run tests with. */
+  public static final String TEST_CODEC = System.getProperty("tests.codec", "random");
+
+  /** Gets the postingsFormat to run tests with. */
+  public static final String TEST_POSTINGSFORMAT = System.getProperty("tests.postingsformat", "random");
   
-  private int savedBoolMaxClauseCount = BooleanQuery.getMaxClauseCount();
+  /** Gets the docValuesFormat to run tests with */
+  public static final String TEST_DOCVALUESFORMAT = System.getProperty("tests.docvaluesformat", "random");
 
-  /**
-   * @see SubclassSetupTeardownRule  
-   */
-  private boolean setupCalled;
+  /** Gets the directory to run tests with */
+  public static final String TEST_DIRECTORY = System.getProperty("tests.directory", "random");
 
-  /**
-   * @see SubclassSetupTeardownRule
-   */
-  private boolean teardownCalled;
+  /** the line file used by LineFileDocs */
+  public static final String TEST_LINE_DOCS_FILE = System.getProperty("tests.linedocsfile", DEFAULT_LINE_DOCS_FILE);
 
-  private static Locale locale;
-  private static Locale savedLocale;
-  private static TimeZone timeZone;
-  private static TimeZone savedTimeZone;
+  /** Whether or not {@link Nightly} tests should run. */
+  public static final boolean TEST_NIGHTLY = systemPropertyAsBoolean(SYSPROP_NIGHTLY, false);
 
-  /**
-   * Restore these system property values in {@link #afterClassLuceneTestCaseJ4()}.
-   */
-  private static HashMap<String, String> restoreProperties = new HashMap<String,String>();
+  /** Whether or not {@link Weekly} tests should run. */
+  public static final boolean TEST_WEEKLY = systemPropertyAsBoolean(SYSPROP_WEEKLY, false);
+  
+  /** Whether or not {@link AwaitsFix} tests should run. */
+  public static final boolean TEST_AWAITSFIX = systemPropertyAsBoolean(SYSPROP_AWAITSFIX, false);
 
-  protected static Map<MockDirectoryWrapper,StackTraceElement[]> stores;
+  /** Whether or not {@link Slow} tests should run. */
+  public static final boolean TEST_SLOW = systemPropertyAsBoolean(SYSPROP_SLOW, false);
 
-  private static List<String> testClassesRun = new ArrayList<String>();
+  /** Throttling, see {@link MockDirectoryWrapper#setThrottling(Throttling)}. */
+  public static final Throttling TEST_THROTTLING = TEST_NIGHTLY ? Throttling.SOMETIMES : Throttling.NEVER;
 
-  private static void initRandom() {
-    assert !random.initialized;
-    staticSeed = "random".equals(TEST_SEED) ? seedRand.nextLong() : ThreeLongs.fromString(TEST_SEED).l1;
-    random.setSeed(staticSeed);
-    random.initialized = true;
+  /** Leave temporary files on disk, even on successful runs. */
+  public static final boolean LEAVE_TEMPORARY;
+  static {
+    boolean defaultValue = false;
+    for (String property : Arrays.asList(
+        "tests.leaveTemporary" /* ANT tasks's (junit4) flag. */,
+        "tests.leavetemporary" /* lowercase */,
+        "tests.leavetmpdir" /* default */,
+        "solr.test.leavetmpdir" /* Solr's legacy */)) {
+      defaultValue |= systemPropertyAsBoolean(property, false);
+    }
+    LEAVE_TEMPORARY = defaultValue;
   }
 
-  @Deprecated
-  private static boolean icuTested = false;
+  /** Filesystem-based {@link Directory} implementations. */
+  private static final List<String> FS_DIRECTORIES = Arrays.asList(
+    "SimpleFSDirectory",
+    "NIOFSDirectory",
+    "MMapDirectory"
+  );
 
+  /** All {@link Directory} implementations. */
+  private static final List<String> CORE_DIRECTORIES;
+  static {
+    CORE_DIRECTORIES = new ArrayList<>(FS_DIRECTORIES);
+    CORE_DIRECTORIES.add("RAMDirectory");
+  }
+
+  /** A {@link org.apache.lucene.search.QueryCachingPolicy} that randomly caches. */
+  public static final QueryCachingPolicy MAYBE_CACHE_POLICY = new QueryCachingPolicy() {
+
+    @Override
+    public void onUse(Query query) {}
+
+    @Override
+    public boolean shouldCache(Query query) throws IOException {
+      return random().nextBoolean();
+    }
+
+  };
+  
+  // -----------------------------------------------------------------
+  // Fields initialized in class or instance rules.
+  // -----------------------------------------------------------------
+
+
+  // -----------------------------------------------------------------
+  // Class level (suite) rules.
+  // -----------------------------------------------------------------
+  
   /**
    * Stores the currently class under test.
    */
-  private static final StoreClassNameRule classNameRule = new StoreClassNameRule(); 
+  private static final TestRuleStoreClassName classNameRule; 
 
   /**
-   * Catch any uncaught exceptions on threads within the suite scope and fail the test/
-   * suite if they happen.
+   * Class environment setup rule.
    */
-  private static final UncaughtExceptionsRule uncaughtExceptionsRule = new UncaughtExceptionsRule(null); 
+  static final TestRuleSetupAndRestoreClassEnv classEnvRule;
 
   /**
-   * These property keys will be ignored in verification of altered properties.
-   * @see SystemPropertiesInvariantRule
-   * @see #ruleChain
-   * @see #classRules
+   * Suite failure marker (any error in the test or suite scope).
    */
-  private static final String [] ignoredInvariantProperties = {
-    "user.timezone"
-  };
+  protected static TestRuleMarkFailure suiteFailureMarker;
   
+  /**
+   * Temporary files cleanup rule.
+   */
+  private static TestRuleTemporaryFilesCleanup tempFilesCleanupRule;
+
+  /**
+   * Ignore tests after hitting a designated number of initial failures. This
+   * is truly a "static" global singleton since it needs to span the lifetime of all
+   * test classes running inside this JVM (it cannot be part of a class rule).
+   * 
+   * <p>This poses some problems for the test framework's tests because these sometimes
+   * trigger intentional failures which add up to the global count. This field contains
+   * a (possibly) changing reference to {@link TestRuleIgnoreAfterMaxFailures} and we
+   * dispatch to its current value from the {@link #classRules} chain using {@link TestRuleDelegate}.  
+   */
+  private static final AtomicReference<TestRuleIgnoreAfterMaxFailures> ignoreAfterMaxFailuresDelegate;
+  private static final TestRule ignoreAfterMaxFailures;
+  static {
+    int maxFailures = systemPropertyAsInt(SYSPROP_MAXFAILURES, Integer.MAX_VALUE);
+    boolean failFast = systemPropertyAsBoolean(SYSPROP_FAILFAST, false);
+
+    if (failFast) {
+      if (maxFailures == Integer.MAX_VALUE) {
+        maxFailures = 1;
+      } else {
+        Logger.getLogger(LuceneTestCase.class.getSimpleName()).warning(
+            "Property '" + SYSPROP_MAXFAILURES + "'=" + maxFailures + ", 'failfast' is" +
+            " ignored.");
+      }
+    }
+
+    ignoreAfterMaxFailuresDelegate = 
+        new AtomicReference<>(
+            new TestRuleIgnoreAfterMaxFailures(maxFailures));
+    ignoreAfterMaxFailures = TestRuleDelegate.of(ignoreAfterMaxFailuresDelegate);
+  }
+  
+  /**
+   * Try to capture streams early so that other classes don't have a chance to steal references
+   * to them (as is the case with ju.logging handlers).
+   */
+  static {
+    TestRuleLimitSysouts.checkCaptureStreams();
+    Logger.getGlobal().getHandlers();
+  }
+
+  /**
+   * Temporarily substitute the global {@link TestRuleIgnoreAfterMaxFailures}. See
+   * {@link #ignoreAfterMaxFailuresDelegate} for some explanation why this method 
+   * is needed.
+   */
+  public static TestRuleIgnoreAfterMaxFailures replaceMaxFailureRule(TestRuleIgnoreAfterMaxFailures newValue) {
+    return ignoreAfterMaxFailuresDelegate.getAndSet(newValue);
+  }
+
+  /**
+   * Max 10mb of static data stored in a test suite class after the suite is complete.
+   * Prevents static data structures leaking and causing OOMs in subsequent tests.
+   */
+  private final static long STATIC_LEAK_THRESHOLD = 10 * 1024 * 1024;
+
+  /** By-name list of ignored types like loggers etc. */
+  private final static Set<String> STATIC_LEAK_IGNORED_TYPES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+      "org.slf4j.Logger",
+      "org.apache.solr.SolrLogFormatter",
+      "java.io.File", // Solr sometimes refers to this in a static way, but it has a "java.nio.fs.Path" inside 
+      Path.class.getName(), // causes problems because interface is implemented by hidden classes
+      Class.class.getName(),
+      EnumSet.class.getName()
+  )));
+
   /**
    * This controls how suite-level rules are nested. It is important that _all_ rules declared
    * in {@link LuceneTestCase} are executed in proper order if they depend on each 
@@ -239,368 +584,211 @@ public abstract class LuceneTestCase extends Assert {
    */
   @ClassRule
   public static TestRule classRules = RuleChain
-    .outerRule(new SystemPropertiesInvariantRule(ignoredInvariantProperties))
-    .around(classNameRule)
-    .around(uncaughtExceptionsRule);
+    .outerRule(new TestRuleIgnoreTestSuites())
+    .around(ignoreAfterMaxFailures)
+    .around(suiteFailureMarker = new TestRuleMarkFailure())
+    .around(new TestRuleAssertionsRequired())
+    .around(new TestRuleLimitSysouts(suiteFailureMarker))
+    .around(tempFilesCleanupRule = new TestRuleTemporaryFilesCleanup(suiteFailureMarker))
+    .around(new StaticFieldsInvariantRule(STATIC_LEAK_THRESHOLD, true) {
+      @Override
+      protected boolean accept(java.lang.reflect.Field field) {
+        // Don't count known classes that consume memory once.
+        if (STATIC_LEAK_IGNORED_TYPES.contains(field.getType().getName())) {
+          return false;
+        }
+        // Don't count references from ourselves, we're top-level.
+        if (field.getDeclaringClass() == LuceneTestCase.class) {
+          return false;
+        }
+        return super.accept(field);
+      }
+    })
+    .around(new NoClassHooksShadowingRule())
+    .around(new NoInstanceHooksOverridesRule() {
+      @Override
+      protected boolean verify(Method key) {
+        String name = key.getName();
+        return !(name.equals("setUp") || name.equals("tearDown"));
+      }
+    })
+    .around(classNameRule = new TestRuleStoreClassName())
+    .around(new TestRuleRestoreSystemProperties(
+        // Enlist all properties to which we have write access (security manager);
+        // these should be restored to previous state, no matter what the outcome of the test.
 
+        // We reset the default locale and timezone; these properties change as a side-effect
+        "user.language",
+        "user.timezone",
+        
+        // TODO: these should, ideally, be moved to Solr's base class.
+        "solr.directoryFactory",
+        "solr.solr.home",
+        "solr.data.dir"
+        ))
+    .around(classEnvRule = new TestRuleSetupAndRestoreClassEnv());
+
+
+  // -----------------------------------------------------------------
+  // Test level rules.
+  // -----------------------------------------------------------------
+
+  /** Enforces {@link #setUp()} and {@link #tearDown()} calls are chained. */
+  private TestRuleSetupTeardownChained parentChainCallRule = new TestRuleSetupTeardownChained();
+
+  /** Save test thread and name. */
+  private TestRuleThreadAndTestName threadAndTestNameRule = new TestRuleThreadAndTestName();
+
+  /** Taint suite result with individual test failures. */
+  private TestRuleMarkFailure testFailureMarker = new TestRuleMarkFailure(suiteFailureMarker); 
+  
   /**
-   * This controls how individual test rules are nested. It is important that _all_ rules declared
-   * in {@link LuceneTestCase} are executed in proper order if they depend on each 
-   * other.
+   * This controls how individual test rules are nested. It is important that
+   * _all_ rules declared in {@link LuceneTestCase} are executed in proper order
+   * if they depend on each other.
    */
   @Rule
   public final TestRule ruleChain = RuleChain
-    .outerRule(new SaveThreadAndTestNameRule())
-    .around(new UncaughtExceptionsRule(this))
-    .around(new TestResultInterceptorRule())
-    .around(new SystemPropertiesInvariantRule(ignoredInvariantProperties))
-    .around(new InternalSetupTeardownRule())
-    .around(new SubclassSetupTeardownRule());
+    .outerRule(testFailureMarker)
+    .around(ignoreAfterMaxFailures)
+    .around(threadAndTestNameRule)
+    .around(new TestRuleSetupAndRestoreInstanceEnv())
+    .around(parentChainCallRule);
 
-  @BeforeClass
-  public static void beforeClassLuceneTestCaseJ4() {
-    testClassesRun.add(getTestClass().getSimpleName());
+  private static final Map<String,FieldType> fieldToType = new HashMap<String,FieldType>();
 
-    initRandom();
-    tempDirs.clear();
-    stores = Collections.synchronizedMap(new IdentityHashMap<MockDirectoryWrapper,StackTraceElement[]>());
-    // enable this by default, for IDE consistency with ant tests (as its the default from ant)
-    // TODO: really should be in solr base classes, but some extend LTC directly.
-    // we do this in beforeClass, because some tests currently disable it
-    restoreProperties.put("solr.directoryFactory", System.getProperty("solr.directoryFactory"));
-    if (System.getProperty("solr.directoryFactory") == null) {
-      System.setProperty("solr.directoryFactory", "org.apache.solr.core.MockDirectoryFactory");
-    }
-    // this code consumes randoms where 4.0's lucenetestcase would: to make seeds work across both branches.
-    // TODO: doesn't completely work, because what if we get mockrandom codec?!
-    if (random.nextInt(4) != 0) {
-      random.nextInt(); // consume RandomCodecProvider's seed.
-    }
-    // end compatibility random-consumption
-    
-    savedLocale = Locale.getDefault();
-    
-    // START hack to init ICU safely before we randomize locales.
-    // ICU fails during classloading when a special Java7-only locale is the default
-    // see: http://bugs.icu-project.org/trac/ticket/8734
-    if (!icuTested) {
-      icuTested = true;
-      try {
-        Locale.setDefault(Locale.US);
-        Class.forName("com.ibm.icu.util.ULocale");
-      } catch (ClassNotFoundException cnfe) {
-        // ignore if no ICU is in classpath
-      }
-    }
-    // END hack
-    
-    locale = TEST_LOCALE.equals("random") ? randomLocale(random) : localeForName(TEST_LOCALE);
-    Locale.setDefault(locale);
-    // TimeZone.getDefault will set user.timezone to the default timezone of the user's locale.
-    // So store the original property value and restore it at end.
-    restoreProperties.put("user.timezone", System.getProperty("user.timezone"));
-    savedTimeZone = TimeZone.getDefault();
-    timeZone = TEST_TIMEZONE.equals("random") ? randomTimeZone(random) : TimeZone.getTimeZone(TEST_TIMEZONE);
-    TimeZone.setDefault(timeZone);
-    testsFailed = false;
-    
-    // verify assertions are enabled (do last, for smooth cleanup)
-    if (!Boolean.parseBoolean(System.getProperty("tests.asserts.gracious", "false"))) {
-      assertTrue("assertions are not enabled!", assertionsEnabled());
-    }
-  }
-  
-  @AfterClass
-  public static void afterClassLuceneTestCaseJ4() {
-    for (Map.Entry<String,String> e : restoreProperties.entrySet()) {
-      if (e.getValue() == null) {
-        System.clearProperty(e.getKey());
-      } else {
-        System.setProperty(e.getKey(), e.getValue());
-      }
-    }
-    restoreProperties.clear();
+  enum LiveIWCFlushMode {BY_RAM, BY_DOCS, EITHER};
 
-    Throwable problem = null;
-    
-    if (! "false".equals(TEST_CLEAN_THREADS)) {
-      int rogueThreads = threadCleanup("test class");
-      if (rogueThreads > 0) {
-        // TODO: fail here once the leaks are fixed.
-        System.err.println("RESOURCE LEAK: test class left " + rogueThreads + " thread(s) running");
-      }
-    }
+  /** Set by TestRuleSetupAndRestoreClassEnv */
+  static LiveIWCFlushMode liveIWCFlushMode;
 
-    Locale.setDefault(savedLocale);
-    TimeZone.setDefault(savedTimeZone);
-    System.clearProperty("solr.solr.home");
-    System.clearProperty("solr.data.dir");
-    
-    try {
-      // now look for unclosed resources
-      if (!testsFailed) {
-        checkResourcesAfterClass();
-      }
-    } catch (Throwable t) {
-      if (problem == null) problem = t;
-    }
-    
-    stores = null;
-
-    try {
-      // clear out any temp directories if we can
-      if (!testsFailed) {
-        clearTempDirectoriesAfterClass();
-      }
-    } catch (Throwable t) {
-      if (problem == null) problem = t;
-    }
-
-    // if we had afterClass failures, get some debugging information
-    if (problem != null) {
-      reportPartialFailureInfo();      
-    }
-
-    if (uncaughtExceptionsRule.hasUncaughtExceptions()) {
-      testsFailed = true;
-    }
-    
-    // if verbose or tests failed, report some information back
-    if (VERBOSE || testsFailed || problem != null) {
-      printDebuggingInformation();
-    }
-    
-    // reset seed
-    random.setSeed(0L);
-    random.initialized = false;
-    
-    if (problem != null) {
-      throw new RuntimeException(problem);
-    }
-  }
-  
-  /** print some useful debugging information about the environment */
-  private static void printDebuggingInformation() {
-    System.err.println("NOTE: test params are: " +
-        "locale=" + locale +
-        ", timezone=" + (timeZone == null ? "(null)" : timeZone.getID()));
-    System.err.println("NOTE: all tests run in this JVM:");
-    System.err.println(Arrays.toString(testClassesRun.toArray()));
-    System.err.println("NOTE: " + System.getProperty("os.name") + " "
-        + System.getProperty("os.version") + " "
-        + System.getProperty("os.arch") + "/"
-        + System.getProperty("java.vendor") + " "
-        + System.getProperty("java.version") + " "
-        + (Constants.JRE_IS_64BIT ? "(64-bit)" : "(32-bit)") + "/"
-        + "cpus=" + Runtime.getRuntime().availableProcessors() + ","
-        + "threads=" + Thread.activeCount() + ","
-        + "free=" + Runtime.getRuntime().freeMemory() + ","
-        + "total=" + Runtime.getRuntime().totalMemory());
-  }
-  
-  /** check that directories and their resources were closed */
-  private static void checkResourcesAfterClass() {
-    for (MockDirectoryWrapper d : stores.keySet()) {
-      if (d.isOpen()) {
-        StackTraceElement elements[] = stores.get(d);
-        // Look for the first class that is not LuceneTestCase that requested
-        // a Directory. The first two items are of Thread's, so skipping over
-        // them.
-        StackTraceElement element = null;
-        for (int i = 2; i < elements.length; i++) {
-          StackTraceElement ste = elements[i];
-          if (ste.getClassName().indexOf("LuceneTestCase") == -1) {
-            element = ste;
-            break;
-          }
-        }
-        fail("directory of test was not closed, opened from: " + element);
-      }
-    }
-  }
-  
-  /** clear temp directories: this will fail if its not successful */
-  private static void clearTempDirectoriesAfterClass() {
-    for (Entry<File, StackTraceElement[]> entry : tempDirs.entrySet()) {
-      try {
-        _TestUtil.rmDir(entry.getKey());
-      } catch (IOException e) {
-        e.printStackTrace();
-        System.err.println("path " + entry.getKey() + " allocated from");
-        // first two STE's are Java's
-        StackTraceElement[] elements = entry.getValue();
-        for (int i = 2; i < elements.length; i++) {
-          StackTraceElement ste = elements[i];            
-          // print only our code's stack information
-          if (ste.getClassName().indexOf("org.apache.lucene") == -1) break; 
-          System.err.println("\t" + ste);
-        }
-        fail("could not remove temp dir: " + entry.getKey());
-      }
-    }
+  static void setLiveIWCFlushMode(LiveIWCFlushMode flushMode) {
+    liveIWCFlushMode = flushMode;
   }
 
-  protected static boolean testsFailed; /* true if any tests failed */
+  // -----------------------------------------------------------------
+  // Suite and test case setup/ cleanup.
+  // -----------------------------------------------------------------
 
   /**
-   * Control the outcome of each test's output status (failure, assumption-failure). This
-   * would ideally be handled by attaching a {@link RunListener} to a {@link Runner} (because
-   * then we would be notified about static block failures).
+   * For subclasses to override. Overrides must call {@code super.setUp()}.
    */
-  private class TestResultInterceptorRule implements TestRule {
-    // @Override
-    public Statement apply(final Statement base, final Description description) {
-      return new Statement() {
-        @Override
-        public void evaluate() throws Throwable {
-          try {
-            base.evaluate();
-          } catch (AssumptionViolatedException e) {
-            assumptionIgnored(e, description);
-            throw e;
-          } catch (Throwable t) {
-            failed(t, description);
-            throw t;
-          }
-        }
-      };
-    }
-
-    private void assumptionIgnored(AssumptionViolatedException e, Description description) {
-      System.err.print("NOTE: Assume failed in '" + description.getDisplayName() + "' (ignored):");
-      if (VERBOSE) {
-        System.err.println();
-        e.printStackTrace(System.err);
-      } else {
-        System.err.print(" ");
-        System.err.println(e.getMessage());
-      }
-    }
-
-    private void failed(Throwable e, Description description) {
-      testsFailed = true;
-      reportAdditionalFailureInfo();
-      assert !(e instanceof AssumptionViolatedException);
-    }
-  };
-
-  /** 
-   * The thread executing the current test case.
-   * @see #isTestThread()
-   */
-  volatile Thread testCaseThread;
-
-  /** 
-   * @see LuceneTestCase#testCaseThread 
-   */
-  private class SaveThreadAndTestNameRule implements TestRule {
-    private String previousName;
-
-    // @Override
-    public Statement apply(final Statement base, final Description description) {
-      return new Statement() {
-        public void evaluate() throws Throwable {
-          try {
-            Thread current = Thread.currentThread();
-            previousName = current.getName();
-            LuceneTestCase.this.testCaseThread = current;
-            LuceneTestCase.this.name = description.getMethodName();
-            base.evaluate();
-          } finally {
-            LuceneTestCase.this.testCaseThread.setName(previousName);
-            LuceneTestCase.this.testCaseThread = null;
-            LuceneTestCase.this.name = null;
-          }
-        }
-      };
-    }
+  @Before
+  public void setUp() throws Exception {
+    parentChainCallRule.setupCalled = true;
   }
 
   /**
-   * Internal {@link LuceneTestCase} setup before/after each test.
+   * For subclasses to override. Overrides must call {@code super.tearDown()}.
    */
-  private class InternalSetupTeardownRule implements TestRule {
-    // @Override
-    public Statement apply(final Statement base, Description description) {
-      return new Statement() {
-        @Override
-        public void evaluate() throws Throwable {
-          // We simulate the previous behavior of @Before in that
-          // if any statement below us fails, we just propagate the original
-          // exception and do not call tearDownInternal.
-          setUpInternal();
-          final ArrayList<Throwable> errors = new ArrayList<Throwable>();
-          try {
-            // But we will collect errors from statements below and wrap them
-            // into a multiple so that tearDownInternal is called.
-            base.evaluate();
-          } catch (Throwable t) {
-            errors.add(t);
-          }
-          
-          try {
-            tearDownInternal();
-          } catch (Throwable t) {
-            errors.add(t);
-          }
+  @After
+  public void tearDown() throws Exception {
+    parentChainCallRule.teardownCalled = true;
+    fieldToType.clear();
 
-          MultipleFailureException.assertEmpty(errors);
-        }
-      };
-    }
+    // Test is supposed to call this itself, but we do this defensively in case it forgot:
+    restoreIndexWriterMaxDocs();
   }
-  
-  /**
-   * Setup before the tests.
-   */
-  private final void setUpInternal() throws Exception {
-    seed = "random".equals(TEST_SEED) ? seedRand.nextLong() : ThreeLongs.fromString(TEST_SEED).l2;
-    random.setSeed(seed);
-    
-    Thread.currentThread().setName("LTC-main#seed=" + 
-        new ThreeLongs(staticSeed, seed, LuceneTestCaseRunner.runnerSeed));
 
-    savedBoolMaxClauseCount = BooleanQuery.getMaxClauseCount();
+  /** Tells {@link IndexWriter} to enforce the specified limit as the maximum number of documents in one index; call
+   *  {@link #restoreIndexWriterMaxDocs} once your test is done. */
+  public void setIndexWriterMaxDocs(int limit) {
+    IndexWriterMaxDocsChanger.setMaxDocs(limit);
   }
+
+  /** Returns to the default {@link IndexWriter#MAX_DOCS} limit. */
+  public void restoreIndexWriterMaxDocs() {
+    IndexWriterMaxDocsChanger.restoreMaxDocs();
+  }
+
+  // -----------------------------------------------------------------
+  // Test facilities and facades for subclasses. 
+  // -----------------------------------------------------------------
 
   /**
-   * Forcible purges all cache entries from the FieldCache.
-   * <p>
-   * This method will be called by tearDown to clean up FieldCache.DEFAULT.
-   * If a (poorly written) test has some expectation that the FieldCache
-   * will persist across test methods (ie: a static IndexReader) this
-   * method can be overridden to do nothing.
-   * </p>
-   *
-   * @see FieldCache#purgeAllCaches()
+   * Access to the current {@link RandomizedContext}'s Random instance. It is safe to use
+   * this method from multiple threads, etc., but it should be called while within a runner's
+   * scope (so no static initializers). The returned {@link Random} instance will be 
+   * <b>different</b> when this method is called inside a {@link BeforeClass} hook (static 
+   * suite scope) and within {@link Before}/ {@link After} hooks or test methods. 
+   * 
+   * <p>The returned instance must not be shared with other threads or cross a single scope's 
+   * boundary. For example, a {@link Random} acquired within a test method shouldn't be reused
+   * for another test case.
+   * 
+   * <p>There is an overhead connected with getting the {@link Random} for a particular context
+   * and thread. It is better to cache the {@link Random} locally if tight loops with multiple
+   * invocations are present or create a derivative local {@link Random} for millions of calls 
+   * like this:
+   * <pre>
+   * Random random = new Random(random().nextLong());
+   * // tight loop with many invocations. 
+   * </pre>
    */
-  protected void purgeFieldCache(final FieldCache fc) {
-    fc.purgeAllCaches();
+  public static Random random() {
+    return RandomizedContext.current().getRandom();
   }
 
-  protected String getTestLabel() {
-    return getClass().getName() + "." + getName();
+  /**
+   * Registers a {@link Closeable} resource that should be closed after the test
+   * completes.
+   * 
+   * @return <code>resource</code> (for call chaining).
+   */
+  public <T extends Closeable> T closeAfterTest(T resource) {
+    return RandomizedContext.current().closeAtEnd(resource, LifecycleScope.TEST);
   }
 
-  public static void setUseCompoundFile(MergePolicy mp, boolean useCompound) {
-    if (mp instanceof LogMergePolicy) {
-      ((LogMergePolicy) mp).setUseCompoundFile(useCompound);
-    } else if (mp instanceof TieredMergePolicy) {
-      ((TieredMergePolicy) mp).setUseCompoundFile(useCompound);
-    } else {
-      fail("MergePolicy (compound-file) not supported " + mp);
+  /**
+   * Registers a {@link Closeable} resource that should be closed after the suite
+   * completes.
+   * 
+   * @return <code>resource</code> (for call chaining).
+   */
+  public static <T extends Closeable> T closeAfterSuite(T resource) {
+    return RandomizedContext.current().closeAtEnd(resource, LifecycleScope.SUITE);
+  }
+
+  /**
+   * Return the current class being tested.
+   */
+  public static Class<?> getTestClass() {
+    return classNameRule.getTestClass();
+  }
+
+  /**
+   * Return the name of the currently executing test case.
+   */
+  public String getTestName() {
+    return threadAndTestNameRule.testMethodName;
+  }
+
+  /**
+   * Some tests expect the directory to contain a single segment, and want to 
+   * do tests on that segment's reader. This is an utility method to help them.
+   */
+    /*
+  public static SegmentReader getOnlySegmentReader(DirectoryReader reader) {
+    List<LeafReaderContext> subReaders = reader.leaves();
+    if (subReaders.size() != 1) {
+      throw new IllegalArgumentException(reader + " has " + subReaders.size() + " segments instead of exactly one");
     }
+    final LeafReader r = subReaders.get(0).reader();
+    assertTrue("expected a SegmentReader but got " + r, r instanceof SegmentReader);
+    return (SegmentReader) r;
   }
+    */
 
-  public static void setMergeFactor(MergePolicy mp, int mergeFactor) {
-    if (mp instanceof LogMergePolicy) {
-      ((LogMergePolicy) mp).setMergeFactor(mergeFactor);
-    } else if (mp instanceof TieredMergePolicy) {
-      ((TieredMergePolicy) mp).setMaxMergeAtOnce(mergeFactor);
-      ((TieredMergePolicy) mp).setMaxMergeAtOnceExplicit(mergeFactor);
-    } else {
-      fail("MergePolicy not supported " + mp);
+  /**
+   * Some tests expect the directory to contain a single segment, and want to 
+   * do tests on that segment's reader. This is an utility method to help them.
+   */
+  public static LeafReader getOnlyLeafReader(IndexReader reader) {
+    List<LeafReaderContext> subReaders = reader.leaves();
+    if (subReaders.size() != 1) {
+      throw new IllegalArgumentException(reader + " has " + subReaders.size() + " segments instead of exactly one");
     }
+    return subReaders.get(0).reader();
   }
 
   /**
@@ -608,215 +796,10 @@ public abstract class LuceneTestCase extends Assert {
    * executing the test case. 
    */
   protected boolean isTestThread() {
-    assertNotNull("Test case thread not set?", testCaseThread);
-    return Thread.currentThread() == testCaseThread;
+    assertNotNull("Test case thread not set?", threadAndTestNameRule.testCaseThread);
+    return Thread.currentThread() == threadAndTestNameRule.testCaseThread;
   }
 
-  /**
-   * Make sure {@link #setUp()} and {@link #tearDown()} were invoked even if they
-   * have been overriden. We assume nobody will call these out of non-overriden
-   * methods (they have to be public by contract, unfortunately). The top-level
-   * methods just set a flag that is checked upon successful execution of each test
-   * case.
-   */
-  private class SubclassSetupTeardownRule implements TestRule {
-    // @Override
-    public Statement apply(final Statement base, Description description) {
-      return new Statement() {
-        @Override
-        public void evaluate() throws Throwable {
-          setupCalled = false;
-          teardownCalled = false;
-          base.evaluate();
-
-          // I assume we don't want to check teardown chaining if something happens in the
-          // test because this would obscure the original exception?
-          if (!setupCalled) { 
-            Assert.fail("One of the overrides of setUp does not propagate the call.");
-          }
-          if (!teardownCalled) { 
-            Assert.fail("One of the overrides of tearDown does not propagate the call.");
-          }
-        }
-      };
-    }
-  }
-
-  /**
-   * For subclassing only. Overrides must call {@code super.setUp()}.
-   */
-  @Before
-  public void setUp() throws Exception {
-    setupCalled = true;
-  }
-
-  /**
-   * For subclassing only. Overrides must call {@code super.tearDown()}.
-   */
-  @After
-  public void tearDown() throws Exception {
-    teardownCalled = true;
-  }
-
-  /**
-   * Clean up after tests.
-   */
-  private final void tearDownInternal() throws Exception {
-    Throwable problem = null;
-    BooleanQuery.setMaxClauseCount(savedBoolMaxClauseCount);
-
-    // this won't throw any exceptions or fail the test
-    // if we change this, then change this logic
-    checkRogueThreadsAfter();
-
-    try {
-      // calling assertSaneFieldCaches here isn't as useful as having test 
-      // classes call it directly from the scope where the index readers 
-      // are used, because they could be gc'ed just before this tearDown 
-      // method is called.
-      //
-      // But it's better then nothing.
-      //
-      // If you are testing functionality that you know for a fact 
-      // "violates" FieldCache sanity, then you should either explicitly 
-      // call purgeFieldCache at the end of your test method, or refactor
-      // your Test class so that the inconsistant FieldCache usages are 
-      // isolated in distinct test methods  
-      assertSaneFieldCaches(getTestLabel());
-    } catch (Throwable t) {
-      if (problem == null) problem = t;
-    }
-    
-    purgeFieldCache(FieldCache.DEFAULT);
-    
-    if (problem != null) {
-      reportAdditionalFailureInfo();
-      // TODO: simply rethrow problem, without wrapping?
-      throw new RuntimeException(problem);
-    }
-  }
-
-  /** check if the test still has threads running, we don't want them to 
-   *  fail in a subsequent test and pass the blame to the wrong test */
-  private void checkRogueThreadsAfter() {
-    if ("perMethod".equals(TEST_CLEAN_THREADS)) {
-      int rogueThreads = threadCleanup("test method: '" + getName() + "'");
-      if (!testsFailed && rogueThreads > 0) {
-        System.err.println("RESOURCE LEAK: test method: '" + getName()
-            + "' left " + rogueThreads + " thread(s) running");
-      }
-    }
-  }
-  
-  private final static int THREAD_STOP_GRACE_MSEC = 10;
-  // jvm-wide list of 'rogue threads' we found, so they only get reported once.
-  private final static IdentityHashMap<Thread,Boolean> rogueThreads = new IdentityHashMap<Thread,Boolean>();
-  
-  static {
-    // just a hack for things like eclipse test-runner threads
-    for (Thread t : Thread.getAllStackTraces().keySet()) {
-      rogueThreads.put(t, true);
-    }
-    
-    if (TEST_ITER > 1) {
-      System.out.println("WARNING: you are using -Dtests.iter=n where n > 1, not all tests support this option.");
-      System.out.println("Some may crash or fail: this is not a bug.");
-    }
-  }
-  
-  /**
-   * Looks for leftover running threads, trying to kill them off,
-   * so they don't fail future tests.
-   * returns the number of rogue threads that it found.
-   */
-  private static int threadCleanup(String context) {
-    // educated guess
-    Thread[] stillRunning = new Thread[Thread.activeCount()+1];
-    int threadCount = 0;
-    int rogueCount = 0;
-    
-    if ((threadCount = Thread.enumerate(stillRunning)) > 1) {
-      while (threadCount == stillRunning.length) {
-        // truncated response
-        stillRunning = new Thread[stillRunning.length*2];
-        threadCount = Thread.enumerate(stillRunning);
-      }
-      
-      for (int i = 0; i < threadCount; i++) {
-        Thread t = stillRunning[i];
-          
-        if (t.isAlive() && 
-            !rogueThreads.containsKey(t) && 
-            t != Thread.currentThread() &&
-            // TODO: TimeLimitingCollector starts a thread statically.... WTF?!
-            !t.getName().equals("TimeLimitedCollector timer thread") &&
-            /* its ok to keep your searcher across test cases */
-            (t.getName().startsWith("LuceneTestCase") && context.startsWith("test method")) == false) {
-          System.err.println("WARNING: " + context  + " left thread running: " + t);
-          rogueThreads.put(t, true);
-          rogueCount++;
-          if (t.getName().startsWith("LuceneTestCase")) {
-            System.err.println("PLEASE CLOSE YOUR INDEXSEARCHERS IN YOUR TEST!!!!");
-            continue;
-          } else {
-            // wait on the thread to die of natural causes
-            try {
-              t.join(THREAD_STOP_GRACE_MSEC);
-            } catch (InterruptedException e) { e.printStackTrace(); }
-          }
-          // try to stop the thread:
-          t.setUncaughtExceptionHandler(null);
-          Thread.setDefaultUncaughtExceptionHandler(null);
-          t.interrupt();
-        }
-      }
-    }
-    return rogueCount;
-  }
-  
-  /**
-   * Asserts that FieldCacheSanityChecker does not detect any
-   * problems with FieldCache.DEFAULT.
-   * <p>
-   * If any problems are found, they are logged to System.err
-   * (allong with the msg) when the Assertion is thrown.
-   * </p>
-   * <p>
-   * This method is called by tearDown after every test method,
-   * however IndexReaders scoped inside test methods may be garbage
-   * collected prior to this method being called, causing errors to
-   * be overlooked. Tests are encouraged to keep their IndexReaders
-   * scoped at the class level, or to explicitly call this method
-   * directly in the same scope as the IndexReader.
-   * </p>
-   *
-   * @see org.apache.lucene.util.FieldCacheSanityChecker
-   */
-  protected void assertSaneFieldCaches(final String msg) {
-    final CacheEntry[] entries = FieldCache.DEFAULT.getCacheEntries();
-    Insanity[] insanity = null;
-    try {
-      try {
-        insanity = FieldCacheSanityChecker.checkSanity(entries);
-      } catch (RuntimeException e) {
-        dumpArray(msg + ": FieldCache", entries, System.err);
-        throw e;
-      }
-
-      assertEquals(msg + ": Insane FieldCache usage(s) found",
-              0, insanity.length);
-      insanity = null;
-    } finally {
-
-      // report this in the event of any exception/failure
-      // if no failure, then insanity will be null anyway
-      if (null != insanity) {
-        dumpArray(msg + ": Insane FieldCache usage(s)", insanity, System.err);
-      }
-
-    }
-  }
-  
   /**
    * Returns a number of at least <code>i</code>
    * <p>
@@ -824,13 +807,13 @@ public abstract class LuceneTestCase extends Assert {
    * is active and {@link #RANDOM_MULTIPLIER}, but also with some random fudge.
    */
   public static int atLeast(Random random, int i) {
-    int min = (TEST_NIGHTLY ? 3*i : i) * RANDOM_MULTIPLIER;
+    int min = (TEST_NIGHTLY ? 2*i : i) * RANDOM_MULTIPLIER;
     int max = min+(min/2);
-    return _TestUtil.nextInt(random, min, max);
+    return TestUtil.nextInt(random, min, max);
   }
   
   public static int atLeast(int i) {
-    return atLeast(random, i);
+    return atLeast(random(), i);
   }
   
   /**
@@ -840,14 +823,14 @@ public abstract class LuceneTestCase extends Assert {
    * is active and {@link #RANDOM_MULTIPLIER}.
    */
   public static boolean rarely(Random random) {
-    int p = TEST_NIGHTLY ? 10 : 5;
+    int p = TEST_NIGHTLY ? 10 : 1;
     p += (p * Math.log(RANDOM_MULTIPLIER));
     int min = 100 - Math.min(p, 50); // never more than 50
     return random.nextInt(100) >= min;
   }
   
   public static boolean rarely() {
-    return rarely(random);
+    return rarely(random());
   }
   
   public static boolean usually(Random random) {
@@ -855,45 +838,28 @@ public abstract class LuceneTestCase extends Assert {
   }
   
   public static boolean usually() {
-    return usually(random);
+    return usually(random());
   }
 
-  // These deprecated methods should be removed soon, when all tests using no Epsilon are fixed:
-  
-  @Deprecated
-  static public void assertEquals(double expected, double actual) {
-    assertEquals(null, expected, actual);
-  }
-   
-  @Deprecated
-  static public void assertEquals(String message, double expected, double actual) {
-    assertEquals(message, Double.valueOf(expected), Double.valueOf(actual));
+  public static void assumeTrue(String msg, boolean condition) {
+    RandomizedTest.assumeTrue(msg, condition);
   }
 
-  @Deprecated
-  static public void assertEquals(float expected, float actual) {
-    assertEquals(null, expected, actual);
+  public static void assumeFalse(String msg, boolean condition) {
+    RandomizedTest.assumeFalse(msg, condition);
   }
 
-  @Deprecated
-  static public void assertEquals(String message, float expected, float actual) {
-    assertEquals(message, Float.valueOf(expected), Float.valueOf(actual));
-  }
-  
-  public static void assumeTrue(String msg, boolean b) {
-    Assume.assumeNoException(b ? null : new InternalAssumptionViolatedException(msg));
-  }
- 
-  public static void assumeFalse(String msg, boolean b) {
-    assumeTrue(msg, !b);
-  }
-  
   public static void assumeNoException(String msg, Exception e) {
-    Assume.assumeNoException(e == null ? null : new InternalAssumptionViolatedException(msg, e));
+    RandomizedTest.assumeNoException(msg, e);
   }
 
+  /**
+   * Return <code>args</code> as a {@link Set} instance. The order of elements is not
+   * preserved in iterators.
+   */
+  @SafeVarargs @SuppressWarnings("varargs")
   public static <T> Set<T> asSet(T... args) {
-    return new HashSet<T>(Arrays.asList(args));
+    return new HashSet<>(Arrays.asList(args));
   }
 
   /**
@@ -928,93 +894,198 @@ public abstract class LuceneTestCase extends Assert {
   }
 
   /** create a new index writer config with random defaults */
-  public static IndexWriterConfig newIndexWriterConfig(Version v, Analyzer a) {
-    return newIndexWriterConfig(random, v, a);
+  public static IndexWriterConfig newIndexWriterConfig() {
+    return newIndexWriterConfig(new MockAnalyzer(random()));
+  }
+
+  /** create a new index writer config with random defaults */
+  public static IndexWriterConfig newIndexWriterConfig(Analyzer a) {
+    return newIndexWriterConfig(random(), a);
   }
   
   /** create a new index writer config with random defaults using the specified random */
-  public static IndexWriterConfig newIndexWriterConfig(Random r, Version v, Analyzer a) {
-    IndexWriterConfig c = new IndexWriterConfig(v, a);
-    if (r.nextBoolean()) {
-      c.setMergePolicy(newTieredMergePolicy());
-    } else if (r.nextBoolean()) {
-      c.setMergePolicy(newLogMergePolicy());
-    } else {
-      c.setMergePolicy(new MockRandomMergePolicy(r));
+  public static IndexWriterConfig newIndexWriterConfig(Random r, Analyzer a) {
+    IndexWriterConfig c = new IndexWriterConfig(a);
+    c.setSimilarity(classEnvRule.similarity);
+    if (VERBOSE) {
+      // Even though TestRuleSetupAndRestoreClassEnv calls
+      // InfoStream.setDefault, we do it again here so that
+      // the PrintStreamInfoStream.messageID increments so
+      // that when there are separate instances of
+      // IndexWriter created we see "IW 0", "IW 1", "IW 2",
+      // ... instead of just always "IW 0":
+      c.setInfoStream(new TestRuleSetupAndRestoreClassEnv.ThreadNameFixingPrintStreamInfoStream(System.out));
     }
-    
+
     if (r.nextBoolean()) {
       c.setMergeScheduler(new SerialMergeScheduler());
-    }
-    if (r.nextBoolean()) {
-      if (rarely(r)) {
-        // crazy value
-        c.setMaxBufferedDocs(_TestUtil.nextInt(r, 2, 15));
+    } else if (rarely(r)) {
+      ConcurrentMergeScheduler cms;
+      if (r.nextBoolean()) {
+        cms = new ConcurrentMergeScheduler();
       } else {
-        // reasonable value
-        c.setMaxBufferedDocs(_TestUtil.nextInt(r, 16, 1000));
+        cms = new ConcurrentMergeScheduler() {
+            @Override
+            protected synchronized boolean maybeStall(IndexWriter writer) {
+              return true;
+            }
+          };
       }
-    }
-    if (r.nextBoolean()) {
-      if (rarely(r)) {
-        // crazy value
-        c.setTermIndexInterval(r.nextBoolean() ? _TestUtil.nextInt(r, 1, 31) : _TestUtil.nextInt(r, 129, 1000));
-      } else {
-        // reasonable value
-        c.setTermIndexInterval(_TestUtil.nextInt(r, 32, 128));
+      int maxThreadCount = TestUtil.nextInt(r, 1, 4);
+      int maxMergeCount = TestUtil.nextInt(r, maxThreadCount, maxThreadCount + 4);
+      cms.setMaxMergesAndThreads(maxMergeCount, maxThreadCount);
+      if (random().nextBoolean()) {
+        cms.disableAutoIOThrottle();
+        assertFalse(cms.getAutoIOThrottle());
       }
-    }
-    if (r.nextBoolean()) {
-      if (rarely(r)) {
-        // crazy value
-        c.setMaxThreadStates(_TestUtil.nextInt(r, 5, 20));
-      } else {
-        // reasonable value
-        c.setMaxThreadStates(_TestUtil.nextInt(r, 1, 4));
-      }
-    }
-    
-    if (rarely(r)) {
-      c.setMergePolicy(new MockRandomMergePolicy(r));
-    } else if (r.nextBoolean()) {
-      c.setMergePolicy(newTieredMergePolicy());
+      cms.setForceMergeMBPerSec(10 + 10*random().nextDouble());
+      c.setMergeScheduler(cms);
     } else {
-      c.setMergePolicy(newLogMergePolicy());
+      // Always use consistent settings, else CMS's dynamic (SSD or not)
+      // defaults can change, hurting reproducibility:
+      ConcurrentMergeScheduler cms = new ConcurrentMergeScheduler();
+
+      // Only 1 thread can run at once (should maybe help reproducibility),
+      // with up to 3 pending merges before segment-producing threads are
+      // stalled:
+      cms.setMaxMergesAndThreads(3, 1);
+      c.setMergeScheduler(cms);
     }
-    
+
+    if (r.nextBoolean()) {
+      if (rarely(r)) {
+        // crazy value
+        c.setMaxBufferedDocs(TestUtil.nextInt(r, 2, 15));
+      } else {
+        // reasonable value
+        c.setMaxBufferedDocs(TestUtil.nextInt(r, 16, 1000));
+      }
+    }
+
+    c.setMergePolicy(newMergePolicy(r));
+
+    avoidPathologicalMerging(c);
+
+    if (rarely(r)) {
+      c.setMergedSegmentWarmer(new SimpleMergedSegmentWarmer(c.getInfoStream()));
+    }
+    c.setUseCompoundFile(r.nextBoolean());
     c.setReaderPooling(r.nextBoolean());
-    c.setReaderTermsIndexDivisor(_TestUtil.nextInt(r, 1, 4));
     return c;
   }
 
+  private static void avoidPathologicalMerging(IndexWriterConfig iwc) {
+    // Don't allow "tiny" flushed segments with "big" merge
+    // floor: this leads to pathological O(N^2) merge costs:
+    long estFlushSizeBytes = Long.MAX_VALUE;
+    if (iwc.getMaxBufferedDocs() != IndexWriterConfig.DISABLE_AUTO_FLUSH) {
+      // Gross estimation of 1 KB segment bytes for each doc indexed:
+      estFlushSizeBytes = Math.min(estFlushSizeBytes, iwc.getMaxBufferedDocs() * 1024);
+    }
+    if (iwc.getRAMBufferSizeMB() != IndexWriterConfig.DISABLE_AUTO_FLUSH) {
+      estFlushSizeBytes = Math.min(estFlushSizeBytes, (long) (iwc.getRAMBufferSizeMB() * 1024 * 1024));
+    }
+    assert estFlushSizeBytes > 0;
+
+    MergePolicy mp = iwc.getMergePolicy();
+    if (mp instanceof TieredMergePolicy) {
+      TieredMergePolicy tmp = (TieredMergePolicy) mp;
+      long floorSegBytes = (long) (tmp.getFloorSegmentMB() * 1024 * 1024);
+      if (floorSegBytes / estFlushSizeBytes > 10) {
+        double newValue = estFlushSizeBytes * 10.0 / 1024 / 1024;
+        if (VERBOSE) {
+          System.out.println("NOTE: LuceneTestCase: changing TieredMergePolicy.floorSegmentMB from " + tmp.getFloorSegmentMB() + " to " + newValue + " to avoid pathological merging");
+        }
+        tmp.setFloorSegmentMB(newValue);
+      }
+    } else if (mp instanceof LogByteSizeMergePolicy) {
+      LogByteSizeMergePolicy lmp = (LogByteSizeMergePolicy) mp;
+      if ((lmp.getMinMergeMB()*1024*1024) / estFlushSizeBytes > 10) {
+        double newValue = estFlushSizeBytes * 10.0 / 1024 / 1024;
+        if (VERBOSE) {
+          System.out.println("NOTE: LuceneTestCase: changing LogByteSizeMergePolicy.minMergeMB from " + lmp.getMinMergeMB() + " to " + newValue + " to avoid pathological merging");
+        }
+        lmp.setMinMergeMB(newValue);
+      }
+    } else if (mp instanceof LogDocMergePolicy) {
+      LogDocMergePolicy lmp = (LogDocMergePolicy) mp;
+      assert estFlushSizeBytes / 1024 < Integer.MAX_VALUE/10;
+      int estFlushDocs = Math.max(1, (int) (estFlushSizeBytes / 1024));
+      if (lmp.getMinMergeDocs() / estFlushDocs > 10) {
+        int newValue = estFlushDocs * 10;
+        if (VERBOSE) {
+          System.out.println("NOTE: LuceneTestCase: changing LogDocMergePolicy.minMergeDocs from " + lmp.getMinMergeDocs() + " to " + newValue + " to avoid pathological merging");
+        }
+        lmp.setMinMergeDocs(newValue);
+      }
+    }
+  }
+
+  public static MergePolicy newMergePolicy(Random r) {
+    if (rarely(r)) {
+      return new MockRandomMergePolicy(r);
+    } else if (r.nextBoolean()) {
+      return newTieredMergePolicy(r);
+    } else if (r.nextInt(5) == 0) { 
+      return newAlcoholicMergePolicy(r, classEnvRule.timeZone);
+    }
+    return newLogMergePolicy(r);
+  }
+
+  public static MergePolicy newMergePolicy() {
+    return newMergePolicy(random());
+  }
+
   public static LogMergePolicy newLogMergePolicy() {
-    return newLogMergePolicy(random);
+    return newLogMergePolicy(random());
   }
 
   public static TieredMergePolicy newTieredMergePolicy() {
-    return newTieredMergePolicy(random);
+    return newTieredMergePolicy(random());
+  }
+
+  public static AlcoholicMergePolicy newAlcoholicMergePolicy() {
+    return newAlcoholicMergePolicy(random(), classEnvRule.timeZone);
+  }
+  
+  public static AlcoholicMergePolicy newAlcoholicMergePolicy(Random r, TimeZone tz) {
+    return new AlcoholicMergePolicy(tz, new Random(r.nextLong()));
   }
 
   public static LogMergePolicy newLogMergePolicy(Random r) {
     LogMergePolicy logmp = r.nextBoolean() ? new LogDocMergePolicy() : new LogByteSizeMergePolicy();
-    logmp.setUseCompoundFile(r.nextBoolean());
     logmp.setCalibrateSizeByDeletes(r.nextBoolean());
     if (rarely(r)) {
-      logmp.setMergeFactor(_TestUtil.nextInt(r, 2, 9));
+      logmp.setMergeFactor(TestUtil.nextInt(r, 2, 9));
     } else {
-      logmp.setMergeFactor(_TestUtil.nextInt(r, 10, 50));
+      logmp.setMergeFactor(TestUtil.nextInt(r, 10, 50));
     }
+    configureRandom(r, logmp);
     return logmp;
+  }
+  
+  private static void configureRandom(Random r, MergePolicy mergePolicy) {
+    if (r.nextBoolean()) {
+      mergePolicy.setNoCFSRatio(0.1 + r.nextDouble()*0.8);
+    } else {
+      mergePolicy.setNoCFSRatio(r.nextBoolean() ? 1.0 : 0.0);
+    }
+    
+    if (rarely(r)) {
+      mergePolicy.setMaxCFSSegmentSizeMB(0.2 + r.nextDouble() * 2.0);
+    } else {
+      mergePolicy.setMaxCFSSegmentSizeMB(Double.POSITIVE_INFINITY);
+    }
   }
 
   public static TieredMergePolicy newTieredMergePolicy(Random r) {
     TieredMergePolicy tmp = new TieredMergePolicy();
     if (rarely(r)) {
-      tmp.setMaxMergeAtOnce(_TestUtil.nextInt(r, 2, 9));
-      tmp.setMaxMergeAtOnceExplicit(_TestUtil.nextInt(r, 2, 9));
+      tmp.setMaxMergeAtOnce(TestUtil.nextInt(r, 2, 9));
+      tmp.setMaxMergeAtOnceExplicit(TestUtil.nextInt(r, 2, 9));
     } else {
-      tmp.setMaxMergeAtOnce(_TestUtil.nextInt(r, 10, 50));
-      tmp.setMaxMergeAtOnceExplicit(_TestUtil.nextInt(r, 10, 50));
+      tmp.setMaxMergeAtOnce(TestUtil.nextInt(r, 10, 50));
+      tmp.setMaxMergeAtOnceExplicit(TestUtil.nextInt(r, 10, 50));
     }
     if (rarely(r)) {
       tmp.setMaxMergedSegmentMB(0.2 + r.nextDouble() * 2.0);
@@ -1024,420 +1095,1704 @@ public abstract class LuceneTestCase extends Assert {
     tmp.setFloorSegmentMB(0.2 + r.nextDouble() * 2.0);
     tmp.setForceMergeDeletesPctAllowed(0.0 + r.nextDouble() * 30.0);
     if (rarely(r)) {
-      tmp.setSegmentsPerTier(_TestUtil.nextInt(r, 2, 20));
+      tmp.setSegmentsPerTier(TestUtil.nextInt(r, 2, 20));
     } else {
-      tmp.setSegmentsPerTier(_TestUtil.nextInt(r, 10, 50));
+      tmp.setSegmentsPerTier(TestUtil.nextInt(r, 10, 50));
     }
-    tmp.setUseCompoundFile(r.nextBoolean());
-    tmp.setNoCFSRatio(0.1 + r.nextDouble()*0.8);
+    configureRandom(r, tmp);
     tmp.setReclaimDeletesWeight(r.nextDouble()*4);
     return tmp;
   }
 
-  public static LogMergePolicy newLogMergePolicy(boolean useCFS) {
-    LogMergePolicy logmp = newLogMergePolicy();
-    logmp.setUseCompoundFile(useCFS);
+  public static MergePolicy newLogMergePolicy(boolean useCFS) {
+    MergePolicy logmp = newLogMergePolicy();
+    logmp.setNoCFSRatio(useCFS ? 1.0 : 0.0);
     return logmp;
   }
 
-  public static LogMergePolicy newLogMergePolicy(boolean useCFS, int mergeFactor) {
+  public static MergePolicy newLogMergePolicy(boolean useCFS, int mergeFactor) {
     LogMergePolicy logmp = newLogMergePolicy();
-    logmp.setUseCompoundFile(useCFS);
+    logmp.setNoCFSRatio(useCFS ? 1.0 : 0.0);
     logmp.setMergeFactor(mergeFactor);
     return logmp;
   }
 
-  public static LogMergePolicy newLogMergePolicy(int mergeFactor) {
+  public static MergePolicy newLogMergePolicy(int mergeFactor) {
     LogMergePolicy logmp = newLogMergePolicy();
     logmp.setMergeFactor(mergeFactor);
     return logmp;
+  }
+  
+  // if you want it in LiveIndexWriterConfig: it must and will be tested here.
+  public static void maybeChangeLiveIndexWriterConfig(Random r, LiveIndexWriterConfig c) {
+    boolean didChange = false;
+
+    String previous = c.toString();
+    
+    if (rarely(r)) {
+      // change flush parameters:
+      // this is complicated because the api requires you "invoke setters in a magical order!"
+      // LUCENE-5661: workaround for race conditions in the API
+      synchronized (c) {
+        boolean flushByRAM;
+        switch (liveIWCFlushMode) {
+        case BY_RAM:
+          flushByRAM = true;
+          break;
+        case BY_DOCS:
+          flushByRAM = false;
+          break;
+        case EITHER:
+          flushByRAM = r.nextBoolean();
+          break;
+        default:
+          throw new AssertionError();
+        }
+        if (flushByRAM) { 
+          c.setRAMBufferSizeMB(TestUtil.nextInt(r, 1, 10));
+          c.setMaxBufferedDocs(IndexWriterConfig.DISABLE_AUTO_FLUSH);
+        } else {
+          if (rarely(r)) {
+            // crazy value
+            c.setMaxBufferedDocs(TestUtil.nextInt(r, 2, 15));
+          } else {
+            // reasonable value
+            c.setMaxBufferedDocs(TestUtil.nextInt(r, 16, 1000));
+          }
+          c.setRAMBufferSizeMB(IndexWriterConfig.DISABLE_AUTO_FLUSH);
+        }
+      }
+      didChange = true;
+    }
+    
+    if (rarely(r)) {
+      // change buffered deletes parameters
+      boolean limitBufferedDeletes = r.nextBoolean();
+      if (limitBufferedDeletes) {
+        c.setMaxBufferedDeleteTerms(TestUtil.nextInt(r, 1, 1000));
+      } else {
+        c.setMaxBufferedDeleteTerms(IndexWriterConfig.DISABLE_AUTO_FLUSH);
+      }
+      didChange = true;
+    }
+    
+    if (rarely(r)) {
+      IndexWriter.IndexReaderWarmer curWarmer = c.getMergedSegmentWarmer();
+      if (curWarmer == null || curWarmer instanceof SimpleMergedSegmentWarmer) {
+        // change warmer parameters
+        if (r.nextBoolean()) {
+          c.setMergedSegmentWarmer(new SimpleMergedSegmentWarmer(c.getInfoStream()));
+        } else {
+          c.setMergedSegmentWarmer(null);
+        }
+      }
+      didChange = true;
+    }
+    
+    if (rarely(r)) {
+      // change CFS flush parameters
+      c.setUseCompoundFile(r.nextBoolean());
+      didChange = true;
+    }
+    
+    if (rarely(r)) {
+      // change CMS merge parameters
+      MergeScheduler ms = c.getMergeScheduler();
+      if (ms instanceof ConcurrentMergeScheduler) {
+        ConcurrentMergeScheduler cms = (ConcurrentMergeScheduler) ms;
+        int maxThreadCount = TestUtil.nextInt(r, 1, 4);
+        int maxMergeCount = TestUtil.nextInt(r, maxThreadCount, maxThreadCount + 4);
+        boolean enableAutoIOThrottle = random().nextBoolean();
+        if (enableAutoIOThrottle) {
+          cms.enableAutoIOThrottle();
+        } else {
+          cms.disableAutoIOThrottle();
+        }
+        cms.setMaxMergesAndThreads(maxMergeCount, maxThreadCount);
+        didChange = true;
+      }
+    }
+    
+    if (rarely(r)) {
+      MergePolicy mp = c.getMergePolicy();
+      configureRandom(r, mp);
+      if (mp instanceof LogMergePolicy) {
+        LogMergePolicy logmp = (LogMergePolicy) mp;
+        logmp.setCalibrateSizeByDeletes(r.nextBoolean());
+        if (rarely(r)) {
+          logmp.setMergeFactor(TestUtil.nextInt(r, 2, 9));
+        } else {
+          logmp.setMergeFactor(TestUtil.nextInt(r, 10, 50));
+        }
+      } else if (mp instanceof TieredMergePolicy) {
+        TieredMergePolicy tmp = (TieredMergePolicy) mp;
+        if (rarely(r)) {
+          tmp.setMaxMergeAtOnce(TestUtil.nextInt(r, 2, 9));
+          tmp.setMaxMergeAtOnceExplicit(TestUtil.nextInt(r, 2, 9));
+        } else {
+          tmp.setMaxMergeAtOnce(TestUtil.nextInt(r, 10, 50));
+          tmp.setMaxMergeAtOnceExplicit(TestUtil.nextInt(r, 10, 50));
+        }
+        if (rarely(r)) {
+          tmp.setMaxMergedSegmentMB(0.2 + r.nextDouble() * 2.0);
+        } else {
+          tmp.setMaxMergedSegmentMB(r.nextDouble() * 100);
+        }
+        tmp.setFloorSegmentMB(0.2 + r.nextDouble() * 2.0);
+        tmp.setForceMergeDeletesPctAllowed(0.0 + r.nextDouble() * 30.0);
+        if (rarely(r)) {
+          tmp.setSegmentsPerTier(TestUtil.nextInt(r, 2, 20));
+        } else {
+          tmp.setSegmentsPerTier(TestUtil.nextInt(r, 10, 50));
+        }
+        configureRandom(r, tmp);
+        tmp.setReclaimDeletesWeight(r.nextDouble()*4);
+      }
+      didChange = true;
+    }
+    if (VERBOSE && didChange) {
+      String current = c.toString();
+      String previousLines[] = previous.split("\n");
+      String currentLines[] = current.split("\n");
+      StringBuilder diff = new StringBuilder();
+
+      // this should always be the case, diff each line
+      if (previousLines.length == currentLines.length) {
+        for (int i = 0; i < previousLines.length; i++) {
+          if (!previousLines[i].equals(currentLines[i])) {
+            diff.append("- " + previousLines[i] + "\n");
+            diff.append("+ " + currentLines[i] + "\n");
+          }
+        }
+      } else {
+        // but just in case of something ridiculous...
+        diff.append(current.toString());
+      }
+      
+      // its possible to be empty, if we "change" a value to what it had before.
+      if (diff.length() > 0) {
+        System.out.println("NOTE: LuceneTestCase: randomly changed IWC's live settings:");
+        System.out.println(diff);
+      }
+    }
   }
 
   /**
    * Returns a new Directory instance. Use this when the test does not
    * care about the specific Directory implementation (most tests).
    * <p>
-   * The Directory is wrapped with {@link MockDirectoryWrapper}.
-   * By default this means it will be picky, such as ensuring that you
+   * The Directory is wrapped with {@link BaseDirectoryWrapper}.
+   * this means usually it will be picky, such as ensuring that you
    * properly close it and all open files in your test. It will emulate
    * some features of Windows, such as not allowing open files to be
    * overwritten.
    */
-  public static MockDirectoryWrapper newDirectory() throws IOException {
-    return newDirectory(random);
+  public static BaseDirectoryWrapper newDirectory() {
+    return newDirectory(random());
+  }
+
+  /** Like {@link #newDirectory} except randomly the {@link VirusCheckingFS} may be installed */
+  public static BaseDirectoryWrapper newMaybeVirusCheckingDirectory() {
+    if (random().nextInt(5) == 4) {
+      Path path = addVirusChecker(createTempDir());
+      return newFSDirectory(path);
+    } else {
+      return newDirectory(random());
+    }
   }
   
   /**
    * Returns a new Directory instance, using the specified random.
    * See {@link #newDirectory()} for more information.
    */
-  public static MockDirectoryWrapper newDirectory(Random r) throws IOException {
-    Directory impl = newDirectoryImpl(r, TEST_DIRECTORY);
-    MockDirectoryWrapper dir = new MockDirectoryWrapper(r, maybeNRTWrap(r, impl));
-    stores.put(dir, Thread.currentThread().getStackTrace());
-    if (VERBOSE) {
-      System.out.println("NOTE: LuceneTestCase.newDirectory: returning " + dir);
-    }
-    return dir;
+  public static BaseDirectoryWrapper newDirectory(Random r) {
+    return wrapDirectory(r, newDirectoryImpl(r, TEST_DIRECTORY), rarely(r));
   }
-  
+
+  /**
+   * Returns a new Directory instance, using the specified random.
+   * See {@link #newDirectory()} for more information.
+   */
+  public static BaseDirectoryWrapper newDirectory(Random r, LockFactory lf) {
+    return wrapDirectory(r, newDirectoryImpl(r, TEST_DIRECTORY, lf), rarely(r));
+  }
+
+  public static MockDirectoryWrapper newMockDirectory() {
+    return newMockDirectory(random());
+  }
+
+  public static MockDirectoryWrapper newMockDirectory(Random r) {
+    return (MockDirectoryWrapper) wrapDirectory(r, newDirectoryImpl(r, TEST_DIRECTORY), false);
+  }
+
+  public static MockDirectoryWrapper newMockDirectory(Random r, LockFactory lf) {
+    return (MockDirectoryWrapper) wrapDirectory(r, newDirectoryImpl(r, TEST_DIRECTORY, lf), false);
+  }
+
+  public static MockDirectoryWrapper newMockFSDirectory(Path f) {
+    return (MockDirectoryWrapper) newFSDirectory(f, FSLockFactory.getDefault(), false);
+  }
+
+  public static MockDirectoryWrapper newMockFSDirectory(Path f, LockFactory lf) {
+    return (MockDirectoryWrapper) newFSDirectory(f, lf, false);
+  }
+
+  public static Path addVirusChecker(Path path) {
+    if (TestUtil.hasVirusChecker(path) == false) {
+      VirusCheckingFS fs = new VirusCheckingFS(path.getFileSystem(), random().nextLong());
+      FileSystem filesystem = fs.getFileSystem(URI.create("file:///"));
+      path = new FilterPath(path, filesystem);
+    }
+    return path;
+  }
+
   /**
    * Returns a new Directory instance, with contents copied from the
    * provided directory. See {@link #newDirectory()} for more
    * information.
    */
-  public static MockDirectoryWrapper newDirectory(Directory d) throws IOException {
-    return newDirectory(random, d);
+  public static BaseDirectoryWrapper newDirectory(Directory d) throws IOException {
+    return newDirectory(random(), d);
   }
-  
+
   /** Returns a new FSDirectory instance over the given file, which must be a folder. */
-  public static MockDirectoryWrapper newFSDirectory(File f) throws IOException {
-    return newFSDirectory(f, null);
+  public static BaseDirectoryWrapper newFSDirectory(Path f) {
+    return newFSDirectory(f, FSLockFactory.getDefault());
   }
-  
+
+  /** Like {@link #newFSDirectory(Path)}, but randomly insert {@link VirusCheckingFS} */
+  public static BaseDirectoryWrapper newMaybeVirusCheckingFSDirectory(Path f) {
+    if (random().nextInt(5) == 4) {
+      f = addVirusChecker(f);
+    }
+    return newFSDirectory(f, FSLockFactory.getDefault());
+  }
+
   /** Returns a new FSDirectory instance over the given file, which must be a folder. */
-  public static MockDirectoryWrapper newFSDirectory(File f, LockFactory lf) throws IOException {
+  public static BaseDirectoryWrapper newFSDirectory(Path f, LockFactory lf) {
+    return newFSDirectory(f, lf, rarely());
+  }
+
+  private static BaseDirectoryWrapper newFSDirectory(Path f, LockFactory lf, boolean bare) {
     String fsdirClass = TEST_DIRECTORY;
     if (fsdirClass.equals("random")) {
-      fsdirClass = FS_DIRECTORIES[random.nextInt(FS_DIRECTORIES.length)];
+      fsdirClass = RandomPicks.randomFrom(random(), FS_DIRECTORIES); 
     }
-    
+
     Class<? extends FSDirectory> clazz;
     try {
       try {
         clazz = CommandLineUtil.loadFSDirectoryClass(fsdirClass);
       } catch (ClassCastException e) {
         // TEST_DIRECTORY is not a sub-class of FSDirectory, so draw one at random
-        fsdirClass = FS_DIRECTORIES[random.nextInt(FS_DIRECTORIES.length)];
+        fsdirClass = RandomPicks.randomFrom(random(), FS_DIRECTORIES);
         clazz = CommandLineUtil.loadFSDirectoryClass(fsdirClass);
       }
-      
-      Directory fsdir = newFSDirectoryImpl(clazz, f);
-      MockDirectoryWrapper dir = new MockDirectoryWrapper(random, maybeNRTWrap(random, fsdir));
-      if (lf != null) {
-        dir.setLockFactory(lf);
-      }
-      stores.put(dir, Thread.currentThread().getStackTrace());
-      return dir;
+
+      Directory fsdir = newFSDirectoryImpl(clazz, f, lf);
+      BaseDirectoryWrapper wrapped = wrapDirectory(random(), fsdir, bare);
+      return wrapped;
     } catch (Exception e) {
-      throw new RuntimeException(e);
+      Rethrow.rethrow(e);
+      throw null; // dummy to prevent compiler failure
     }
   }
-  
+
   /**
    * Returns a new Directory instance, using the specified random
    * with contents copied from the provided directory. See 
    * {@link #newDirectory()} for more information.
    */
-  public static MockDirectoryWrapper newDirectory(Random r, Directory d) throws IOException {
+  public static BaseDirectoryWrapper newDirectory(Random r, Directory d) throws IOException {
     Directory impl = newDirectoryImpl(r, TEST_DIRECTORY);
     for (String file : d.listAll()) {
-     d.copy(impl, file, file);
+      if (file.startsWith(IndexFileNames.SEGMENTS) || IndexFileNames.CODEC_FILE_PATTERN.matcher(file).matches()) {
+        impl.copyFrom(d, file, file, newIOContext(r));
+      }
     }
-    MockDirectoryWrapper dir = new MockDirectoryWrapper(r, maybeNRTWrap(r, impl));
-    stores.put(dir, Thread.currentThread().getStackTrace());
-    return dir;
+    return wrapDirectory(r, impl, rarely(r));
   }
+  
+  private static BaseDirectoryWrapper wrapDirectory(Random random, Directory directory, boolean bare) {
+    if (rarely(random) && !bare) {
+      directory = new NRTCachingDirectory(directory, random.nextDouble(), random.nextDouble());
+    }
 
-  private static Directory maybeNRTWrap(Random random, Directory directory) {
-    if (rarely(random)) {
-      return new NRTCachingDirectory(directory, random.nextDouble(), random.nextDouble());
+    if (bare) {
+      BaseDirectoryWrapper base = new RawDirectoryWrapper(directory);
+      closeAfterSuite(new CloseableDirectory(base, suiteFailureMarker));
+      return base;
     } else {
-      return directory;
+      MockDirectoryWrapper mock = new MockDirectoryWrapper(random, directory);
+      
+      mock.setThrottling(TEST_THROTTLING);
+      closeAfterSuite(new CloseableDirectory(mock, suiteFailureMarker));
+      return mock;
     }
   }
   
-  /** Returns a new field instance. 
-   * See {@link #newField(String, String, Field.Store, Field.Index, Field.TermVector)} for more information */
-  public static Field newField(String name, String value, Index index) {
-    return newField(random, name, value, index);
+  public static Field newStringField(String name, String value, Store stored) {
+    return newField(random(), name, value, stored == Store.YES ? StringField.TYPE_STORED : StringField.TYPE_NOT_STORED);
+  }
+
+  public static Field newStringField(String name, BytesRef value, Store stored) {
+    return newField(random(), name, value, stored == Store.YES ? StringField.TYPE_STORED : StringField.TYPE_NOT_STORED);
+  }
+
+  public static Field newTextField(String name, String value, Store stored) {
+    return newField(random(), name, value, stored == Store.YES ? TextField.TYPE_STORED : TextField.TYPE_NOT_STORED);
   }
   
-  /** Returns a new field instance. 
-   * See {@link #newField(String, String, Field.Store, Field.Index, Field.TermVector)} for more information */
-  public static Field newField(String name, String value, Store store, Index index) {
-    return newField(random, name, value, store, index);
+  public static Field newStringField(Random random, String name, String value, Store stored) {
+    return newField(random, name, value, stored == Store.YES ? StringField.TYPE_STORED : StringField.TYPE_NOT_STORED);
+  }
+
+  public static Field newStringField(Random random, String name, BytesRef value, Store stored) {
+    return newField(random, name, value, stored == Store.YES ? StringField.TYPE_STORED : StringField.TYPE_NOT_STORED);
   }
   
-  /**
-   * Returns a new Field instance. Use this when the test does not
-   * care about some specific field settings (most tests)
-   * <ul>
-   *  <li>If the store value is set to Store.NO, sometimes the field will be randomly stored.
-   *  <li>More term vector data than you ask for might be indexed, for example if you choose YES
-   *      it might index term vectors with offsets too.
-   * </ul>
-   */
-  public static Field newField(String name, String value, Store store, Index index, TermVector tv) {
-    return newField(random, name, value, store, index, tv);
+  public static Field newTextField(Random random, String name, String value, Store stored) {
+    return newField(random, name, value, stored == Store.YES ? TextField.TYPE_STORED : TextField.TYPE_NOT_STORED);
   }
   
-  /** Returns a new field instance, using the specified random. 
-   * See {@link #newField(String, String, Field.Store, Field.Index, Field.TermVector)} for more information */
-  public static Field newField(Random random, String name, String value, Index index) {
-    return newField(random, name, value, Store.NO, index);
+  public static Field newField(String name, String value, FieldType type) {
+    return newField(random(), name, value, type);
   }
-  
-  /** Returns a new field instance, using the specified random. 
-   * See {@link #newField(String, String, Field.Store, Field.Index, Field.TermVector)} for more information */
-  public static Field newField(Random random, String name, String value, Store store, Index index) {
-    return newField(random, name, value, store, index, TermVector.NO);
-  }
-  
-  /** Returns a new field instance, using the specified random. 
-   * See {@link #newField(String, String, Field.Store, Field.Index, Field.TermVector)} for more information */
-  public static Field newField(Random random, String name, String value, Store store, Index index, TermVector tv) {
-    if (usually(random)) {
-      // most of the time, don't modify the params
-      return new Field(name, value, store, index, tv);
+
+  /** Returns a FieldType derived from newType but whose
+   *  term vector options match the old type */
+  private static FieldType mergeTermVectorOptions(FieldType newType, FieldType oldType) {
+    if (newType.indexOptions() != IndexOptions.NONE && oldType.storeTermVectors() == true && newType.storeTermVectors() == false) {
+      newType = new FieldType(newType);
+      newType.setStoreTermVectors(oldType.storeTermVectors());
+      newType.setStoreTermVectorPositions(oldType.storeTermVectorPositions());
+      newType.setStoreTermVectorOffsets(oldType.storeTermVectorOffsets());
+      newType.setStoreTermVectorPayloads(oldType.storeTermVectorPayloads());
+      newType.freeze();
     }
 
-    if (!index.isIndexed())
-      return new Field(name, value, store, index, tv);
-    
-    if (!store.isStored() && random.nextBoolean())
-      store = Store.YES; // randomly store it
-    
-    tv = randomTVSetting(random, tv);
-    
-    return new Field(name, value, store, index, tv);
+    return newType;
   }
-  
-  static final TermVector tvSettings[] = { 
-    TermVector.NO, TermVector.YES, TermVector.WITH_OFFSETS, 
-    TermVector.WITH_POSITIONS, TermVector.WITH_POSITIONS_OFFSETS 
-  };
-  
-  private static TermVector randomTVSetting(Random random, TermVector minimum) {
-    switch(minimum) {
-      case NO: return tvSettings[_TestUtil.nextInt(random, 0, tvSettings.length-1)];
-      case YES: return tvSettings[_TestUtil.nextInt(random, 1, tvSettings.length-1)];
-      case WITH_OFFSETS: return random.nextBoolean() ? TermVector.WITH_OFFSETS 
-          : TermVector.WITH_POSITIONS_OFFSETS;
-      case WITH_POSITIONS: return random.nextBoolean() ? TermVector.WITH_POSITIONS 
-          : TermVector.WITH_POSITIONS_OFFSETS;
-      default: return TermVector.WITH_POSITIONS_OFFSETS;
+
+  // TODO: if we can pull out the "make term vector options
+  // consistent across all instances of the same field name"
+  // write-once schema sort of helper class then we can
+  // remove the sync here.  We can also fold the random
+  // "enable norms" (now commented out, below) into that:
+  public synchronized static Field newField(Random random, String name, Object value, FieldType type) {
+
+    // Defeat any consumers that illegally rely on intern'd
+    // strings (we removed this from Lucene a while back):
+    name = new String(name);
+
+    FieldType prevType = fieldToType.get(name);
+
+    if (usually(random) || type.indexOptions() == IndexOptions.NONE || prevType != null) {
+      // most of the time, don't modify the params
+      if (prevType == null) {
+        fieldToType.put(name, new FieldType(type));
+      } else {
+        type = mergeTermVectorOptions(type, prevType);
+      }
+
+      return createField(name, value, type);
+    }
+
+    // TODO: once all core & test codecs can index
+    // offsets, sometimes randomly turn on offsets if we are
+    // already indexing positions...
+
+    FieldType newType = new FieldType(type);
+    if (!newType.stored() && random.nextBoolean()) {
+      newType.setStored(true); // randomly store it
+    }
+
+    // Randomly turn on term vector options, but always do
+    // so consistently for the same field name:
+    if (!newType.storeTermVectors() && random.nextBoolean()) {
+      newType.setStoreTermVectors(true);
+      if (!newType.storeTermVectorPositions()) {
+        newType.setStoreTermVectorPositions(random.nextBoolean());
+        
+        if (newType.storeTermVectorPositions()) {
+          if (!newType.storeTermVectorPayloads()) {
+            newType.setStoreTermVectorPayloads(random.nextBoolean());
+          }
+        }
+      }
+      
+      if (!newType.storeTermVectorOffsets()) {
+        newType.setStoreTermVectorOffsets(random.nextBoolean());
+      }
+
+      if (VERBOSE) {
+        System.out.println("NOTE: LuceneTestCase: upgrade name=" + name + " type=" + newType);
+      }
+    }
+    newType.freeze();
+    fieldToType.put(name, newType);
+
+    // TODO: we need to do this, but smarter, ie, most of
+    // the time we set the same value for a given field but
+    // sometimes (rarely) we change it up:
+    /*
+    if (newType.omitNorms()) {
+      newType.setOmitNorms(random.nextBoolean());
+    }
+    */
+    
+    return createField(name, value, newType);
+  }
+
+  private static Field createField(String name, Object value, FieldType fieldType) {
+    if (value instanceof String) {
+      return new Field(name, (String) value, fieldType);
+    } else if (value instanceof BytesRef) {
+      return new Field(name, (BytesRef) value, fieldType);
+    } else {
+      throw new IllegalArgumentException("value must be String or BytesRef");
     }
   }
   
-  /** return a random Locale from the available locales on the system */
+  private static final String[] availableLanguageTags = Arrays.stream(Locale.getAvailableLocales())
+      .map(Locale::toLanguageTag)
+      .sorted()
+      .distinct()
+      .toArray(String[]::new);
+
+  /** 
+   * Return a random Locale from the available locales on the system.
+   * @see <a href="http://issues.apache.org/jira/browse/LUCENE-4020">LUCENE-4020</a>
+   */
   public static Locale randomLocale(Random random) {
-    Locale locales[] = Locale.getAvailableLocales();
-    return locales[random.nextInt(locales.length)];
+    return localeForLanguageTag(availableLanguageTags[random.nextInt(availableLanguageTags.length)]);
   }
-  
-  /** return a random TimeZone from the available timezones on the system */
+
+  /** 
+   * Return a random TimeZone from the available timezones on the system
+   * @see <a href="http://issues.apache.org/jira/browse/LUCENE-4020">LUCENE-4020</a>
+   */
   public static TimeZone randomTimeZone(Random random) {
     String tzIds[] = TimeZone.getAvailableIDs();
     return TimeZone.getTimeZone(tzIds[random.nextInt(tzIds.length)]);
   }
-  
+
   /** return a Locale object equivalent to its programmatic name */
-  public static Locale localeForName(String localeName) {
-    String elements[] = localeName.split("\\_");
-    switch(elements.length) {
-      case 3: return new Locale(elements[0], elements[1], elements[2]);
-      case 2: return new Locale(elements[0], elements[1]);
-      case 1: return new Locale(elements[0]);
-      default: throw new IllegalArgumentException("Invalid Locale: " + localeName);
-    }
+  public static Locale localeForLanguageTag(String languageTag) {
+    return new Locale.Builder().setLanguageTag(languageTag).build();
   }
 
-  private static final String FS_DIRECTORIES[] = {
-    "SimpleFSDirectory",
-    "NIOFSDirectory",
-    "MMapDirectory"
-  };
-
-  private static final String CORE_DIRECTORIES[] = {
-    "RAMDirectory",
-    FS_DIRECTORIES[0], FS_DIRECTORIES[1], FS_DIRECTORIES[2]
-  };
-  
-  public static String randomDirectory(Random random) {
-    if (rarely(random)) {
-      return CORE_DIRECTORIES[random.nextInt(CORE_DIRECTORIES.length)];
-    } else {
-      return "RAMDirectory";
-    }
-  }
-
-  private static Directory newFSDirectoryImpl(
-      Class<? extends FSDirectory> clazz, File file)
-      throws IOException {
+  private static Directory newFSDirectoryImpl(Class<? extends FSDirectory> clazz, Path path, LockFactory lf) throws IOException {
     FSDirectory d = null;
     try {
-      d = CommandLineUtil.newFSDirectory(clazz, file);
-    } catch (Exception e) {
-      d = FSDirectory.open(file);
+      d = CommandLineUtil.newFSDirectory(clazz, path, lf);
+    } catch (ReflectiveOperationException e) {
+      Rethrow.rethrow(e);
     }
     return d;
   }
 
-  /**
-   * Registers a temp directory that will be deleted when tests are done. This
-   * is used by {@link _TestUtil#getTempDir(String)} and
-   * {@link _TestUtil#unzip(File, File)}, so you should call these methods when
-   * possible.
-   */
-  static void registerTempDir(File tmpFile) {
-    tempDirs.put(tmpFile.getAbsoluteFile(), Thread.currentThread().getStackTrace());
+  static Directory newDirectoryImpl(Random random, String clazzName) {
+    return newDirectoryImpl(random, clazzName, FSLockFactory.getDefault());
   }
   
-  static Directory newDirectoryImpl(Random random, String clazzName) {
+  static Directory newDirectoryImpl(Random random, String clazzName, LockFactory lf) {
     if (clazzName.equals("random")) {
-      clazzName = randomDirectory(random);
+      if (rarely(random)) {
+        clazzName = RandomPicks.randomFrom(random, CORE_DIRECTORIES);
+      } else {
+        clazzName = "RAMDirectory";
+      }
     }
-    
+
     try {
       final Class<? extends Directory> clazz = CommandLineUtil.loadDirectoryClass(clazzName);
-      // If it is a FSDirectory type, try its ctor(File)
+      // If it is a FSDirectory type, try its ctor(Path)
       if (FSDirectory.class.isAssignableFrom(clazz)) {
-        final File dir = _TestUtil.getTempDir("index");
-        dir.mkdirs(); // ensure it's created so we 'have' it.
-        return newFSDirectoryImpl(clazz.asSubclass(FSDirectory.class), dir);
+        final Path dir = createTempDir("index-" + clazzName);
+        return newFSDirectoryImpl(clazz.asSubclass(FSDirectory.class), dir, lf);
+      }
+
+      // See if it has a Path/LockFactory ctor even though it's not an
+      // FSDir subclass:
+      try {
+        Constructor<? extends Directory> pathCtor = clazz.getConstructor(Path.class, LockFactory.class);
+        final Path dir = createTempDir("index");
+        return pathCtor.newInstance(dir, lf);
+      } catch (NoSuchMethodException nsme) {
+        // Ignore
+      }
+      
+      // the remaining dirs are no longer filesystem based, so we must check that the passedLockFactory is not file based:
+      if (!(lf instanceof FSLockFactory)) {
+        // try ctor with only LockFactory (e.g. RAMDirectory)
+        try {
+          return clazz.getConstructor(LockFactory.class).newInstance(lf);
+        } catch (NoSuchMethodException nsme) {
+          // Ignore
+        }
       }
 
       // try empty ctor
       return clazz.newInstance();
     } catch (Exception e) {
-      throw new RuntimeException(e);
-    } 
-  }
-  
-  /** create a new searcher over the reader.
-   * This searcher might randomly use threads. */
-  public static IndexSearcher newSearcher(IndexReader r) throws IOException {
-    return newSearcher(r, true);
-  }
-  
-  /** create a new searcher over the reader.
-   * This searcher might randomly use threads.
-   * if <code>maybeWrap</code> is true, this searcher might wrap the reader
-   * with one that returns null for getSequentialSubReaders.
-   */
-  public static IndexSearcher newSearcher(IndexReader r, boolean maybeWrap) throws IOException {
-    if (usually()) {
-      if (maybeWrap && rarely()) {
-        r = new SlowMultiReaderWrapper(r);
-      }
-      return new AssertingIndexSearcher(r);
-    } else {
-      int threads = 0;
-      final ExecutorService ex = (random.nextBoolean()) ? null 
-          : Executors.newFixedThreadPool(threads = _TestUtil.nextInt(random, 1, 8), 
-                      new NamedThreadFactory("LuceneTestCase"));
-      if (ex != null && VERBOSE) {
-        System.out.println("NOTE: newSearcher using ExecutorService with " + threads + " threads");
-      }
-      return new AssertingIndexSearcher(r, ex) {
-        @Override
-        public void close() throws IOException {
-          super.close();
-          shutdownExecutorService(ex);
-        }
-      };
-    }
-  }
-  
-  static void shutdownExecutorService(ExecutorService ex) {
-    if (ex != null) {
-      ex.shutdown();
-      try {
-        ex.awaitTermination(1000, TimeUnit.MILLISECONDS);
-      } catch (InterruptedException e) {
-        e.printStackTrace();
-      }
+      Rethrow.rethrow(e);
+      throw null; // dummy to prevent compiler failure
     }
   }
 
-  public String getName() {
-    return this.name;
+  public static IndexReader wrapReader(IndexReader r) throws IOException {
+    Random random = random();
+      
+    for (int i = 0, c = random.nextInt(6)+1; i < c; i++) {
+      switch(random.nextInt(5)) {
+      case 0:
+        // will create no FC insanity in atomic case, as ParallelLeafReader has own cache key:
+        if (VERBOSE) {
+          System.out.println("NOTE: LuceneTestCase.wrapReader: wrapping previous reader=" + r + " with ParallelLeaf/CompositeReader");
+        }
+        r = (r instanceof LeafReader) ?
+          new ParallelLeafReader((LeafReader) r) :
+        new ParallelCompositeReader((CompositeReader) r);
+        break;
+      case 1:
+        // Häckidy-Hick-Hack: a standard MultiReader will cause FC insanity, so we use
+        // QueryUtils' reader with a fake cache key, so insanity checker cannot walk
+        // along our reader:
+        if (VERBOSE) {
+          System.out.println("NOTE: LuceneTestCase.wrapReader: wrapping previous reader=" + r + " with FCInvisibleMultiReader");
+        }
+        r = new FCInvisibleMultiReader(r);
+        break;
+      case 2:
+        if (r instanceof LeafReader) {
+          final LeafReader ar = (LeafReader) r;
+          final List<String> allFields = new ArrayList<>();
+          for (FieldInfo fi : ar.getFieldInfos()) {
+            allFields.add(fi.name);
+          }
+          Collections.shuffle(allFields, random);
+          final int end = allFields.isEmpty() ? 0 : random.nextInt(allFields.size());
+          final Set<String> fields = new HashSet<>(allFields.subList(0, end));
+          // will create no FC insanity as ParallelLeafReader has own cache key:
+          if (VERBOSE) {
+            System.out.println("NOTE: LuceneTestCase.wrapReader: wrapping previous reader=" + r + " with ParallelLeafReader");
+          }
+          r = new ParallelLeafReader(
+                                     new FieldFilterLeafReader(ar, fields, false),
+                                     new FieldFilterLeafReader(ar, fields, true)
+                                     );
+        }
+        break;
+      case 3:
+        // Häckidy-Hick-Hack: a standard Reader will cause FC insanity, so we use
+        // QueryUtils' reader with a fake cache key, so insanity checker cannot walk
+        // along our reader:
+        if (VERBOSE) {
+          System.out.println("NOTE: LuceneTestCase.wrapReader: wrapping previous reader=" + r + " with AssertingLeaf/DirectoryReader");
+        }
+        if (r instanceof LeafReader) {
+          r = new AssertingLeafReader((LeafReader)r);
+        } else if (r instanceof DirectoryReader) {
+          r = new AssertingDirectoryReader((DirectoryReader)r);
+        }
+        break;
+      case 4:
+        if (VERBOSE) {
+          System.out.println("NOTE: LuceneTestCase.wrapReader: wrapping previous reader=" + r + " with MismatchedLeaf/DirectoryReader");
+        }
+        if (r instanceof LeafReader) {
+          r = new MismatchedLeafReader((LeafReader)r, random);
+        } else if (r instanceof DirectoryReader) {
+          r = new MismatchedDirectoryReader((DirectoryReader)r, random);
+        }
+        break;
+      default:
+        fail("should not get here");
+      }
+    }
+
+    if ((r instanceof CompositeReader) && !(r instanceof FCInvisibleMultiReader)) {
+      // prevent cache insanity caused by e.g. ParallelCompositeReader, to fix we wrap one more time:
+      r = new FCInvisibleMultiReader(r);
+    }
+    if (VERBOSE) {
+      System.out.println("wrapReader wrapped: " +r);
+    }
+
+    return r;
   }
   
-  /** Gets a resource from the classpath as {@link File}. This method should only be used,
-   * if a real file is needed. To get a stream, code should prefer
-   * {@link Class#getResourceAsStream} using {@code this.getClass()}.
+  /**
+   * Sometimes wrap the IndexReader as slow, parallel or filter reader (or
+   * combinations of that)
    */
-  
-  protected File getDataFile(String name) throws IOException {
+  public static IndexReader maybeWrapReader(IndexReader r) throws IOException {
+    if (rarely()) {
+      r = wrapReader(r);
+    }
+    return r;
+  }
+
+  /** TODO: javadoc */
+  public static IOContext newIOContext(Random random) {
+    return newIOContext(random, IOContext.DEFAULT);
+  }
+
+  /** TODO: javadoc */
+  public static IOContext newIOContext(Random random, IOContext oldContext) {
+    final int randomNumDocs = random.nextInt(4192);
+    final int size = random.nextInt(512) * randomNumDocs;
+    if (oldContext.flushInfo != null) {
+      // Always return at least the estimatedSegmentSize of
+      // the incoming IOContext:
+      return new IOContext(new FlushInfo(randomNumDocs, Math.max(oldContext.flushInfo.estimatedSegmentSize, size)));
+    } else if (oldContext.mergeInfo != null) {
+      // Always return at least the estimatedMergeBytes of
+      // the incoming IOContext:
+      return new IOContext(new MergeInfo(randomNumDocs, Math.max(oldContext.mergeInfo.estimatedMergeBytes, size), random.nextBoolean(), TestUtil.nextInt(random, 1, 100)));
+    } else {
+      // Make a totally random IOContext:
+      final IOContext context;
+      switch (random.nextInt(5)) {
+      case 0:
+        context = IOContext.DEFAULT;
+        break;
+      case 1:
+        context = IOContext.READ;
+        break;
+      case 2:
+        context = IOContext.READONCE;
+        break;
+      case 3:
+        context = new IOContext(new MergeInfo(randomNumDocs, size, true, -1));
+        break;
+      case 4:
+        context = new IOContext(new FlushInfo(randomNumDocs, size));
+        break;
+      default:
+        context = IOContext.DEFAULT;
+      }
+      return context;
+    }
+  }
+
+  private static final QueryCache DEFAULT_QUERY_CACHE = IndexSearcher.getDefaultQueryCache();
+  private static final QueryCachingPolicy DEFAULT_CACHING_POLICY = IndexSearcher.getDefaultQueryCachingPolicy();
+
+  @Before
+  public void overrideTestDefaultQueryCache() {
+    // Make sure each test method has its own cache
+    overrideDefaultQueryCache();
+  }
+
+  @BeforeClass
+  public static void overrideDefaultQueryCache() {
+    // we need to reset the query cache in an @BeforeClass so that tests that
+    // instantiate an IndexSearcher in an @BeforeClass method use a fresh new cache
+    IndexSearcher.setDefaultQueryCache(new LRUQueryCache(10000, 1 << 25, context -> true));
+    IndexSearcher.setDefaultQueryCachingPolicy(MAYBE_CACHE_POLICY);
+  }
+
+  @AfterClass
+  public static void resetDefaultQueryCache() {
+    IndexSearcher.setDefaultQueryCache(DEFAULT_QUERY_CACHE);
+    IndexSearcher.setDefaultQueryCachingPolicy(DEFAULT_CACHING_POLICY);
+  }
+
+  @BeforeClass
+  public static void setupCPUCoreCount() {
+    // Randomize core count so CMS varies its dynamic defaults, and this also "fixes" core
+    // count from the master seed so it will always be the same on reproduce:
+    int numCores = TestUtil.nextInt(random(), 1, 4);
+    System.setProperty(ConcurrentMergeScheduler.DEFAULT_CPU_CORE_COUNT_PROPERTY, Integer.toString(numCores));
+  }
+
+  @AfterClass
+  public static void restoreCPUCoreCount() {
+    System.clearProperty(ConcurrentMergeScheduler.DEFAULT_CPU_CORE_COUNT_PROPERTY);
+  }
+
+  @BeforeClass
+  public static void setupSpins() {
+    // Randomize IOUtils.spins() count so CMS varies its dynamic defaults, and this also "fixes" core
+    // count from the master seed so it will always be the same on reproduce:
+    boolean spins = random().nextBoolean();
+    System.setProperty(ConcurrentMergeScheduler.DEFAULT_SPINS_PROPERTY, Boolean.toString(spins));
+  }
+
+  @AfterClass
+  public static void restoreSpins() {
+    System.clearProperty(ConcurrentMergeScheduler.DEFAULT_SPINS_PROPERTY);
+  }
+
+  /**
+   * Create a new searcher over the reader. This searcher might randomly use
+   * threads.
+   */
+  public static IndexSearcher newSearcher(IndexReader r) {
+    return newSearcher(r, true);
+  }
+
+  /**
+   * Create a new searcher over the reader. This searcher might randomly use
+   * threads.
+   */
+  public static IndexSearcher newSearcher(IndexReader r, boolean maybeWrap) {
+    return newSearcher(r, maybeWrap, true);
+  }
+
+  /**
+   * Create a new searcher over the reader. This searcher might randomly use
+   * threads. if <code>maybeWrap</code> is true, this searcher might wrap the
+   * reader with one that returns null for getSequentialSubReaders. If
+   * <code>wrapWithAssertions</code> is true, this searcher might be an
+   * {@link AssertingIndexSearcher} instance.
+   */
+  public static IndexSearcher newSearcher(IndexReader r, boolean maybeWrap, boolean wrapWithAssertions) {
+    Random random = random();
+    if (usually()) {
+      if (maybeWrap) {
+        try {
+          r = maybeWrapReader(r);
+        } catch (IOException e) {
+          Rethrow.rethrow(e);
+        }
+      }
+      // TODO: this whole check is a coverage hack, we should move it to tests for various filterreaders.
+      // ultimately whatever you do will be checkIndex'd at the end anyway. 
+      if (random.nextInt(500) == 0 && r instanceof LeafReader) {
+        // TODO: not useful to check DirectoryReader (redundant with checkindex)
+        // but maybe sometimes run this on the other crazy readers maybeWrapReader creates?
+        try {
+          TestUtil.checkReader(r);
+        } catch (IOException e) {
+          Rethrow.rethrow(e);
+        }
+      }
+      final IndexSearcher ret;
+      if (wrapWithAssertions) {
+        ret = random.nextBoolean() ? new AssertingIndexSearcher(random, r) : new AssertingIndexSearcher(random, r.getContext());
+      } else {
+        ret = random.nextBoolean() ? new IndexSearcher(r) : new IndexSearcher(r.getContext());
+      }
+      ret.setSimilarity(classEnvRule.similarity);
+      return ret;
+    } else {
+      int threads = 0;
+      final ThreadPoolExecutor ex;
+      if (random.nextBoolean()) {
+        ex = null;
+      } else {
+        threads = TestUtil.nextInt(random, 1, 8);
+        ex = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<Runnable>(),
+            new NamedThreadFactory("LuceneTestCase"));
+        // uncomment to intensify LUCENE-3840
+        // ex.prestartAllCoreThreads();
+      }
+      if (ex != null) {
+       if (VERBOSE) {
+         System.out.println("NOTE: newSearcher using ExecutorService with " + threads + " threads");
+       }
+       r.addReaderClosedListener(new ReaderClosedListener() {
+         @Override
+         public void onClose(IndexReader reader) {
+           TestUtil.shutdownExecutorService(ex);
+         }
+       });
+      }
+      IndexSearcher ret;
+      if (wrapWithAssertions) {
+        ret = random.nextBoolean()
+            ? new AssertingIndexSearcher(random, r, ex)
+            : new AssertingIndexSearcher(random, r.getContext(), ex);
+      } else {
+        ret = random.nextBoolean()
+            ? new IndexSearcher(r, ex)
+            : new IndexSearcher(r.getContext(), ex);
+      }
+      ret.setSimilarity(classEnvRule.similarity);
+      ret.setQueryCachingPolicy(MAYBE_CACHE_POLICY);
+      return ret;
+    }
+  }
+
+  /**
+   * Gets a resource from the test's classpath as {@link Path}. This method should only
+   * be used, if a real file is needed. To get a stream, code should prefer
+   * {@link #getDataInputStream(String)}.
+   */
+  protected Path getDataPath(String name) throws IOException {
     try {
-      return new File(this.getClass().getResource(name).toURI());
+      return Paths.get(this.getClass().getResource(name).toURI());
     } catch (Exception e) {
       throw new IOException("Cannot find resource: " + name);
     }
   }
 
-  // We get here from InterceptTestCaseEvents on the 'failed' event....
-  public static void reportPartialFailureInfo() {
-    System.err.println("NOTE: reproduce with (hopefully): ant test -Dtestcase=" + testClassesRun.get(testClassesRun.size()-1)
-        + " -Dtests.seed=" + new ThreeLongs(staticSeed, 0L, LuceneTestCaseRunner.runnerSeed)
-        + reproduceWithExtraParams());
-  }
-  
-  // We get here from InterceptTestCaseEvents on the 'failed' event....
-  public void reportAdditionalFailureInfo() {
-    StringBuilder b = new StringBuilder();
-    b.append("NOTE: reproduce with: ant test -Dtestcase=")
-     .append(getClass().getSimpleName());
-    if (getName() != null) {
-      b.append(" -Dtestmethod=").append(getName());
+  /**
+   * Gets a resource from the test's classpath as {@link InputStream}.
+   */
+  protected InputStream getDataInputStream(String name) throws IOException {
+    InputStream in = this.getClass().getResourceAsStream(name);
+    if (in == null) {
+      throw new IOException("Cannot find resource: " + name);
     }
-    b.append(" -Dtests.seed=")
-     .append(new ThreeLongs(staticSeed, seed, LuceneTestCaseRunner.runnerSeed))
-     .append(reproduceWithExtraParams());
-    System.err.println(b.toString());
-  }
-  
-  // extra params that were overridden needed to reproduce the command
-  private static String reproduceWithExtraParams() {
-    StringBuilder sb = new StringBuilder();
-    if (!TEST_LOCALE.equals("random")) sb.append(" -Dtests.locale=").append(TEST_LOCALE);
-    if (!TEST_TIMEZONE.equals("random")) sb.append(" -Dtests.timezone=").append(TEST_TIMEZONE);
-    if (!TEST_DIRECTORY.equals("random")) sb.append(" -Dtests.directory=").append(TEST_DIRECTORY);
-    if (RANDOM_MULTIPLIER > 1) sb.append(" -Dtests.multiplier=").append(RANDOM_MULTIPLIER);
-    if (TEST_NIGHTLY) sb.append(" -Dtests.nightly=true");
-    // TODO we can't randomize this yet (it drives ant crazy) but this makes tests reproduceable
-    // in case machines have different default charsets...
-    sb.append(" -Dargs=\"-Dfile.encoding=" + System.getProperty("file.encoding") + "\"");
-    return sb.toString();
+    return in;
   }
 
-  /**
-   * Return the current class being tested.
+  public void assertReaderEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    assertReaderStatisticsEquals(info, leftReader, rightReader);
+    assertFieldsEquals(info, leftReader, MultiFields.getFields(leftReader), MultiFields.getFields(rightReader), true);
+    assertNormsEquals(info, leftReader, rightReader);
+    assertStoredFieldsEquals(info, leftReader, rightReader);
+    assertTermVectorsEquals(info, leftReader, rightReader);
+    assertDocValuesEquals(info, leftReader, rightReader);
+    assertDeletedDocsEquals(info, leftReader, rightReader);
+    assertFieldInfosEquals(info, leftReader, rightReader);
+    assertPointsEquals(info, leftReader, rightReader);
+  }
+
+  /** 
+   * checks that reader-level statistics are the same 
    */
-  public static Class<?> getTestClass() {
-    return classNameRule.getTestClass();
+  public void assertReaderStatisticsEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    // Somewhat redundant: we never delete docs
+    assertEquals(info, leftReader.maxDoc(), rightReader.maxDoc());
+    assertEquals(info, leftReader.numDocs(), rightReader.numDocs());
+    assertEquals(info, leftReader.numDeletedDocs(), rightReader.numDeletedDocs());
+    assertEquals(info, leftReader.hasDeletions(), rightReader.hasDeletions());
+  }
+
+  /** 
+   * Fields api equivalency 
+   */
+  public void assertFieldsEquals(String info, IndexReader leftReader, Fields leftFields, Fields rightFields, boolean deep) throws IOException {
+    // Fields could be null if there are no postings,
+    // but then it must be null for both
+    if (leftFields == null || rightFields == null) {
+      assertNull(info, leftFields);
+      assertNull(info, rightFields);
+      return;
+    }
+    assertFieldStatisticsEquals(info, leftFields, rightFields);
+    
+    Iterator<String> leftEnum = leftFields.iterator();
+    Iterator<String> rightEnum = rightFields.iterator();
+    
+    while (leftEnum.hasNext()) {
+      String field = leftEnum.next();
+      assertEquals(info, field, rightEnum.next());
+      assertTermsEquals(info, leftReader, leftFields.terms(field), rightFields.terms(field), deep);
+    }
+    assertFalse(rightEnum.hasNext());
+  }
+
+  /** 
+   * checks that top-level statistics on Fields are the same 
+   */
+  public void assertFieldStatisticsEquals(String info, Fields leftFields, Fields rightFields) throws IOException {
+    if (leftFields.size() != -1 && rightFields.size() != -1) {
+      assertEquals(info, leftFields.size(), rightFields.size());
+    }
+  }
+
+  /** 
+   * Terms api equivalency 
+   */
+  public void assertTermsEquals(String info, IndexReader leftReader, Terms leftTerms, Terms rightTerms, boolean deep) throws IOException {
+    if (leftTerms == null || rightTerms == null) {
+      assertNull(info, leftTerms);
+      assertNull(info, rightTerms);
+      return;
+    }
+    assertTermsStatisticsEquals(info, leftTerms, rightTerms);
+    assertEquals("hasOffsets", leftTerms.hasOffsets(), rightTerms.hasOffsets());
+    assertEquals("hasPositions", leftTerms.hasPositions(), rightTerms.hasPositions());
+    assertEquals("hasPayloads", leftTerms.hasPayloads(), rightTerms.hasPayloads());
+
+    TermsEnum leftTermsEnum = leftTerms.iterator();
+    TermsEnum rightTermsEnum = rightTerms.iterator();
+    assertTermsEnumEquals(info, leftReader, leftTermsEnum, rightTermsEnum, true);
+    
+    assertTermsSeekingEquals(info, leftTerms, rightTerms);
+    
+    if (deep) {
+      int numIntersections = atLeast(3);
+      for (int i = 0; i < numIntersections; i++) {
+        String re = AutomatonTestUtil.randomRegexp(random());
+        CompiledAutomaton automaton = new CompiledAutomaton(new RegExp(re, RegExp.NONE).toAutomaton());
+        if (automaton.type == CompiledAutomaton.AUTOMATON_TYPE.NORMAL) {
+          // TODO: test start term too
+          TermsEnum leftIntersection = leftTerms.intersect(automaton, null);
+          TermsEnum rightIntersection = rightTerms.intersect(automaton, null);
+          assertTermsEnumEquals(info, leftReader, leftIntersection, rightIntersection, rarely());
+        }
+      }
+    }
+  }
+
+  /** 
+   * checks collection-level statistics on Terms 
+   */
+  public void assertTermsStatisticsEquals(String info, Terms leftTerms, Terms rightTerms) throws IOException {
+    if (leftTerms.getDocCount() != -1 && rightTerms.getDocCount() != -1) {
+      assertEquals(info, leftTerms.getDocCount(), rightTerms.getDocCount());
+    }
+    if (leftTerms.getSumDocFreq() != -1 && rightTerms.getSumDocFreq() != -1) {
+      assertEquals(info, leftTerms.getSumDocFreq(), rightTerms.getSumDocFreq());
+    }
+    if (leftTerms.getSumTotalTermFreq() != -1 && rightTerms.getSumTotalTermFreq() != -1) {
+      assertEquals(info, leftTerms.getSumTotalTermFreq(), rightTerms.getSumTotalTermFreq());
+    }
+    if (leftTerms.size() != -1 && rightTerms.size() != -1) {
+      assertEquals(info, leftTerms.size(), rightTerms.size());
+    }
+  }
+
+  private static class RandomBits implements Bits {
+    FixedBitSet bits;
+    
+    RandomBits(int maxDoc, double pctLive, Random random) {
+      bits = new FixedBitSet(maxDoc);
+      for (int i = 0; i < maxDoc; i++) {
+        if (random.nextDouble() <= pctLive) {        
+          bits.set(i);
+        }
+      }
+    }
+    
+    @Override
+    public boolean get(int index) {
+      return bits.get(index);
+    }
+
+    @Override
+    public int length() {
+      return bits.length();
+    }
+  }
+
+  /** 
+   * checks the terms enum sequentially
+   * if deep is false, it does a 'shallow' test that doesnt go down to the docsenums
+   */
+  public void assertTermsEnumEquals(String info, IndexReader leftReader, TermsEnum leftTermsEnum, TermsEnum rightTermsEnum, boolean deep) throws IOException {
+    BytesRef term;
+    PostingsEnum leftPositions = null;
+    PostingsEnum rightPositions = null;
+    PostingsEnum leftDocs = null;
+    PostingsEnum rightDocs = null;
+    
+    while ((term = leftTermsEnum.next()) != null) {
+      assertEquals(info, term, rightTermsEnum.next());
+      assertTermStatsEquals(info, leftTermsEnum, rightTermsEnum);
+      if (deep) {
+        assertDocsAndPositionsEnumEquals(info, leftPositions = leftTermsEnum.postings(leftPositions, PostingsEnum.ALL),
+                                   rightPositions = rightTermsEnum.postings(rightPositions, PostingsEnum.ALL));
+
+        assertPositionsSkippingEquals(info, leftReader, leftTermsEnum.docFreq(), 
+                                leftPositions = leftTermsEnum.postings(leftPositions, PostingsEnum.ALL),
+                                rightPositions = rightTermsEnum.postings(rightPositions, PostingsEnum.ALL));
+
+
+        // with freqs:
+        assertDocsEnumEquals(info, leftDocs = leftTermsEnum.postings(leftDocs),
+            rightDocs = rightTermsEnum.postings(rightDocs),
+            true);
+
+
+        // w/o freqs:
+        assertDocsEnumEquals(info, leftDocs = leftTermsEnum.postings(leftDocs, PostingsEnum.NONE),
+            rightDocs = rightTermsEnum.postings(rightDocs, PostingsEnum.NONE),
+            false);
+
+        
+        // with freqs:
+        assertDocsSkippingEquals(info, leftReader, leftTermsEnum.docFreq(), 
+            leftDocs = leftTermsEnum.postings(leftDocs),
+            rightDocs = rightTermsEnum.postings(rightDocs),
+            true);
+
+        // w/o freqs:
+        assertDocsSkippingEquals(info, leftReader, leftTermsEnum.docFreq(), 
+            leftDocs = leftTermsEnum.postings(leftDocs, PostingsEnum.NONE),
+            rightDocs = rightTermsEnum.postings(rightDocs, PostingsEnum.NONE),
+            false);
+      }
+    }
+    assertNull(info, rightTermsEnum.next());
+  }
+
+
+  /**
+   * checks docs + freqs + positions + payloads, sequentially
+   */
+  public void assertDocsAndPositionsEnumEquals(String info, PostingsEnum leftDocs, PostingsEnum rightDocs) throws IOException {
+    assertNotNull(leftDocs);
+    assertNotNull(rightDocs);
+    assertEquals(info, -1, leftDocs.docID());
+    assertEquals(info, -1, rightDocs.docID());
+    int docid;
+    while ((docid = leftDocs.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+      assertEquals(info, docid, rightDocs.nextDoc());
+      int freq = leftDocs.freq();
+      assertEquals(info, freq, rightDocs.freq());
+      for (int i = 0; i < freq; i++) {
+        assertEquals(info, leftDocs.nextPosition(), rightDocs.nextPosition());
+        assertEquals(info, leftDocs.getPayload(), rightDocs.getPayload());
+        assertEquals(info, leftDocs.startOffset(), rightDocs.startOffset());
+        assertEquals(info, leftDocs.endOffset(), rightDocs.endOffset());
+      }
+    }
+    assertEquals(info, DocIdSetIterator.NO_MORE_DOCS, rightDocs.nextDoc());
   }
   
-  // recorded seed: for beforeClass
-  private static long staticSeed;
-  // seed for individual test methods, changed in @before
-  private long seed;
-  
-  static final Random seedRand = new Random();
-  protected static final SmartRandom random = new SmartRandom(0);
-
-  private String name = "<unknown>";
+  /**
+   * checks docs + freqs, sequentially
+   */
+  public void assertDocsEnumEquals(String info, PostingsEnum leftDocs, PostingsEnum rightDocs, boolean hasFreqs) throws IOException {
+    if (leftDocs == null) {
+      assertNull(rightDocs);
+      return;
+    }
+    assertEquals(info, -1, leftDocs.docID());
+    assertEquals(info, -1, rightDocs.docID());
+    int docid;
+    while ((docid = leftDocs.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+      assertEquals(info, docid, rightDocs.nextDoc());
+      if (hasFreqs) {
+        assertEquals(info, leftDocs.freq(), rightDocs.freq());
+      }
+    }
+    assertEquals(info, DocIdSetIterator.NO_MORE_DOCS, rightDocs.nextDoc());
+  }
   
   /**
-   * Annotation for tests that should only be run during nightly builds.
+   * checks advancing docs
    */
-  @Documented
-  @Inherited
-  @Retention(RetentionPolicy.RUNTIME)
-  public @interface Nightly {}
+  public void assertDocsSkippingEquals(String info, IndexReader leftReader, int docFreq, PostingsEnum leftDocs, PostingsEnum rightDocs, boolean hasFreqs) throws IOException {
+    if (leftDocs == null) {
+      assertNull(rightDocs);
+      return;
+    }
+    int docid = -1;
+    int averageGap = leftReader.maxDoc() / (1+docFreq);
+    int skipInterval = 16;
+
+    while (true) {
+      if (random().nextBoolean()) {
+        // nextDoc()
+        docid = leftDocs.nextDoc();
+        assertEquals(info, docid, rightDocs.nextDoc());
+      } else {
+        // advance()
+        int skip = docid + (int) Math.ceil(Math.abs(skipInterval + random().nextGaussian() * averageGap));
+        docid = leftDocs.advance(skip);
+        assertEquals(info, docid, rightDocs.advance(skip));
+      }
+      
+      if (docid == DocIdSetIterator.NO_MORE_DOCS) {
+        return;
+      }
+      if (hasFreqs) {
+        assertEquals(info, leftDocs.freq(), rightDocs.freq());
+      }
+    }
+  }
   
-  @Ignore("just a hack")
-  public final void alwaysIgnoredTestMethod() {}
+  /**
+   * checks advancing docs + positions
+   */
+  public void assertPositionsSkippingEquals(String info, IndexReader leftReader, int docFreq, PostingsEnum leftDocs, PostingsEnum rightDocs) throws IOException {
+    if (leftDocs == null || rightDocs == null) {
+      assertNull(leftDocs);
+      assertNull(rightDocs);
+      return;
+    }
+    
+    int docid = -1;
+    int averageGap = leftReader.maxDoc() / (1+docFreq);
+    int skipInterval = 16;
+
+    while (true) {
+      if (random().nextBoolean()) {
+        // nextDoc()
+        docid = leftDocs.nextDoc();
+        assertEquals(info, docid, rightDocs.nextDoc());
+      } else {
+        // advance()
+        int skip = docid + (int) Math.ceil(Math.abs(skipInterval + random().nextGaussian() * averageGap));
+        docid = leftDocs.advance(skip);
+        assertEquals(info, docid, rightDocs.advance(skip));
+      }
+      
+      if (docid == DocIdSetIterator.NO_MORE_DOCS) {
+        return;
+      }
+      int freq = leftDocs.freq();
+      assertEquals(info, freq, rightDocs.freq());
+      for (int i = 0; i < freq; i++) {
+        assertEquals(info, leftDocs.nextPosition(), rightDocs.nextPosition());
+        assertEquals(info, leftDocs.getPayload(), rightDocs.getPayload());
+      }
+    }
+  }
+
   
-  /** check if assertions are enabled */
-  private static boolean assertionsEnabled() {
+  private void assertTermsSeekingEquals(String info, Terms leftTerms, Terms rightTerms) throws IOException {
+
+    // just an upper bound
+    int numTests = atLeast(20);
+    Random random = random();
+
+    TermsEnum leftEnum = null;
+
+    // collect this number of terms from the left side
+    HashSet<BytesRef> tests = new HashSet<>();
+    int numPasses = 0;
+    while (numPasses < 10 && tests.size() < numTests) {
+      leftEnum = leftTerms.iterator();
+      BytesRef term = null;
+      while ((term = leftEnum.next()) != null) {
+        int code = random.nextInt(10);
+        if (code == 0) {
+          // the term
+          tests.add(BytesRef.deepCopyOf(term));
+        } else if (code == 1) {
+          // truncated subsequence of term
+          term = BytesRef.deepCopyOf(term);
+          if (term.length > 0) {
+            // truncate it
+            term.length = random.nextInt(term.length);
+          }
+        } else if (code == 2) {
+          // term, but ensure a non-zero offset
+          byte newbytes[] = new byte[term.length+5];
+          System.arraycopy(term.bytes, term.offset, newbytes, 5, term.length);
+          tests.add(new BytesRef(newbytes, 5, term.length));
+        } else if (code == 3) {
+          switch (random().nextInt(3)) {
+            case 0:
+              tests.add(new BytesRef()); // before the first term
+              break;
+            case 1:
+              tests.add(new BytesRef(new byte[] {(byte) 0xFF, (byte) 0xFF})); // past the last term
+              break;
+            case 2:
+              tests.add(new BytesRef(TestUtil.randomSimpleString(random()))); // random term
+              break;
+            default:
+              throw new AssertionError();
+          }
+        }
+      }
+      numPasses++;
+    }
+
+    TermsEnum rightEnum = rightTerms.iterator();
+
+    ArrayList<BytesRef> shuffledTests = new ArrayList<>(tests);
+    Collections.shuffle(shuffledTests, random);
+
+    for (BytesRef b : shuffledTests) {
+      if (rarely()) {
+        // make new enums
+        leftEnum = leftTerms.iterator();
+        rightEnum = rightTerms.iterator();
+      }
+
+      final boolean seekExact = random().nextBoolean();
+
+      if (seekExact) {
+        assertEquals(info, leftEnum.seekExact(b), rightEnum.seekExact(b));
+      } else {
+        SeekStatus leftStatus = leftEnum.seekCeil(b);
+        SeekStatus rightStatus = rightEnum.seekCeil(b);
+        assertEquals(info, leftStatus, rightStatus);
+        if (leftStatus != SeekStatus.END) {
+          assertEquals(info, leftEnum.term(), rightEnum.term());
+          assertTermStatsEquals(info, leftEnum, rightEnum);
+        }
+      }
+    }
+  }
+  
+  /**
+   * checks term-level statistics
+   */
+  public void assertTermStatsEquals(String info, TermsEnum leftTermsEnum, TermsEnum rightTermsEnum) throws IOException {
+    assertEquals(info, leftTermsEnum.docFreq(), rightTermsEnum.docFreq());
+    if (leftTermsEnum.totalTermFreq() != -1 && rightTermsEnum.totalTermFreq() != -1) {
+      assertEquals(info, leftTermsEnum.totalTermFreq(), rightTermsEnum.totalTermFreq());
+    }
+  }
+  
+  /** 
+   * checks that norms are the same across all fields 
+   */
+  public void assertNormsEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    Fields leftFields = MultiFields.getFields(leftReader);
+    Fields rightFields = MultiFields.getFields(rightReader);
+    // Fields could be null if there are no postings,
+    // but then it must be null for both
+    if (leftFields == null || rightFields == null) {
+      assertNull(info, leftFields);
+      assertNull(info, rightFields);
+      return;
+    }
+    
+    for (String field : leftFields) {
+      NumericDocValues leftNorms = MultiDocValues.getNormValues(leftReader, field);
+      NumericDocValues rightNorms = MultiDocValues.getNormValues(rightReader, field);
+      if (leftNorms != null && rightNorms != null) {
+        assertDocValuesEquals(info, leftReader.maxDoc(), leftNorms, rightNorms);
+      } else {
+        assertNull(info, leftNorms);
+        assertNull(info, rightNorms);
+      }
+    }
+  }
+  
+  /** 
+   * checks that stored fields of all documents are the same 
+   */
+  public void assertStoredFieldsEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    assert leftReader.maxDoc() == rightReader.maxDoc();
+    for (int i = 0; i < leftReader.maxDoc(); i++) {
+      Document leftDoc = leftReader.document(i);
+      Document rightDoc = rightReader.document(i);
+      
+      // TODO: I think this is bogus because we don't document what the order should be
+      // from these iterators, etc. I think the codec/IndexReader should be free to order this stuff
+      // in whatever way it wants (e.g. maybe it packs related fields together or something)
+      // To fix this, we sort the fields in both documents by name, but
+      // we still assume that all instances with same name are in order:
+      Comparator<IndexableField> comp = new Comparator<IndexableField>() {
+        @Override
+        public int compare(IndexableField arg0, IndexableField arg1) {
+          return arg0.name().compareTo(arg1.name());
+        }        
+      };
+      List<IndexableField> leftFields = new ArrayList<>(leftDoc.getFields());
+      List<IndexableField> rightFields = new ArrayList<>(rightDoc.getFields());
+      Collections.sort(leftFields, comp);
+      Collections.sort(rightFields, comp);
+
+      Iterator<IndexableField> leftIterator = leftFields.iterator();
+      Iterator<IndexableField> rightIterator = rightFields.iterator();
+      while (leftIterator.hasNext()) {
+        assertTrue(info, rightIterator.hasNext());
+        assertStoredFieldEquals(info, leftIterator.next(), rightIterator.next());
+      }
+      assertFalse(info, rightIterator.hasNext());
+    }
+  }
+  
+  /** 
+   * checks that two stored fields are equivalent 
+   */
+  public void assertStoredFieldEquals(String info, IndexableField leftField, IndexableField rightField) {
+    assertEquals(info, leftField.name(), rightField.name());
+    assertEquals(info, leftField.binaryValue(), rightField.binaryValue());
+    assertEquals(info, leftField.stringValue(), rightField.stringValue());
+    assertEquals(info, leftField.numericValue(), rightField.numericValue());
+    // TODO: should we check the FT at all?
+  }
+  
+  /** 
+   * checks that term vectors across all fields are equivalent 
+   */
+  public void assertTermVectorsEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    assert leftReader.maxDoc() == rightReader.maxDoc();
+    for (int i = 0; i < leftReader.maxDoc(); i++) {
+      Fields leftFields = leftReader.getTermVectors(i);
+      Fields rightFields = rightReader.getTermVectors(i);
+      assertFieldsEquals(info, leftReader, leftFields, rightFields, rarely());
+    }
+  }
+
+  private static Set<String> getDVFields(IndexReader reader) {
+    Set<String> fields = new HashSet<>();
+    for(FieldInfo fi : MultiFields.getMergedFieldInfos(reader)) {
+      if (fi.getDocValuesType() != DocValuesType.NONE) {
+        fields.add(fi.name);
+      }
+    }
+
+    return fields;
+  }
+  
+  /**
+   * checks that docvalues across all fields are equivalent
+   */
+  public void assertDocValuesEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    Set<String> leftFields = getDVFields(leftReader);
+    Set<String> rightFields = getDVFields(rightReader);
+    assertEquals(info, leftFields, rightFields);
+
+    for (String field : leftFields) {
+      // TODO: clean this up... very messy
+      {
+        NumericDocValues leftValues = MultiDocValues.getNumericValues(leftReader, field);
+        NumericDocValues rightValues = MultiDocValues.getNumericValues(rightReader, field);
+        if (leftValues != null && rightValues != null) {
+          assertDocValuesEquals(info, leftReader.maxDoc(), leftValues, rightValues);
+        } else {
+          assertNull(info, leftValues);
+          assertNull(info, rightValues);
+        }
+      }
+
+      {
+        BinaryDocValues leftValues = MultiDocValues.getBinaryValues(leftReader, field);
+        BinaryDocValues rightValues = MultiDocValues.getBinaryValues(rightReader, field);
+        if (leftValues != null && rightValues != null) {
+          for(int docID=0;docID<leftReader.maxDoc();docID++) {
+            final BytesRef left = BytesRef.deepCopyOf(leftValues.get(docID));
+            final BytesRef right = rightValues.get(docID);
+            assertEquals(info, left, right);
+          }
+        } else {
+          assertNull(info, leftValues);
+          assertNull(info, rightValues);
+        }
+      }
+      
+      {
+        SortedDocValues leftValues = MultiDocValues.getSortedValues(leftReader, field);
+        SortedDocValues rightValues = MultiDocValues.getSortedValues(rightReader, field);
+        if (leftValues != null && rightValues != null) {
+          // numOrds
+          assertEquals(info, leftValues.getValueCount(), rightValues.getValueCount());
+          // ords
+          for (int i = 0; i < leftValues.getValueCount(); i++) {
+            final BytesRef left = BytesRef.deepCopyOf(leftValues.lookupOrd(i));
+            final BytesRef right = rightValues.lookupOrd(i);
+            assertEquals(info, left, right);
+          }
+          // bytes
+          for(int docID=0;docID<leftReader.maxDoc();docID++) {
+            final BytesRef left = BytesRef.deepCopyOf(leftValues.get(docID));
+            final BytesRef right = rightValues.get(docID);
+            assertEquals(info, left, right);
+          }
+        } else {
+          assertNull(info, leftValues);
+          assertNull(info, rightValues);
+        }
+      }
+      
+      {
+        SortedSetDocValues leftValues = MultiDocValues.getSortedSetValues(leftReader, field);
+        SortedSetDocValues rightValues = MultiDocValues.getSortedSetValues(rightReader, field);
+        if (leftValues != null && rightValues != null) {
+          // numOrds
+          assertEquals(info, leftValues.getValueCount(), rightValues.getValueCount());
+          // ords
+          for (int i = 0; i < leftValues.getValueCount(); i++) {
+            final BytesRef left = BytesRef.deepCopyOf(leftValues.lookupOrd(i));
+            final BytesRef right = rightValues.lookupOrd(i);
+            assertEquals(info, left, right);
+          }
+          // ord lists
+          for(int docID=0;docID<leftReader.maxDoc();docID++) {
+            leftValues.setDocument(docID);
+            rightValues.setDocument(docID);
+            long ord;
+            while ((ord = leftValues.nextOrd()) != SortedSetDocValues.NO_MORE_ORDS) {
+              assertEquals(info, ord, rightValues.nextOrd());
+            }
+            assertEquals(info, SortedSetDocValues.NO_MORE_ORDS, rightValues.nextOrd());
+          }
+        } else {
+          assertNull(info, leftValues);
+          assertNull(info, rightValues);
+        }
+      }
+      
+      {
+        SortedNumericDocValues leftValues = MultiDocValues.getSortedNumericValues(leftReader, field);
+        SortedNumericDocValues rightValues = MultiDocValues.getSortedNumericValues(rightReader, field);
+        if (leftValues != null && rightValues != null) {
+          for (int i = 0; i < leftReader.maxDoc(); i++) {
+            leftValues.setDocument(i);
+            long expected[] = new long[leftValues.count()];
+            for (int j = 0; j < expected.length; j++) {
+              expected[j] = leftValues.valueAt(j);
+            }
+            rightValues.setDocument(i);
+            for (int j = 0; j < expected.length; j++) {
+              assertEquals(info, expected[j], rightValues.valueAt(j));
+            }
+            assertEquals(info, expected.length, rightValues.count());
+          }
+        } else {
+          assertNull(info, leftValues);
+          assertNull(info, rightValues);
+        }
+      }
+      
+      {
+        Bits leftBits = MultiDocValues.getDocsWithField(leftReader, field);
+        Bits rightBits = MultiDocValues.getDocsWithField(rightReader, field);
+        if (leftBits != null && rightBits != null) {
+          assertEquals(info, leftBits.length(), rightBits.length());
+          for (int i = 0; i < leftBits.length(); i++) {
+            assertEquals(info, leftBits.get(i), rightBits.get(i));
+          }
+        } else {
+          assertNull(info, leftBits);
+          assertNull(info, rightBits);
+        }
+      }
+    }
+  }
+  
+  public void assertDocValuesEquals(String info, int num, NumericDocValues leftDocValues, NumericDocValues rightDocValues) throws IOException {
+    assertNotNull(info, leftDocValues);
+    assertNotNull(info, rightDocValues);
+    for(int docID=0;docID<num;docID++) {
+      assertEquals(leftDocValues.get(docID),
+                   rightDocValues.get(docID));
+    }
+  }
+  
+  // TODO: this is kinda stupid, we don't delete documents in the test.
+  public void assertDeletedDocsEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    assert leftReader.numDeletedDocs() == rightReader.numDeletedDocs();
+    Bits leftBits = MultiFields.getLiveDocs(leftReader);
+    Bits rightBits = MultiFields.getLiveDocs(rightReader);
+    
+    if (leftBits == null || rightBits == null) {
+      assertNull(info, leftBits);
+      assertNull(info, rightBits);
+      return;
+    }
+    
+    assert leftReader.maxDoc() == rightReader.maxDoc();
+    assertEquals(info, leftBits.length(), rightBits.length());
+    for (int i = 0; i < leftReader.maxDoc(); i++) {
+      assertEquals(info, leftBits.get(i), rightBits.get(i));
+    }
+  }
+  
+  public void assertFieldInfosEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    FieldInfos leftInfos = MultiFields.getMergedFieldInfos(leftReader);
+    FieldInfos rightInfos = MultiFields.getMergedFieldInfos(rightReader);
+    
+    // TODO: would be great to verify more than just the names of the fields!
+    TreeSet<String> left = new TreeSet<>();
+    TreeSet<String> right = new TreeSet<>();
+    
+    for (FieldInfo fi : leftInfos) {
+      left.add(fi.name);
+    }
+    
+    for (FieldInfo fi : rightInfos) {
+      right.add(fi.name);
+    }
+    
+    assertEquals(info, left, right);
+  }
+
+  // naive silly memory heavy uninversion!!  maps docID -> packed values (a Set because a given doc can be multi-valued)
+  private Map<Integer,Set<BytesRef>> uninvert(String fieldName, IndexReader reader) throws IOException {
+    final Map<Integer,Set<BytesRef>> docValues = new HashMap<>();
+    for(LeafReaderContext ctx : reader.leaves()) {
+
+      PointValues points = ctx.reader().getPointValues();
+      if (points == null) {
+        continue;
+      }
+
+      points.intersect(fieldName,
+                       new PointValues.IntersectVisitor() {
+                         @Override
+                         public void visit(int docID) {
+                           throw new UnsupportedOperationException();
+                         }
+
+                         @Override
+                         public void visit(int docID, byte[] packedValue) throws IOException {
+                           int topDocID = ctx.docBase + docID;
+                           if (docValues.containsKey(topDocID) == false) {
+                             docValues.put(topDocID, new HashSet<BytesRef>());
+                           }
+                           docValues.get(topDocID).add(new BytesRef(packedValue.clone()));
+                         }
+
+                         @Override
+                         public PointValues.Relation compare(byte[] minPackedValue, byte[] maxPackedValue) {
+                           // We pretend our query shape is so hairy that it crosses every single cell:
+                           return PointValues.Relation.CELL_CROSSES_QUERY;
+                         }
+                       });
+    }
+
+    return docValues;
+  }
+
+  public void assertPointsEquals(String info, IndexReader leftReader, IndexReader rightReader) throws IOException {
+    FieldInfos fieldInfos1 = MultiFields.getMergedFieldInfos(leftReader);
+    FieldInfos fieldInfos2 = MultiFields.getMergedFieldInfos(rightReader);
+    for(FieldInfo fieldInfo1 : fieldInfos1) {
+      if (fieldInfo1.getPointDimensionCount() != 0) {
+        FieldInfo fieldInfo2 = fieldInfos2.fieldInfo(fieldInfo1.name);
+        // same dimension count?
+        assertEquals(info, fieldInfo2.getPointDimensionCount(), fieldInfo2.getPointDimensionCount());
+        // same bytes per dimension?
+        assertEquals(info, fieldInfo2.getPointNumBytes(), fieldInfo2.getPointNumBytes());
+
+        assertEquals(info + " field=" + fieldInfo1.name,
+                     uninvert(fieldInfo1.name, leftReader),
+                     uninvert(fieldInfo1.name, rightReader));
+      }
+    }
+
+    // make sure FieldInfos2 doesn't have any point fields that FieldInfo1 didn't have
+    for(FieldInfo fieldInfo2 : fieldInfos2) {
+      if (fieldInfo2.getPointDimensionCount() != 0) {
+        FieldInfo fieldInfo1 = fieldInfos1.fieldInfo(fieldInfo2.name);
+        // same dimension count?
+        assertEquals(info, fieldInfo2.getPointDimensionCount(), fieldInfo1.getPointDimensionCount());
+        // same bytes per dimension?
+        assertEquals(info, fieldInfo2.getPointNumBytes(), fieldInfo1.getPointNumBytes());
+
+        // we don't need to uninvert and compare here ... we did that in the first loop above
+      }
+    }
+  }
+
+  /** A runnable that can throw any checked exception. */
+  @FunctionalInterface
+  public interface ThrowingRunnable {
+    void run() throws Throwable;
+  }
+
+  /** Checks a specific exception class is thrown by the given runnable, and returns it. */
+  public static <T extends Throwable> T expectThrows(Class<T> expectedType, ThrowingRunnable runnable) {
     try {
-      assert Boolean.FALSE.booleanValue();
-      return false; // should never get here
-    } catch (AssertionError e) {
-      return true;
+      runnable.run();
+    } catch (Throwable e) {
+      if (expectedType.isInstance(e)) {
+        return expectedType.cast(e);
+      }
+      AssertionFailedError assertion = new AssertionFailedError("Unexpected exception type, expected " + expectedType.getSimpleName());
+      assertion.initCause(e);
+      throw assertion;
     }
+    throw new AssertionFailedError("Expected exception " + expectedType.getSimpleName());
+  }
+
+  /** Returns true if the file exists (can be opened), false
+   *  if it cannot be opened, and (unlike Java's
+   *  File.exists) throws IOException if there's some
+   *  unexpected error. */
+  public static boolean slowFileExists(Directory dir, String fileName) throws IOException {
+    try {
+      dir.openInput(fileName, IOContext.DEFAULT).close();
+      return true;
+    } catch (NoSuchFileException | FileNotFoundException e) {
+      return false;
+    }
+  }
+
+  /**
+   * This method is deprecated for a reason. Do not use it. Call {@link #createTempDir()}
+   * or {@link #createTempDir(String)} or {@link #createTempFile(String, String)}.
+   */
+  @Deprecated
+  public static Path getBaseTempDirForTestClass() {
+    return tempFilesCleanupRule.getPerTestClassTempDir();
+  }
+
+
+  /**
+   * Creates an empty, temporary folder (when the name of the folder is of no importance).
+   * 
+   * @see #createTempDir(String)
+   */
+  public static Path createTempDir() {
+    return createTempDir("tempDir");
+  }
+
+  /**
+   * Creates an empty, temporary folder with the given name prefix under the 
+   * test class's {@link #getBaseTempDirForTestClass()}.
+   *  
+   * <p>The folder will be automatically removed after the
+   * test class completes successfully. The test should close any file handles that would prevent
+   * the folder from being removed. 
+   */
+  public static Path createTempDir(String prefix) {
+    return tempFilesCleanupRule.createTempDir(prefix);
+  }
+  
+  /**
+   * Creates an empty file with the given prefix and suffix under the 
+   * test class's {@link #getBaseTempDirForTestClass()}.
+   * 
+   * <p>The file will be automatically removed after the
+   * test class completes successfully. The test should close any file handles that would prevent
+   * the folder from being removed. 
+   */
+  public static Path createTempFile(String prefix, String suffix) throws IOException {
+    return tempFilesCleanupRule.createTempFile(prefix, suffix);
+  }
+
+  /**
+   * Creates an empty temporary file.
+   * 
+   * @see #createTempFile(String, String) 
+   */
+  public static Path createTempFile() throws IOException {
+    return createTempFile("tempFile", ".tmp");
+  }
+  
+  /** 
+   * Runs a code part with restricted permissions (be sure to add all required permissions,
+   * because it would start with empty permissions). You cannot grant more permissions than
+   * our policy file allows, but you may restrict writing to several dirs...
+   * <p><em>Note:</em> This assumes a {@link SecurityManager} enabled, otherwise it
+   * stops test execution. If enabled, it needs the following {@link SecurityPermission}:
+   * {@code "createAccessControlContext"}
+   */
+  public static <T> T runWithRestrictedPermissions(PrivilegedExceptionAction<T> action, Permission... permissions) throws Exception {
+    assumeTrue("runWithRestrictedPermissions requires a SecurityManager enabled", System.getSecurityManager() != null);
+    // be sure to have required permission, otherwise doPrivileged runs with *no* permissions:
+    AccessController.checkPermission(new SecurityPermission("createAccessControlContext"));
+    final PermissionCollection perms = new Permissions();
+    Arrays.stream(permissions).forEach(perms::add);
+    final AccessControlContext ctx = new AccessControlContext(new ProtectionDomain[] { new ProtectionDomain(null, perms) });
+    try {
+      return AccessController.doPrivileged(action, ctx);
+    } catch (PrivilegedActionException e) {
+      throw e.getException();
+    }
+  }
+
+  /** True if assertions (-ea) are enabled (at least for this class). */
+  public static final boolean assertsAreEnabled;
+
+  static {
+    boolean enabled = false;
+    assert enabled = true; // Intentional side-effect!!!
+    assertsAreEnabled = enabled;
+  }
+  
+  /** 
+   * Compares two strings with a collator, also looking to see if the the strings
+   * are impacted by jdk bugs. may not avoid all jdk bugs in tests.
+   * see https://bugs.openjdk.java.net/browse/JDK-8071862
+   */
+  @SuppressForbidden(reason = "dodges JDK-8071862")
+  public static int collate(Collator collator, String s1, String s2) {
+    int v1 = collator.compare(s1, s2);
+    int v2 = collator.getCollationKey(s1).compareTo(collator.getCollationKey(s2));
+    // if collation keys don't really respect collation order, things are screwed.
+    assumeTrue("hit JDK collator bug", Integer.signum(v1) == Integer.signum(v2));
+    return v1;
   }
 }

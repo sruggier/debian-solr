@@ -1,6 +1,4 @@
-package org.apache.solr.spelling.suggest.fst;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,8 +14,7 @@ package org.apache.solr.spelling.suggest.fst;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import java.io.File;
+package org.apache.solr.spelling.suggest.fst;
 
 import org.apache.lucene.search.suggest.Lookup;
 import org.apache.lucene.search.suggest.fst.*;
@@ -48,7 +45,7 @@ public class WFSTLookupFactory extends LookupFactory {
     ? Boolean.valueOf(params.get(EXACT_MATCH_FIRST).toString())
     : true;
 
-    return new WFSTCompletionLookup(exactMatchFirst);
+    return new WFSTCompletionLookup(getTempDir(), "suggester", exactMatchFirst);
   }
 
   @Override

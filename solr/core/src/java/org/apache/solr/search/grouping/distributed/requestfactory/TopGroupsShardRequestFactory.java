@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.distributed.requestfactory;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,9 +14,11 @@ package org.apache.solr.search.grouping.distributed.requestfactory;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.distributed.requestfactory;
 
 import org.apache.lucene.analysis.reverse.ReverseStringFilter;
 import org.apache.lucene.search.grouping.SearchGroup;
+import org.apache.lucene.util.BytesRef;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.GroupParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -26,6 +26,7 @@ import org.apache.solr.common.params.ShardParams;
 import org.apache.solr.handler.component.ResponseBuilder;
 import org.apache.solr.handler.component.ShardRequest;
 import org.apache.solr.schema.FieldType;
+import org.apache.solr.schema.IndexSchema;
 import org.apache.solr.search.Grouping;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.search.grouping.distributed.ShardRequestFactory;
@@ -49,11 +50,12 @@ public class TopGroupsShardRequestFactory implements ShardRequestFactory {
   /**
    * {@inheritDoc}
    */
+  @Override
   public ShardRequest[] constructRequest(ResponseBuilder rb) {
     // If we have a group.query we need to query all shards... Or we move this to the group first phase queries
     boolean containsGroupByQuery = rb.getGroupingSpec().getQueries().length > 0;
     // TODO: If groups.truncate=true we only have to query the specific shards even faceting and statistics are enabled
-    if ((rb.getQueryCommand().getFlags() & SolrIndexSearcher.GET_DOCSET) != 0 || containsGroupByQuery) {
+    if (rb.isNeedDocSet() || containsGroupByQuery) {
       // In case we need more results such as faceting and statistics we have to query all shards
       return createRequestForAllShards(rb);
     } else {
@@ -64,18 +66,18 @@ public class TopGroupsShardRequestFactory implements ShardRequestFactory {
 
   private ShardRequest[] createRequestForSpecificShards(ResponseBuilder rb) {
     // Determine all unique shards to query for TopGroups
-    Set<String> uniqueShards = new HashSet<String>();
+    Set<String> uniqueShards = new HashSet<>();
     for (String command : rb.searchGroupToShards.keySet()) {
-      Map<SearchGroup<String>, Set<String>> shards = rb.searchGroupToShards.get(command);
-      for(Set<String> shardsForGroup: shards.values()) {
-        uniqueShards.addAll(shardsForGroup);
+      Map<SearchGroup<BytesRef>, Set<String>> groupsToShard = rb.searchGroupToShards.get(command);
+      for (Set<String> shards : groupsToShard.values()) {
+        uniqueShards.addAll(shards);
       }
     }
 
     return createRequest(rb, uniqueShards.toArray(new String[uniqueShards.size()]));
   }
 
-   private ShardRequest[] createRequestForAllShards(ResponseBuilder rb) {
+  private ShardRequest[] createRequestForAllShards(ResponseBuilder rb) {
     return createRequest(rb, ShardRequest.ALL_SHARDS);
   }
 
@@ -84,7 +86,6 @@ public class TopGroupsShardRequestFactory implements ShardRequestFactory {
     ShardRequest sreq = new ShardRequest();
     sreq.shards = shards;
     sreq.purpose = ShardRequest.PURPOSE_GET_TOP_IDS;
-
     sreq.params = new ModifiableSolrParams(rb.req.getParams());
 
     // If group.format=simple group.offset doesn't make sense
@@ -104,19 +105,20 @@ public class TopGroupsShardRequestFactory implements ShardRequestFactory {
       sreq.params.set(CommonParams.START, "0");
     }
     if (rb.shards_rows > -1) {
-      // if the client set shards.rows set this explicity
+      // if the client set shards.rows set this explicitly
       sreq.params.set(CommonParams.ROWS, rb.shards_rows);
     } else {
       sreq.params.set(CommonParams.ROWS, rb.getSortSpec().getOffset() + rb.getSortSpec().getCount());
     }
 
     sreq.params.set(GroupParams.GROUP_DISTRIBUTED_SECOND, "true");
-    for (Map.Entry<String, Collection<SearchGroup<String>>> entry : rb.mergedSearchGroups.entrySet()) {
-      for (SearchGroup<String> searchGroup : entry.getValue()) {
+    final IndexSchema schema = rb.req.getSearcher().getSchema();
+    for (Map.Entry<String, Collection<SearchGroup<BytesRef>>> entry : rb.mergedSearchGroups.entrySet()) {
+      for (SearchGroup<BytesRef> searchGroup : entry.getValue()) {
         String groupValue;
         if (searchGroup.groupValue != null) {
-          String rawGroupValue = searchGroup.groupValue;
-          FieldType fieldType = rb.req.getSearcher().getSchema().getField(entry.getKey()).getType();
+          String rawGroupValue = searchGroup.groupValue.utf8ToString();
+          FieldType fieldType = schema.getField(entry.getKey()).getType();
           groupValue = fieldType.indexedToReadable(rawGroupValue);
         } else {
           groupValue = GROUP_NULL_VALUE;
@@ -125,10 +127,10 @@ public class TopGroupsShardRequestFactory implements ShardRequestFactory {
       }
     }
 
-    if ((rb.getFieldFlags() & SolrIndexSearcher.GET_SCORES)!=0 || rb.getSortSpec().includesScore()) {
-      sreq.params.set(CommonParams.FL, rb.req.getSchema().getUniqueKeyField().getName() + ",score");
+    if ((rb.getFieldFlags() & SolrIndexSearcher.GET_SCORES) != 0 || rb.getSortSpec().includesScore()) {
+      sreq.params.set(CommonParams.FL, schema.getUniqueKeyField().getName() + ",score");
     } else {
-      sreq.params.set(CommonParams.FL, rb.req.getSchema().getUniqueKeyField().getName());
+      sreq.params.set(CommonParams.FL, schema.getUniqueKeyField().getName());
     }
     
     int origTimeAllowed = sreq.params.getInt(CommonParams.TIME_ALLOWED, -1);

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,17 +14,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
 
+import org.apache.solr.request.SolrQueryRequest;
+
 /**
- * @version $Id$
+ *
  * @since Solr 1.4
  */
 public class RollbackUpdateCommand extends UpdateCommand {
 
-  public RollbackUpdateCommand() {
-    super("rollback");
+  public RollbackUpdateCommand(SolrQueryRequest req) {
+    super(req);
   }
 
+  @Override
+  public String name() {
+    return "rollback";
+  }
+
+  @Override
+  public String toString() {
+    return super.toString() + '}';
+  }
 }

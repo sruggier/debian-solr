@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,10 +17,13 @@
 package org.apache.solr.handler.dataimport;
 
 import java.io.*;
+import java.lang.invoke.MethodHandles;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrapAndThrow;
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVERE;
 
@@ -32,16 +35,14 @@ import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVE
  * The file is read with the default platform encoding. It can be overriden by
  * specifying the encoding in solrconfig.xml
  * </p>
- * <p/>
  * <p>
  * Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
  * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public class FileDataSource extends DataSource<Reader> {
@@ -57,7 +58,7 @@ public class FileDataSource extends DataSource<Reader> {
    */
   protected String encoding = null;
 
-  private static final Logger LOG = LoggerFactory.getLogger(FileDataSource.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
   @Override
   public void init(Context context, Properties initProps) {
@@ -93,22 +94,35 @@ public class FileDataSource extends DataSource<Reader> {
 
   static File getFile(String basePath, String query) {
     try {
-      File file0 = new File(query);
-      File file = file0;
+      File file = new File(query);
 
-      if (!file.isAbsolute())
-        file = new File(basePath + query);
-
-      if (file.isFile() && file.canRead()) {
-        LOG.debug("Accessing File: " + file.toString());
-        return file;
-      } else if (file != file0)
-        if (file0.isFile() && file0.canRead()) {
-          LOG.debug("Accessing File0: " + file0.toString());
-          return  file0;
+      // If it's not an absolute path, try relative from basePath. 
+      if (!file.isAbsolute()) {
+        // Resolve and correct basePath.
+        File basePathFile;
+        if (basePath == null) {
+          basePathFile = new File(".").getAbsoluteFile(); 
+          LOG.warn("FileDataSource.basePath is empty. " +
+              "Resolving to: " + basePathFile.getAbsolutePath());
+        } else {
+          basePathFile = new File(basePath);
+          if (!basePathFile.isAbsolute()) {
+            basePathFile = basePathFile.getAbsoluteFile();
+            LOG.warn("FileDataSource.basePath is not absolute. Resolving to: "
+                + basePathFile.getAbsolutePath());
+          }
         }
 
-      throw new FileNotFoundException("Could not find file: " + query);
+        file = new File(basePathFile, query).getAbsoluteFile();
+      }
+
+      if (file.isFile() && file.canRead()) {
+        LOG.debug("Accessing File: " + file.getAbsolutePath());
+        return file;
+      } else {
+        throw new FileNotFoundException("Could not find file: " + query + 
+            " (resolved to: " + file.getAbsolutePath());
+      }
     } catch (FileNotFoundException e) {
       throw new RuntimeException(e);
     }
@@ -126,7 +140,7 @@ public class FileDataSource extends DataSource<Reader> {
   protected Reader openStream(File file) throws FileNotFoundException,
           UnsupportedEncodingException {
     if (encoding == null) {
-      return new InputStreamReader(new FileInputStream(file));
+      return new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8);
     } else {
       return new InputStreamReader(new FileInputStream(file), encoding);
     }

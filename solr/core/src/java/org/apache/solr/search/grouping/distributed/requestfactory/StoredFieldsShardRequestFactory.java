@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.distributed.requestfactory;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,10 +14,12 @@ package org.apache.solr.search.grouping.distributed.requestfactory;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.distributed.requestfactory;
 
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.grouping.GroupDocs;
 import org.apache.lucene.search.grouping.TopGroups;
+import org.apache.lucene.util.BytesRef;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.GroupParams;
 import org.apache.solr.common.params.ModifiableSolrParams;
@@ -39,10 +39,11 @@ import java.util.*;
  */
 public class StoredFieldsShardRequestFactory implements ShardRequestFactory {
 
+  @Override
   public ShardRequest[] constructRequest(ResponseBuilder rb) {
-    HashMap<String, Set<ShardDoc>> shardMap = new HashMap<String,Set<ShardDoc>>();
-    for (TopGroups<String> topGroups : rb.mergedTopGroups.values()) {
-      for (GroupDocs<String> group : topGroups.groups) {
+    HashMap<String, Set<ShardDoc>> shardMap = new HashMap<>();
+    for (TopGroups<BytesRef> topGroups : rb.mergedTopGroups.values()) {
+      for (GroupDocs<BytesRef> group : topGroups.groups) {
         mapShardToDocs(shardMap, group.scoreDocs);
       }
     }
@@ -73,7 +74,7 @@ public class StoredFieldsShardRequestFactory implements ShardRequestFactory {
          }
       }
 
-      List<String> ids = new ArrayList<String>(shardDocs.size());
+      List<String> ids = new ArrayList<>(shardDocs.size());
       for (ShardDoc shardDoc : shardDocs) {
         ids.add(shardDoc.id.toString());
       }
@@ -89,7 +90,7 @@ public class StoredFieldsShardRequestFactory implements ShardRequestFactory {
       ShardDoc solrDoc = (ShardDoc) scoreDoc;
       Set<ShardDoc> shardDocs = shardMap.get(solrDoc.shard);
       if (shardDocs == null) {
-        shardMap.put(solrDoc.shard, shardDocs = new HashSet<ShardDoc>());
+        shardMap.put(solrDoc.shard, shardDocs = new HashSet<>());
       }
       shardDocs.add(solrDoc);
     }

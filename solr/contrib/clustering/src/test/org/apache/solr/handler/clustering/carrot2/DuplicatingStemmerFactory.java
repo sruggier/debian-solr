@@ -1,6 +1,4 @@
-package org.apache.solr.handler.clustering.carrot2;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,16 +14,17 @@ package org.apache.solr.handler.clustering.carrot2;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.clustering.carrot2;
 
 import org.carrot2.core.LanguageCode;
 import org.carrot2.text.linguistic.IStemmer;
 import org.carrot2.text.linguistic.IStemmerFactory;
 
 public class DuplicatingStemmerFactory implements IStemmerFactory {
-  //@Override
+  @Override
   public IStemmer getStemmer(LanguageCode language) {
     return new IStemmer() {
-      //@Override
+      @Override
       public CharSequence stem(CharSequence word) {
         return word.toString() + word.toString();
       }

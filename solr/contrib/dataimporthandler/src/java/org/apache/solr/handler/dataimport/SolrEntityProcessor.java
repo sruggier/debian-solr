@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,12 +16,13 @@
  */
 package org.apache.solr.handler.dataimport;
 
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.MultiThreadedHttpConnectionManager;
+import org.apache.http.client.HttpClient;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrQuery;
-import org.apache.solr.client.solrj.SolrServer;
 import org.apache.solr.client.solrj.SolrServerException;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
+import org.apache.solr.client.solrj.impl.HttpClientUtil;
+import org.apache.solr.client.solrj.impl.HttpSolrClient;
+import org.apache.solr.client.solrj.impl.HttpSolrClient.Builder;
 import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrDocument;
@@ -30,6 +31,8 @@ import org.apache.solr.common.params.CommonParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Collection;
@@ -54,7 +57,7 @@ import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrap
  */
 public class SolrEntityProcessor extends EntityProcessorBase {
   
-  private static final Logger LOG = LoggerFactory.getLogger(SolrEntityProcessor.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   
   public static final String SOLR_SERVER = "url";
   public static final String QUERY = "query";
@@ -63,15 +66,24 @@ public class SolrEntityProcessor extends EntityProcessorBase {
   public static final int TIMEOUT_SECS = 5 * 60; // 5 minutes
   public static final int ROWS_DEFAULT = 50;
   
-  private SolrServer solrServer = null;
+  private SolrClient solrClient = null;
   private String queryString;
   private int rows = ROWS_DEFAULT;
   private String[] filterQueries;
   private String[] fields;
-  private String queryType;
+  private String requestHandler;// 'qt' param
   private int timeout = TIMEOUT_SECS;
   
-  private boolean initDone = false;
+  @Override
+  public void destroy() {
+    try {
+      solrClient.close();
+    } catch (IOException e) {
+
+    } finally {
+      HttpClientUtil.close(((HttpSolrClient) solrClient).getHttpClient());
+    }
+  }
 
   /**
    * Factory method that returns a {@link HttpClient} instance used for interfacing with a source Solr service.
@@ -81,7 +93,7 @@ public class SolrEntityProcessor extends EntityProcessorBase {
    * @return a {@link HttpClient} instance used for interfacing with a source Solr service
    */
   protected HttpClient getHttpClient() {
-    return new HttpClient(new MultiThreadedHttpConnectionManager());
+    return HttpClientUtil.createClient(null);
   }
 
   @Override
@@ -99,10 +111,17 @@ public class SolrEntityProcessor extends EntityProcessorBase {
       URL url = new URL(serverPath);
       // (wt="javabin|xml") default is javabin
       if ("xml".equals(context.getResolvedEntityAttribute(CommonParams.WT))) {
-        solrServer = new CommonsHttpSolrServer(url, client, new XMLResponseParser(), false);
+        // TODO: it doesn't matter for this impl when passing a client currently, but we should close this!
+        solrClient = new Builder(url.toExternalForm())
+            .withHttpClient(client)
+            .withResponseParser(new XMLResponseParser())
+            .build();
         LOG.info("using XMLResponseParser");
       } else {
-        solrServer = new CommonsHttpSolrServer(url, client);
+        // TODO: it doesn't matter for this impl when passing a client currently, but we should close this!
+        solrClient = new Builder(url.toExternalForm())
+            .withHttpClient(client)
+            .build();
         LOG.info("using BinaryResponseParser");
       }
     } catch (MalformedURLException e) {
@@ -118,33 +137,25 @@ public class SolrEntityProcessor extends EntityProcessorBase {
   
   /**
    * The following method changes the rowIterator mutable field. It requires
-   * external synchronization. In fact when used in a multi-threaded setup the nextRow() method is called from a
-   * synchronized block {@link ThreadedEntityProcessorWrapper#nextRow()}, so this
-   * is taken care of.
+   * external synchronization. 
    */
   private void buildIterator() {
-    if (rowIterator == null) {
-      // We could use an AtomicBoolean but there's no need since this method
-      // would require anyway external synchronization
-      if (!initDone) {
-        initDone = true;
-        SolrDocumentList solrDocumentList = doQuery(0);
+    if (rowIterator != null)  {
+      SolrDocumentListIterator documentListIterator = (SolrDocumentListIterator) rowIterator;
+      if (!documentListIterator.hasNext() && documentListIterator.hasMoreRows()) {
+        SolrDocumentList solrDocumentList = doQuery(documentListIterator
+            .getStart() + documentListIterator.getSize());
         if (solrDocumentList != null) {
           rowIterator = new SolrDocumentListIterator(solrDocumentList);
         }
       }
-      return;
-    }
-    
-    SolrDocumentListIterator documentListIterator = (SolrDocumentListIterator) rowIterator;
-    if (!documentListIterator.hasNext() && documentListIterator.hasMoreRows()) {
-      SolrDocumentList solrDocumentList = doQuery(documentListIterator
-          .getStart() + documentListIterator.getSize());
+    } else  {
+      SolrDocumentList solrDocumentList = doQuery(0);
       if (solrDocumentList != null) {
         rowIterator = new SolrDocumentListIterator(solrDocumentList);
       }
+      return;
     }
-    
   }
   
   protected SolrDocumentList doQuery(int start) {
@@ -170,7 +181,7 @@ public class SolrEntityProcessor extends EntityProcessorBase {
     if (fieldsAsString != null) {
       this.fields = fieldsAsString.split(",");
     }
-    this.queryType = context.getResolvedEntityAttribute(CommonParams.QT);
+    this.requestHandler = context.getResolvedEntityAttribute(CommonParams.QT);
     String timeoutAsString = context.getResolvedEntityAttribute(TIMEOUT);
     if (timeoutAsString != null) {
       this.timeout = Integer.parseInt(timeoutAsString);
@@ -184,14 +195,14 @@ public class SolrEntityProcessor extends EntityProcessorBase {
         solrQuery.addField(field);
       }
     }
-    solrQuery.setQueryType(queryType);
+    solrQuery.setRequestHandler(requestHandler);
     solrQuery.setFilterQueries(filterQueries);
     solrQuery.setTimeAllowed(timeout * 1000);
     
     QueryResponse response = null;
     try {
-      response = solrServer.query(solrQuery);
-    } catch (SolrServerException e) {
+      response = solrClient.query(solrQuery);
+    } catch (SolrServerException | IOException e) {
       if (ABORT.equals(onError)) {
         wrapAndThrow(SEVERE, e);
       } else if (SKIP.equals(onError)) {
@@ -218,15 +229,17 @@ public class SolrEntityProcessor extends EntityProcessorBase {
       this.start = (int) solrDocumentList.getStart();
       this.size = solrDocumentList.size();
     }
-    
+
+    @Override
     public boolean hasNext() {
       return solrDocumentIterator.hasNext();
     }
-    
+
+    @Override
     public Map<String,Object> next() {
       SolrDocument solrDocument = solrDocumentIterator.next();
       
-      HashMap<String,Object> map = new HashMap<String,Object>();
+      HashMap<String,Object> map = new HashMap<>();
       Collection<String> fields = solrDocument.getFieldNames();
       for (String field : fields) {
         Object fieldValue = solrDocument.getFieldValue(field);
@@ -246,7 +259,8 @@ public class SolrEntityProcessor extends EntityProcessorBase {
     public boolean hasMoreRows() {
       return numFound > start + size;
     }
-    
+
+    @Override
     public void remove() {
       throw new UnsupportedOperationException();
     }

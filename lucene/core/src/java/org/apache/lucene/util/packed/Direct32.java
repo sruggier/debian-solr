@@ -1,6 +1,6 @@
-package org.apache.lucene.util.packed;
+// This file has been automatically generated, DO NOT EDIT
 
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +16,7 @@ package org.apache.lucene.util.packed;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.packed;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.util.RamUsageEstimator;
@@ -24,70 +25,82 @@ import java.io.IOException;
 import java.util.Arrays;
 
 /**
- * Direct wrapping of 32 bit values to a backing array of ints.
+ * Direct wrapping of 32-bits values to a backing array.
  * @lucene.internal
  */
+final class Direct32 extends PackedInts.MutableImpl {
+  final int[] values;
 
-class Direct32 extends PackedInts.ReaderImpl
-        implements PackedInts.Mutable {
-  private int[] values;
-  private static final int BITS_PER_VALUE = 32;
-
-  public Direct32(int valueCount) {
-    super(valueCount, BITS_PER_VALUE);
+  Direct32(int valueCount) {
+    super(valueCount, 32);
     values = new int[valueCount];
   }
 
-  public Direct32(DataInput in, int valueCount) throws IOException {
-    super(valueCount, BITS_PER_VALUE);
-    int[] values = new int[valueCount];
-    for(int i=0;i<valueCount;i++) {
+  Direct32(int packedIntsVersion, DataInput in, int valueCount) throws IOException {
+    this(valueCount);
+    for (int i = 0; i < valueCount; ++i) {
       values[i] = in.readInt();
     }
-    final int mod = valueCount % 2;
-    if (mod != 0) {
-      in.readInt();
+    // because packed ints have not always been byte-aligned
+    final int remaining = (int) (PackedInts.Format.PACKED.byteCount(packedIntsVersion, valueCount, 32) - 4L * valueCount);
+    for (int i = 0; i < remaining; ++i) {
+      in.readByte();
     }
-
-    this.values = values;
   }
 
-  /**
-   * Creates an array backed by the given values.
-   * </p><p>
-   * Note: The values are used directly, so changes to the given values will
-   * affect the structure.
-   * @param values   used as the internal backing array.
-   */
-  public Direct32(int[] values) {
-    super(values.length, BITS_PER_VALUE);
-    this.values = values;
-  }
-
+  @Override
   public long get(final int index) {
-    assert index >= 0 && index < size();
-    return 0xFFFFFFFFL & values[index];
+    return values[index] & 0xFFFFFFFFL;
   }
 
+  @Override
   public void set(final int index, final long value) {
-    values[index] = (int)(value & 0xFFFFFFFF);
+    values[index] = (int) (value);
   }
 
+  @Override
   public long ramBytesUsed() {
-    return RamUsageEstimator.sizeOf(values);
+    return RamUsageEstimator.alignObjectSize(
+        RamUsageEstimator.NUM_BYTES_OBJECT_HEADER
+        + 2 * RamUsageEstimator.NUM_BYTES_INT     // valueCount,bitsPerValue
+        + RamUsageEstimator.NUM_BYTES_OBJECT_REF) // values ref
+        + RamUsageEstimator.sizeOf(values);
   }
 
+  @Override
   public void clear() {
-    Arrays.fill(values, 0);
-  }
-  
-  @Override
-  public int[] getArray() {
-    return values;
+    Arrays.fill(values, (int) 0L);
   }
 
   @Override
-  public boolean hasArray() {
-    return true;
+  public int get(int index, long[] arr, int off, int len) {
+    assert len > 0 : "len must be > 0 (got " + len + ")";
+    assert index >= 0 && index < valueCount;
+    assert off + len <= arr.length;
+
+    final int gets = Math.min(valueCount - index, len);
+    for (int i = index, o = off, end = index + gets; i < end; ++i, ++o) {
+      arr[o] = values[i] & 0xFFFFFFFFL;
+    }
+    return gets;
+  }
+
+  @Override
+  public int set(int index, long[] arr, int off, int len) {
+    assert len > 0 : "len must be > 0 (got " + len + ")";
+    assert index >= 0 && index < valueCount;
+    assert off + len <= arr.length;
+
+    final int sets = Math.min(valueCount - index, len);
+    for (int i = index, o = off, end = index + sets; i < end; ++i, ++o) {
+      values[i] = (int) arr[o];
+    }
+    return sets;
+  }
+
+  @Override
+  public void fill(int fromIndex, int toIndex, long val) {
+    assert val == (val & 0xFFFFFFFFL);
+    Arrays.fill(values, fromIndex, toIndex, (int) val);
   }
 }

@@ -1,6 +1,4 @@
-package org.apache.solr.update;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,9 @@ package org.apache.solr.update;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.update;
+
+import java.lang.invoke.MethodHandles;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -29,6 +30,7 @@ import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.request.LocalSolrQueryRequest;
 import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.util.DefaultSolrThreadFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,9 +41,11 @@ import org.slf4j.LoggerFactory;
  * definitely change in the future, so the interface should not be relied-upon
  * 
  * Note: all access must be synchronized.
+ * 
+ * Public for tests.
  */
-final class CommitTracker implements Runnable {
-  protected final static Logger log = LoggerFactory.getLogger(CommitTracker.class);
+public final class CommitTracker implements Runnable {
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   
   // scheduler delay for maxDoc-triggered autocommits
   public final int DOC_COMMIT_DELAY_MS = 1;
@@ -50,8 +54,8 @@ final class CommitTracker implements Runnable {
   private int docsUpperBound;
   private long timeUpperBound;
   
-  private final ScheduledExecutorService scheduler = Executors
-      .newScheduledThreadPool(1);
+  private final ScheduledExecutorService scheduler = 
+      Executors.newScheduledThreadPool(1, new DefaultSolrThreadFactory("commitScheduler"));
   private ScheduledFuture pending;
   
   // state
@@ -61,11 +65,12 @@ final class CommitTracker implements Runnable {
   private final SolrCore core;
 
   private final boolean softCommit;
-  private final boolean waitSearcher;
+  private boolean openSearcher;
+  private final boolean waitSearcher = true;
 
   private String name;
   
-  public CommitTracker(String name, SolrCore core, int docsUpperBound, int timeUpperBound, boolean waitSearcher, boolean softCommit) {
+  public CommitTracker(String name, SolrCore core, int docsUpperBound, int timeUpperBound, boolean openSearcher, boolean softCommit) {
     this.core = core;
     this.name = name;
     pending = null;
@@ -74,22 +79,37 @@ final class CommitTracker implements Runnable {
     this.timeUpperBound = timeUpperBound;
     
     this.softCommit = softCommit;
-    this.waitSearcher = waitSearcher;
+    this.openSearcher = openSearcher;
 
-    SolrCore.log.info(name + " AutoCommit: " + this);
+    log.info(name + " AutoCommit: " + this);
+  }
+
+  public boolean getOpenSearcher() {
+    return openSearcher;
   }
   
   public synchronized void close() {
     if (pending != null) {
-      pending.cancel(true);
+      pending.cancel(false);
       pending = null;
     }
-    scheduler.shutdownNow();
+    scheduler.shutdown();
   }
   
   /** schedule individual commits */
   public void scheduleCommitWithin(long commitMaxTime) {
     _scheduleCommitWithin(commitMaxTime);
+  }
+
+  public void cancelPendingCommit() {
+    synchronized (this) {
+      if (pending != null) {
+        boolean canceled = pending.cancel(false);
+        if (canceled) {
+          pending = null;
+        }
+      }
+    }
   }
   
   private void _scheduleCommitWithinIfNeeded(long commitWithin) {
@@ -173,6 +193,7 @@ final class CommitTracker implements Runnable {
   }
   
   /** This is the worker part for the ScheduledFuture **/
+  @Override
   public void run() {
     synchronized (this) {
       // log.info("###start commit. pending=null");
@@ -182,8 +203,10 @@ final class CommitTracker implements Runnable {
     SolrQueryRequest req = new LocalSolrQueryRequest(core,
         new ModifiableSolrParams());
     try {
-      CommitUpdateCommand command = new CommitUpdateCommand(false);
+      CommitUpdateCommand command = new CommitUpdateCommand(req, false);
+      command.openSearcher = openSearcher;
       command.waitSearcher = waitSearcher;
+      command.softCommit = softCommit;
       // no need for command.maxOptimizeSegments = 1; since it is not optimizing
 
       // we increment this *before* calling commit because it was causing a race
@@ -230,7 +253,13 @@ final class CommitTracker implements Runnable {
     this.docsUpperBound = docsUpperBound;
   }
 
-  void setTimeUpperBound(long timeUpperBound) {
+  // only for testing - not thread safe
+  public void setTimeUpperBound(long timeUpperBound) {
     this.timeUpperBound = timeUpperBound;
+  }
+  
+  // only for testing - not thread safe
+  public void setOpenSearcher(boolean openSearcher) {
+    this.openSearcher = openSearcher;
   }
 }

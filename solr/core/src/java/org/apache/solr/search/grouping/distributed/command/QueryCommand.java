@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping.distributed.command;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,13 +14,14 @@ package org.apache.solr.search.grouping.distributed.command;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping.distributed.command;
 
-import org.apache.lucene.queryParser.ParseException;
 import org.apache.lucene.search.*;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.search.DocSet;
 import org.apache.solr.search.QParser;
 import org.apache.solr.search.SolrIndexSearcher;
+import org.apache.solr.search.SyntaxError;
 import org.apache.solr.search.grouping.Command;
 import org.apache.solr.search.grouping.collector.FilterCollector;
 
@@ -61,10 +60,9 @@ public class QueryCommand implements Command<QueryCommandResult> {
      * @param groupQueryString The group query string to parse
      * @param request The current request
      * @return this
-     * @throws ParseException If parsing the groupQueryString failed
      */
-    public Builder setQuery(String groupQueryString, SolrQueryRequest request) throws ParseException {
-      QParser parser = QParser.getParser(groupQueryString, null, request);
+    public Builder setQuery(String groupQueryString, SolrQueryRequest request) throws SyntaxError {
+      QParser parser = QParser.getParser(groupQueryString, request);
       this.queryString = groupQueryString;
       return setQuery(parser.getQuery());
     }
@@ -124,28 +122,33 @@ public class QueryCommand implements Command<QueryCommandResult> {
     this.queryString = queryString;
   }
 
+  @Override
   public List<Collector> create() throws IOException {
     if (sort == null || sort == Sort.RELEVANCE) {
-      collector = TopScoreDocCollector.create(docsToCollect, true);
+      collector = TopScoreDocCollector.create(docsToCollect);
     } else {
-      collector = TopFieldCollector.create(sort, docsToCollect, true, needScores, needScores, true);
+      collector = TopFieldCollector.create(sort, docsToCollect, true, needScores, needScores);
     }
     filterCollector = new FilterCollector(docSet, collector);
     return Arrays.asList((Collector) filterCollector);
   }
 
+  @Override
   public QueryCommandResult result() {
     return new QueryCommandResult(collector.topDocs(), filterCollector.getMatches());
   }
 
+  @Override
   public String getKey() {
     return queryString != null ? queryString : query.toString();
   }
 
+  @Override
   public Sort getGroupSort() {
     return sort;
   }
 
+  @Override
   public Sort getSortWithinGroup() {
     return null;
   }

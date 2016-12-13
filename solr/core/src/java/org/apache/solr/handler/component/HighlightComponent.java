@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,10 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.component;
 
-import org.apache.lucene.queryParser.ParseException;
+import com.google.common.base.Objects;
 import org.apache.lucene.search.Query;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.params.CommonParams;
@@ -25,24 +24,28 @@ import org.apache.solr.common.params.HighlightParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
-import org.apache.solr.highlight.SolrHighlighter;
-import org.apache.solr.highlight.DefaultSolrHighlighter;
-import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.search.QParser;
-import org.apache.solr.util.plugin.PluginInfoInitialized;
-import org.apache.solr.util.plugin.SolrCoreAware;
 import org.apache.solr.core.PluginInfo;
 import org.apache.solr.core.SolrCore;
+import org.apache.solr.highlight.DefaultSolrHighlighter;
+import org.apache.solr.highlight.PostingsSolrHighlighter;
+import org.apache.solr.highlight.SolrHighlighter;
+import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.search.QParser;
+import org.apache.solr.search.QParserPlugin;
+import org.apache.solr.search.QueryParsing;
+import org.apache.solr.search.SyntaxError;
+import org.apache.solr.util.SolrPluginUtils;
+import org.apache.solr.util.plugin.PluginInfoInitialized;
+import org.apache.solr.util.plugin.SolrCoreAware;
 
 import java.io.IOException;
 import java.net.URL;
-import java.util.Map;
 import java.util.List;
 
 /**
  * TODO!
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class HighlightComponent extends SearchComponent implements PluginInfoInitialized, SolrCoreAware
@@ -51,7 +54,12 @@ public class HighlightComponent extends SearchComponent implements PluginInfoIni
   private PluginInfo info = PluginInfo.EMPTY_INFO;
   private SolrHighlighter highlighter;
 
+  public static SolrHighlighter getHighlighter(SolrCore core) {
+    HighlightComponent hl = (HighlightComponent) core.getSearchComponents().get(HighlightComponent.COMPONENT_NAME);
+    return hl==null ? null: hl.getHighlighter();    
+  }
 
+  @Override
   public void init(PluginInfo info) {
     this.info = info;
   }
@@ -62,24 +70,26 @@ public class HighlightComponent extends SearchComponent implements PluginInfoIni
     rb.doHighlights = highlighter.isHighlightingEnabled(params);
     if(rb.doHighlights){
       String hlq = params.get(HighlightParams.Q);
+      String hlparser = Objects.firstNonNull(params.get(HighlightParams.QPARSER),
+                                              params.get(QueryParsing.DEFTYPE, QParserPlugin.DEFAULT_QTYPE));
       if(hlq != null){
         try {
-          QParser parser = QParser.getParser(hlq, null, rb.req);
+          QParser parser = QParser.getParser(hlq, hlparser, rb.req);
           rb.setHighlightQuery(parser.getHighlightQuery());
-        } catch (ParseException e) {
+        } catch (SyntaxError e) {
           throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, e);
         }
       }
     }
   }
 
+  @Override
   public void inform(SolrCore core) {
     List<PluginInfo> children = info.getChildren("highlighting");
     if(children.isEmpty()) {
       PluginInfo pluginInfo = core.getSolrConfig().getPluginInfo(SolrHighlighter.class.getName()); //TODO deprecated configuration remove later
       if (pluginInfo != null) {
         highlighter = core.createInitInstance(pluginInfo, SolrHighlighter.class, null, DefaultSolrHighlighter.class.getName());
-        highlighter.initalize(core.getSolrConfig());
       } else {
         DefaultSolrHighlighter defHighlighter = new DefaultSolrHighlighter(core);
         defHighlighter.init(PluginInfo.EMPTY_INFO);
@@ -121,9 +131,9 @@ public class HighlightComponent extends SearchComponent implements PluginInfoIni
       }
       
       if(highlightQuery != null) {
-        boolean rewrite = !(Boolean.valueOf(params.get(HighlightParams.USE_PHRASE_HIGHLIGHTER, "true")) &&
+        boolean rewrite = (highlighter instanceof PostingsSolrHighlighter == false) && !(Boolean.valueOf(params.get(HighlightParams.USE_PHRASE_HIGHLIGHTER, "true")) &&
             Boolean.valueOf(params.get(HighlightParams.HIGHLIGHT_MULTI_TERM, "true")));
-        highlightQuery = rewrite ?  highlightQuery.rewrite(req.getSearcher().getReader()) : highlightQuery;
+        highlightQuery = rewrite ?  highlightQuery.rewrite(req.getSearcher().getIndexReader()) : highlightQuery;
       }
 
       // No highlighting if there is no query -- consider q.alt="*:*
@@ -163,43 +173,27 @@ public class HighlightComponent extends SearchComponent implements PluginInfoIni
   public void finishStage(ResponseBuilder rb) {
     if (rb.doHighlights && rb.stage == ResponseBuilder.STAGE_GET_FIELDS) {
 
-      Map.Entry<String, Object>[] arr = new NamedList.NamedListEntry[rb.resultIds.size()];
+      NamedList.NamedListEntry[] arr = new NamedList.NamedListEntry[rb.resultIds.size()];
 
       // TODO: make a generic routine to do automatic merging of id keyed data
       for (ShardRequest sreq : rb.finished) {
         if ((sreq.purpose & ShardRequest.PURPOSE_GET_HIGHLIGHTS) == 0) continue;
         for (ShardResponse srsp : sreq.responses) {
-          NamedList hl = (NamedList)srsp.getSolrResponse().getResponse().get("highlighting");
-          for (int i=0; i<hl.size(); i++) {
-            String id = hl.getName(i);
-            ShardDoc sdoc = rb.resultIds.get(id);
-            int idx = sdoc.positionInResponse;
-            arr[idx] = new NamedList.NamedListEntry<Object>(id, hl.getVal(i));
+          if (srsp.getException() != null) {
+            // can't expect the highlight content if there was an exception for this request
+            // this should only happen when using shards.tolerant=true
+            continue;
           }
+          NamedList hl = (NamedList)srsp.getSolrResponse().getResponse().get("highlighting");
+          SolrPluginUtils.copyNamedListIntoArrayByDocPosInResponse(hl, rb.resultIds, arr);
         }
       }
 
       // remove nulls in case not all docs were able to be retrieved
-      rb.rsp.add("highlighting", removeNulls(new SimpleOrderedMap(arr)));      
+      rb.rsp.add("highlighting", SolrPluginUtils.removeNulls(arr, new SimpleOrderedMap<>()));
     }
   }
 
-
-  static NamedList removeNulls(NamedList nl) {
-    for (int i=0; i<nl.size(); i++) {
-      if (nl.getName(i)==null) {
-        NamedList newList = nl instanceof SimpleOrderedMap ? new SimpleOrderedMap() : new NamedList();
-        for (int j=0; j<nl.size(); j++) {
-          String n = nl.getName(j);
-          if (n != null) {
-            newList.add(n, nl.getVal(j));
-          }
-        }
-        return newList;
-      }
-    }
-    return nl;
-  }
 
   public SolrHighlighter getHighlighter() {
     return highlighter;
@@ -211,21 +205,6 @@ public class HighlightComponent extends SearchComponent implements PluginInfoIni
   @Override
   public String getDescription() {
     return "Highlighting";
-  }
-  
-  @Override
-  public String getVersion() {
-    return "$Revision$";
-  }
-  
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-  
-  @Override
-  public String getSource() {
-    return "$URL$";
   }
   
   @Override

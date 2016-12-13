@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,93 +14,57 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 
-import java.util.HashSet;
-
-import java.util.Set;
-
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
 
 /** The abstract base class for queries.
     <p>Instantiable subclasses are:
     <ul>
     <li> {@link TermQuery}
-    <li> {@link MultiTermQuery}
     <li> {@link BooleanQuery}
     <li> {@link WildcardQuery}
     <li> {@link PhraseQuery}
     <li> {@link PrefixQuery}
     <li> {@link MultiPhraseQuery}
     <li> {@link FuzzyQuery}
+    <li> {@link RegexpQuery}
     <li> {@link TermRangeQuery}
-    <li> {@link NumericRangeQuery}
-    <li> {@link org.apache.lucene.search.spans.SpanQuery}
+    <li> {@link PointRangeQuery}
+    <li> {@link ConstantScoreQuery}
+    <li> {@link DisjunctionMaxQuery}
+    <li> {@link MatchAllDocsQuery}
     </ul>
-    <p>A parser for queries is contained in:
-    <ul>
-    <li>{@link org.apache.lucene.queryParser.QueryParser QueryParser}
-    </ul>
+    <p>See also the family of {@link org.apache.lucene.search.spans Span Queries}
+       and additional queries available in the <a href="{@docRoot}/../queries/overview-summary.html">Queries module</a>
 */
-public abstract class Query implements java.io.Serializable, Cloneable {
-  private float boost = 1.0f;                     // query boost factor
-
-  /** Sets the boost for this query clause to <code>b</code>.  Documents
-   * matching this clause will (in addition to the normal weightings) have
-   * their score multiplied by <code>b</code>.
-   */
-  public void setBoost(float b) { boost = b; }
-
-  /** Gets the boost for this clause.  Documents matching
-   * this clause will (in addition to the normal weightings) have their score
-   * multiplied by <code>b</code>.   The boost is 1.0 by default.
-   */
-  public float getBoost() { return boost; }
+public abstract class Query {
 
   /** Prints a query to a string, with <code>field</code> assumed to be the 
    * default field and omitted.
-   * <p>The representation used is one that is supposed to be readable
-   * by {@link org.apache.lucene.queryParser.QueryParser QueryParser}. However,
-   * there are the following limitations:
-   * <ul>
-   *  <li>If the query was created by the parser, the printed
-   *  representation may not be exactly what was parsed. For example,
-   *  characters that need to be escaped will be represented without
-   *  the required backslash.</li>
-   * <li>Some of the more complicated queries (e.g. span queries)
-   *  don't have a representation that can be parsed by QueryParser.</li>
-   * </ul>
    */
   public abstract String toString(String field);
 
   /** Prints a query to a string. */
   @Override
-  public String toString() {
+  public final String toString() {
     return toString("");
   }
 
   /**
    * Expert: Constructs an appropriate Weight implementation for this query.
-   * 
    * <p>
    * Only implemented by primitive queries, which re-write to themselves.
+   *
+   * @param needsScores   True if document scores ({@link Scorer#score}) or match
+   *                      frequencies ({@link Scorer#freq}) are needed.
    */
-  public Weight createWeight(Searcher searcher) throws IOException {
+  public Weight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
     throw new UnsupportedOperationException("Query " + this + " does not implement createWeight");
   }
-
-  /**
-   * Expert: Constructs and initializes a Weight for a <b>top-level</b> query.
-   * @deprecated never ever use this method in {@link Weight} implementations.
-   * Subclasses of {@code Query} should use {@link #createWeight}, instead.
-   */
-  @Deprecated
-  public final Weight weight(Searcher searcher) throws IOException {
-    return searcher.createNormalizedWeight(this);
-  }
-  
 
   /** Expert: called to re-write queries into primitive queries. For example,
    * a PrefixQuery will be rewritten into a BooleanQuery that consists
@@ -111,129 +73,51 @@ public abstract class Query implements java.io.Serializable, Cloneable {
   public Query rewrite(IndexReader reader) throws IOException {
     return this;
   }
-  
-
-  /** Expert: called when re-writing queries under MultiSearcher.
-   *
-   * Create a single query suitable for use by all subsearchers (in 1-1
-   * correspondence with queries). This is an optimization of the OR of
-   * all queries. We handle the common optimization cases of equal
-   * queries and overlapping clauses of boolean OR queries (as generated
-   * by MultiTermQuery.rewrite()).
-   * Be careful overriding this method as queries[0] determines which
-   * method will be called and is not necessarily of the same type as
-   * the other queries.
-  */
-  public Query combine(Query[] queries) {
-    HashSet<Query> uniques = new HashSet<Query>();
-    for (int i = 0; i < queries.length; i++) {
-      Query query = queries[i];
-      BooleanClause[] clauses = null;
-      // check if we can split the query into clauses
-      boolean splittable = (query instanceof BooleanQuery);
-      if(splittable){
-        BooleanQuery bq = (BooleanQuery) query;
-        splittable = bq.isCoordDisabled();
-        clauses = bq.getClauses();
-        for (int j = 0; splittable && j < clauses.length; j++) {
-          splittable = (clauses[j].getOccur() == BooleanClause.Occur.SHOULD);
-        }
-      }
-      if(splittable){
-        for (int j = 0; j < clauses.length; j++) {
-          uniques.add(clauses[j].getQuery());
-        }
-      } else {
-        uniques.add(query);
-      }
-    }
-    // optimization: if we have just one query, just return it
-    if(uniques.size() == 1){
-        return uniques.iterator().next();
-    }
-    BooleanQuery result = new BooleanQuery(true);
-    for (final Query query : uniques)
-      result.add(query, BooleanClause.Occur.SHOULD);
-    return result;
-  }
-  
 
   /**
-   * Expert: adds all terms occurring in this query to the terms set. Only
-   * works if this query is in its {@link #rewrite rewritten} form.
+   * Override and implement query instance equivalence properly in a subclass. 
+   * This is required so that {@link QueryCache} works properly.
    * 
-   * @throws UnsupportedOperationException if this query is not yet rewritten
+   * Typically a query will be equal to another only if it's an instance of 
+   * the same class and its document-filtering properties are identical that other
+   * instance. Utility methods are provided for certain repetitive code. 
+   * 
+   * @see #sameClassAs(Object)
+   * @see #classHash()
    */
-  public void extractTerms(Set<Term> terms) {
-    // needs to be implemented by query subclasses
-    throw new UnsupportedOperationException();
-  }
-  
+  @Override
+  public abstract boolean equals(Object obj);
 
-
-  /** Expert: merges the clauses of a set of BooleanQuery's into a single
-   * BooleanQuery.
-   *
-   *<p>A utility for use by {@link #combine(Query[])} implementations.
+  /**
+   * Override and implement query hash code properly in a subclass. 
+   * This is required so that {@link QueryCache} works properly.
+   * 
+   * @see #equals(Object)
    */
-  public static Query mergeBooleanQueries(BooleanQuery... queries) {
-    HashSet<BooleanClause> allClauses = new HashSet<BooleanClause>();
-    for (BooleanQuery booleanQuery : queries) {
-      for (BooleanClause clause : booleanQuery) {
-        allClauses.add(clause);
-      }
-    }
+  @Override
+  public abstract int hashCode();
 
-    boolean coordDisabled =
-      queries.length==0? false : queries[0].isCoordDisabled();
-    BooleanQuery result = new BooleanQuery(coordDisabled);
-    for(BooleanClause clause2 : allClauses) {
-      result.add(clause2);
-    }
-    return result;
-  }
-  
-
-  /** Expert: Returns the Similarity implementation to be used for this query.
-   * Subclasses may override this method to specify their own Similarity
-   * implementation, perhaps one that delegates through that of the Searcher.
-   * By default the Searcher's Similarity implementation is returned.
-   * @deprecated Instead of using "runtime" subclassing/delegation, subclass the Weight instead.
+  /**
+   * Utility method to check whether <code>other</code> is not null and is exactly 
+   * of the same class as this object's class.
+   * 
+   * When this method is used in an implementation of {@link #equals(Object)},
+   * consider using {@link #classHash()} in the implementation
+   * of {@link #hashCode} to differentiate different class
    */
-  @Deprecated
-  public Similarity getSimilarity(Searcher searcher) {
-    return searcher.getSimilarity();
+  protected final boolean sameClassAs(Object other) {
+    return other != null && getClass() == other.getClass();
   }
 
-  /** Returns a clone of this query. */
-  @Override
-  public Object clone() {
-    try {
-      return super.clone();
-    } catch (CloneNotSupportedException e) {
-      throw new RuntimeException("Clone not supported: " + e.getMessage());
-    }
-  }
+  private final int CLASS_NAME_HASH = getClass().getName().hashCode();
 
-  @Override
-  public int hashCode() {
-    final int prime = 31;
-    int result = 1;
-    result = prime * result + Float.floatToIntBits(boost);
-    return result;
-  }
-
-  @Override
-  public boolean equals(Object obj) {
-    if (this == obj)
-      return true;
-    if (obj == null)
-      return false;
-    if (getClass() != obj.getClass())
-      return false;
-    Query other = (Query) obj;
-    if (Float.floatToIntBits(boost) != Float.floatToIntBits(other.boost))
-      return false;
-    return true;
+  /**
+   * Provides a constant integer for a given class, derived from the name of the class.
+   * The rationale for not using just {@link Class#hashCode()} is that classes may be
+   * assigned different hash codes for each execution and we want hashes to be possibly
+   * consistent to facilitate debugging.    
+   */
+  protected final int classHash() {
+    return CLASS_NAME_HASH;
   }
 }

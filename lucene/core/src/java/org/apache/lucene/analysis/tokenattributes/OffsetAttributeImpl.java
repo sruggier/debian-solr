@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,44 +14,44 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
 
-import java.io.Serializable;
 
 import org.apache.lucene.util.AttributeImpl;
+import org.apache.lucene.util.AttributeReflector;
 
-/**
- * The start and end character offset of a Token. 
- */
-public class OffsetAttributeImpl extends AttributeImpl implements OffsetAttribute, Cloneable, Serializable {
+/** Default implementation of {@link OffsetAttribute}. */
+public class OffsetAttributeImpl extends AttributeImpl implements OffsetAttribute, Cloneable {
   private int startOffset;
   private int endOffset;
+  
+  /** Initialize this attribute with startOffset and endOffset of 0. */
+  public OffsetAttributeImpl() {}
 
-  /** Returns this Token's starting offset, the position of the first character
-  corresponding to this token in the source text.
-
-  Note that the difference between endOffset() and startOffset() may not be
-  equal to termText.length(), as the term text may have been altered by a
-  stemmer or some other filter. */
+  @Override
   public int startOffset() {
     return startOffset;
   }
 
-  
-  /** Set the starting and ending offset.
-    @see #startOffset() and #endOffset()*/
+  @Override
   public void setOffset(int startOffset, int endOffset) {
-    // TODO: check that these are valid!  IE, each should be
-    // >= 0, and endOffset should be >= startOffset.
-    // Problem is this could "break" existing
-    // tokenizers/filters.
+
+    // TODO: we could assert that this is set-once, ie,
+    // current values are -1?  Very few token filters should
+    // change offsets once set by the tokenizer... and
+    // tokenizer should call clearAtts before re-using
+    // OffsetAtt
+
+    if (startOffset < 0 || endOffset < startOffset) {
+      throw new IllegalArgumentException("startOffset must be non-negative, and endOffset must be >= startOffset, "
+          + "startOffset=" + startOffset + ",endOffset=" + endOffset);
+    }
+
     this.startOffset = startOffset;
     this.endOffset = endOffset;
   }
   
-
-  /** Returns this Token's ending offset, one greater than the position of the
-  last character corresponding to this token in the source text. The length
-  of the token in the source text is (endOffset - startOffset). */
+  @Override
   public int endOffset() {
     return endOffset;
   }
@@ -61,6 +59,8 @@ public class OffsetAttributeImpl extends AttributeImpl implements OffsetAttribut
 
   @Override
   public void clear() {
+    // TODO: we could use -1 as default here?  Then we can
+    // assert in setOffset...
     startOffset = 0;
     endOffset = 0;
   }
@@ -91,4 +91,10 @@ public class OffsetAttributeImpl extends AttributeImpl implements OffsetAttribut
     OffsetAttribute t = (OffsetAttribute) target;
     t.setOffset(startOffset, endOffset);
   }  
+
+  @Override
+  public void reflectWith(AttributeReflector reflector) {
+    reflector.reflect(OffsetAttribute.class, "startOffset", startOffset);
+    reflector.reflect(OffsetAttribute.class, "endOffset", endOffset);
+  }
 }

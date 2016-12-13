@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,16 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.request;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-
-import org.apache.solr.client.solrj.SolrServer;
-import org.apache.solr.client.solrj.SolrServerException;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.response.LukeResponse;
 import org.apache.solr.common.params.CommonParams;
@@ -31,13 +24,17 @@ import org.apache.solr.common.params.ModifiableSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStream;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
 /**
  * 
- * @version $Id$
+ *
  * @since solr 1.3
  */
-public class LukeRequest extends SolrRequest
-{
+public class LukeRequest extends SolrRequest<LukeResponse> {
+
   private List<String> fields;
   private int numTerms = -1;
   private boolean showSchema = false;
@@ -58,7 +55,7 @@ public class LukeRequest extends SolrRequest
   public void addField( String f )
   {
     if( fields == null ) {
-      fields = new ArrayList<String>();
+      fields = new ArrayList<>();
     }
     fields.add( f );
   }
@@ -99,6 +96,11 @@ public class LukeRequest extends SolrRequest
   }
 
   @Override
+  protected LukeResponse createResponse(SolrClient client) {
+    return new LukeResponse();
+  }
+
+  @Override
   public SolrParams getParams() {
     ModifiableSolrParams params = new ModifiableSolrParams();
     if( fields != null && fields.size() > 0 ) {
@@ -108,19 +110,10 @@ public class LukeRequest extends SolrRequest
       params.add( "numTerms", numTerms+"" );
     }
     if (showSchema) {
-    	params.add("show", "schema");
+      params.add("show", "schema");
     }
     return params;
   }
 
-  @Override
-  public LukeResponse process( SolrServer server ) throws SolrServerException, IOException 
-  {
-    long startTime = System.currentTimeMillis();
-    LukeResponse res = new LukeResponse();
-    res.setResponse( server.request( this ) );
-    res.setElapsedTime( System.currentTimeMillis()-startTime );
-    return res;
-  }
 }
 

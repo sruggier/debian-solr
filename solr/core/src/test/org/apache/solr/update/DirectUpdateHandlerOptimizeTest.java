@@ -1,5 +1,4 @@
-package org.apache.solr.update;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,14 +14,15 @@ package org.apache.solr.update;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.solr.core.SolrCore;
-import org.apache.solr.util.AbstractSolrTestCase;
-
+package org.apache.solr.update;
 import java.io.File;
 import java.io.FileFilter;
+
+import org.apache.solr.common.SolrInputDocument;
+import org.apache.solr.core.SolrCore;
+import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
 
 /**
@@ -31,14 +31,10 @@ import java.io.FileFilter;
  **/
 public class DirectUpdateHandlerOptimizeTest extends AbstractSolrTestCase {
 
-  @Override
-  public String getSchemaFile() {
-    return "schema12.xml";
-  }
-
-  @Override
-  public String getSolrConfigFile() {
-    return "solrconfig-duh-optimize.xml";
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    System.setProperty("enable.update.log", "false"); // schema12 doesn't support _version_
+    initCore("solrconfig.xml", "schema12.xml");
   }
 
 
@@ -46,21 +42,20 @@ public class DirectUpdateHandlerOptimizeTest extends AbstractSolrTestCase {
     SolrCore core = h.getCore();
 
     UpdateHandler updater = core.getUpdateHandler();
-    AddUpdateCommand cmd = new AddUpdateCommand();
-    cmd.overwriteCommitted = true;
-    cmd.overwritePending = true;
-    cmd.allowDups = false;
+    SolrQueryRequest req = req();
+    AddUpdateCommand cmd = new AddUpdateCommand(req);
+
     //add just under the merge factor, so no segments are merged
     //the merge factor is 100 and the maxBufferedDocs is 2, so there should be 50 segments
     for (int i = 0; i < 99; i++) {
       // Add a valid document
-      cmd.doc = new Document();
-      cmd.doc.add(new Field("id", "id_" + i, Field.Store.YES, Field.Index.NOT_ANALYZED));
-      cmd.doc.add(new Field("subject", "subject_" + i, Field.Store.NO, Field.Index.ANALYZED));
+      cmd.solrDoc = new SolrInputDocument();
+      cmd.solrDoc.addField("id", "id_" + i);
+      cmd.solrDoc.addField("subject", "subject_" + i);
       updater.addDoc(cmd);
     }
 
-    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(false);
+    CommitUpdateCommand cmtCmd = new CommitUpdateCommand(req, false);
     updater.commit(cmtCmd);
     updater.commit(cmtCmd);  // commit twice to give systems such as windows a chance to delete the old files
 
@@ -68,7 +63,7 @@ public class DirectUpdateHandlerOptimizeTest extends AbstractSolrTestCase {
     assertNumSegments(indexDir, 50);
 
     //now do an optimize
-    cmtCmd = new CommitUpdateCommand(true);
+    cmtCmd = new CommitUpdateCommand(req, true);
     cmtCmd.maxOptimizeSegments = 25;
     updater.commit(cmtCmd);
     updater.commit(cmtCmd);
@@ -84,11 +79,14 @@ public class DirectUpdateHandlerOptimizeTest extends AbstractSolrTestCase {
     updater.commit(cmtCmd);
     updater.commit(cmtCmd);
     assertNumSegments(indexDir, 1);
+
+    req.close();
   }
 
   private void assertNumSegments(String indexDir, int numSegs) {
     File file = new File(indexDir);
     File[] segs = file.listFiles(new FileFilter() {
+      @Override
       public boolean accept(File file) {
         return file.getName().endsWith("cfs");
       }

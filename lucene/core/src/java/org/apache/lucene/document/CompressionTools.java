@@ -1,6 +1,4 @@
-package org.apache.lucene.document;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +14,15 @@ package org.apache.lucene.document;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.document;
+
 
 import java.util.zip.Deflater;
 import java.util.zip.Inflater;
 import java.util.zip.DataFormatException;
 import java.io.ByteArrayOutputStream;
+
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.UnicodeUtil;
 
 /** Simple utility class providing static methods to
@@ -84,21 +86,33 @@ public class CompressionTools {
    *  compressionLevel (constants are defined in
    *  java.util.zip.Deflater). */
   public static byte[] compressString(String value, int compressionLevel) {
-    UnicodeUtil.UTF8Result result = new UnicodeUtil.UTF8Result();
-    UnicodeUtil.UTF16toUTF8(value, 0, value.length(), result);
-    return compress(result.result, 0, result.length, compressionLevel);
+    byte[] b = new byte[UnicodeUtil.MAX_UTF8_BYTES_PER_CHAR * value.length()];
+    final int len = UnicodeUtil.UTF16toUTF8(value, 0, value.length(), b);
+    return compress(b, 0, len, compressionLevel);
+  }
+
+  /** Decompress the byte array previously returned by
+   *  compress (referenced by the provided BytesRef) */
+  public static byte[] decompress(BytesRef bytes) throws DataFormatException {
+    return decompress(bytes.bytes, bytes.offset, bytes.length);
   }
 
   /** Decompress the byte array previously returned by
    *  compress */
   public static byte[] decompress(byte[] value) throws DataFormatException {
+    return decompress(value, 0, value.length);
+  }
+
+  /** Decompress the byte array previously returned by
+   *  compress */
+  public static byte[] decompress(byte[] value, int offset, int length) throws DataFormatException {
     // Create an expandable byte array to hold the decompressed data
-    ByteArrayOutputStream bos = new ByteArrayOutputStream(value.length);
+    ByteArrayOutputStream bos = new ByteArrayOutputStream(length);
 
     Inflater decompressor = new Inflater();
 
     try {
-      decompressor.setInput(value);
+      decompressor.setInput(value, offset, length);
 
       // Decompress the data
       final byte[] buf = new byte[1024];
@@ -116,9 +130,21 @@ public class CompressionTools {
   /** Decompress the byte array previously returned by
    *  compressString back into a String */
   public static String decompressString(byte[] value) throws DataFormatException {
-    UnicodeUtil.UTF16Result result = new UnicodeUtil.UTF16Result();
-    final byte[] bytes = decompress(value);
-    UnicodeUtil.UTF8toUTF16(bytes, 0, bytes.length, result);
-    return new String(result.result, 0, result.length);
+    return decompressString(value, 0, value.length);
+  }
+
+  /** Decompress the byte array previously returned by
+   *  compressString back into a String */
+  public static String decompressString(byte[] value, int offset, int length) throws DataFormatException {
+    final byte[] bytes = decompress(value, offset, length);
+    final char[] result = new char[bytes.length];
+    final int len = UnicodeUtil.UTF8toUTF16(bytes, 0, bytes.length, result);
+    return new String(result, 0, len);
+  }
+
+  /** Decompress the byte array (referenced by the provided BytesRef) 
+   *  previously returned by compressString back into a String */
+  public static String decompressString(BytesRef bytes) throws DataFormatException {
+    return decompressString(bytes.bytes, bytes.offset, bytes.length);
   }
 }

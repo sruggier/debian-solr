@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,32 +16,22 @@
  */
 package org.apache.solr.search;
 
+import org.apache.solr.common.SolrException;
+import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.util.AbstractSolrTestCase;
+import org.junit.BeforeClass;
 
 public class TestQueryTypes extends AbstractSolrTestCase {
 
-  @Override
-  public String getSchemaFile() { return "schema11.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solrconfig.xml"; }
+  @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solrconfig.xml", "schema11.xml");
+  }
+  
   public String getCoreName() { return "basic"; }
 
-
-  @Override
-  public void setUp() throws Exception {
-    // if you override setUp or tearDown, you better call
-    // the super classes version
-    super.setUp();
-  }
-  @Override
-  public void tearDown() throws Exception {
-    // if you override setUp or tearDown, you better call
-    // the super classes version
-    super.tearDown();
-  }
-
-
   public void testQueryTypes() {
+    assertU(adoc("id","0"));
     assertU(adoc("id","1", "v_t","Hello Dude"));
     assertU(adoc("id","2", "v_t","Hello Yonik"));
     assertU(adoc("id","3", "v_s","{!literal}"));
@@ -51,6 +41,7 @@ public class TestQueryTypes extends AbstractSolrTestCase {
     assertU(adoc("id","7", "v_f","1.5"));
     assertU(adoc("id","8", "v_ti","5"));
     assertU(adoc("id","9", "v_s","internal\"quote"));
+    assertU(adoc("id","10","text_no_analyzer","should just work"));
 
     Object[] arr = new Object[] {
     "id",999.0
@@ -92,11 +83,35 @@ public class TestQueryTypes extends AbstractSolrTestCase {
               ,"//result[@numFound='1']"
               );
 
+      // term qparser
+      assertQ(req( "q", "{!term f="+f+"}"+v)
+              ,"//result[@numFound='1']"
+              );
+
+      // terms qparser
+      //wrap in spaces sometimes if space separated
+      final String separator = f == "v_s" ? "" : "separator=' '";//use space separated when field isn't v_s
+      String vMod = separator != "" && random().nextBoolean() ? " " + v + " " : v;
+      assertQ(req( "q", "{!terms " + separator + " f=" +f+"}"+vMod)
+              ,"//result[@numFound='1']"
+              );
+
       // lucene range
       assertQ(req( "q", f + ":[\"" + v + "\" TO \"" + v + "\"]" )
               ,"//result[@numFound='1']"
               );
     }
+
+    // terms qparser, no values matches nothing
+    assertQ(req( "q", "*:*", "fq", "{!terms f=v_s}")
+        ,"//result[@numFound='0']"
+    );
+
+    String termsMethod = new String[]{"termsFilter", "booleanQuery", "automaton", "docValuesTermsFilter"}[random().nextInt(4)];
+    assertQ(req( "q", "{!terms f=v_s method=" + termsMethod + " }other stuff,wow dude")
+        ,"//result[@numFound='2']"
+    );
+
 
     // frange and function query only work on single valued field types
     Object[] fc_vals = new Object[] {
@@ -127,8 +142,31 @@ public class TestQueryTypes extends AbstractSolrTestCase {
       assertQ(req( "q","*:*", "fq", "{!frange cache=false cost=100 v="+f+" l='"+v+"' u='"+v+"'}" )
               ,"//result[@numFound='1']"
               );
-      
+
+      // exists()
+      assertQ(req( "fq","id:999", "q", "{!frange l=1 u=1}if(exists("+f+"),1,0)" )
+              ,"//result[@numFound='1']"
+              );
+
+      // boolean value of non-zero values (just leave off the exists from the prev test)
+      assertQ(req( "fq","id:999", "q", "{!frange l=1 u=1}if("+f+",1,0)" )
+              ,"//result[@numFound='1']"
+              );
+
+      if (!"id".equals(f)) {
+        assertQ(req( "fq","id:1", "q", "{!frange l=1 u=1}if(exists("+f+"),1,0)" )
+            ,"//result[@numFound='0']"
+        );
+
+       // boolean value of zero/missing values (just leave off the exists from the prev test)
+       assertQ(req( "fq","id:1", "q", "{!frange l=1 u=1}if("+f+",1,0)" )
+            ,"//result[@numFound='0']"
+        );
+
+      }
+
       // function query... just make sure it doesn't throw an exception
+      if ("v_s".equals(f)) continue;  // in this context, functions must be able to be interpreted as a float
       assertQ(req( "q", "+id:999 _val_:\"" + f + "\"")
               ,"//result[@numFound='1']"
               );
@@ -309,6 +347,63 @@ public class TestQueryTypes extends AbstractSolrTestCase {
             ,"//doc[./float[@name='v_f']='1.5' and ./float[@name='score']='2.25']"
     );
 
+    // switch queries
+    assertQ("test matching switch query",
+            req("df", "v_t",
+                "q", "{!switch case.x=Dude case.z=Yonik} x ")
+            ,"//result[@numFound='1']"
+            ,"//*[@name='id'][.='1.0']");
+    assertQ("test empty matching switch query",
+            req("df", "v_t",
+                "q", "{!switch case.x=Dude case=Yonik}  ")
+            ,"//result[@numFound='1']"
+            ,"//*[@name='id'][.='2.0']");
+    assertQ("test empty matching switch query",
+            req("df", "v_t",
+                "q", "{!switch case.x=Dude case=Yonik v=''}")
+            ,"//result[@numFound='1']"
+            ,"//*[@name='id'][.='2.0']");
+    assertQ("test empty matching switch query",
+            req("df", "v_t",
+                "q", "{!switch case.x=Dude case=Yonik v=$qq}")
+            ,"//result[@numFound='1']"
+            ,"//*[@name='id'][.='2.0']");
+    assertQ("test matching switch query w/deref",
+            req("q", "{!switch case.x=$d case.z=Yonik} x ",
+                "df", "v_t",
+                "d", "Dude")
+            ,"//result[@numFound='1']"
+            ,"//*[@name='id'][.='1.0']");
+    assertQ("test default switch query",
+            req("q", "{!switch default=$d case.x=$d case.z=Yonik}asdf",
+                "df", "v_t",
+                "d", "Dude")
+            ,"//result[@numFound='1']"
+            ,"//*[@name='id'][.='1.0']");
+    assertQ("test empty default switch query",
+            req("q", "{!switch default=$d case.x=$d case.z=Yonik v=$qq}",
+                "df", "v_t",
+                "d", "Dude")
+            ,"//result[@numFound='1']"
+            ,"//*[@name='id'][.='1.0']");
+
+    try {
+      ignoreException("No\\ default\\, and no switch case");
+      assertQ("no match and no default",
+              req("q", "{!switch case.x=Dude case.z=Yonik}asdf")
+              ,"//result[@numFound='BOGUS']");
+      fail("Should have gotten an error w/o default");
+    } catch (RuntimeException exp) {
+      assertTrue("exp cause is wrong", 
+                 exp.getCause() instanceof SolrException);
+      SolrException e = (SolrException) exp.getCause();
+      assertEquals("error isn't user error", 400, e.code());
+      assertTrue("Error doesn't include bad switch case: " + e.getMessage(),
+                 e.getMessage().contains("asdf"));
+    } finally {
+      resetExceptionIgnores();
+    }
+                
 
     // dismax query from std request handler
     assertQ("test dismax query",
@@ -316,7 +411,7 @@ public class TestQueryTypes extends AbstractSolrTestCase {
                 ,"qf","v_t"
                 ,"bf","sqrt(v_f)^100 log(sum(v_f,1))^50"
                 ,"bq","{!prefix f=v_t}he"
-                ,"debugQuery","on"
+                , CommonParams.DEBUG_QUERY,"on"
              )
              ,"//result[@numFound='2']"
              );
@@ -338,6 +433,8 @@ public class TestQueryTypes extends AbstractSolrTestCase {
             req("q","_query_:\"{!query defType=query v=$q1}\"", "q1","{!v=$q2}","q2","{!prefix f=v_t v=$qqq}","qqq","hel")
             ,"//result[@numFound='2']"
             );
+    assertQ("Test text field with no analysis doesn't NPE with wildcards (SOLR-4318)",
+        req("q", "text_no_analyzer:should*"), "//result[@numFound='1']");
 
   }
 }

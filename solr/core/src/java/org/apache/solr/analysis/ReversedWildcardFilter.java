@@ -1,5 +1,4 @@
-package org.apache.solr.analysis;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +14,7 @@ package org.apache.solr.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.analysis;
 import java.io.IOException;
 
 import org.apache.lucene.analysis.TokenFilter;
@@ -27,7 +26,7 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
  * This class produces a special form of reversed tokens, suitable for
  * better handling of leading wildcards. Tokens from the input TokenStream
  * are reversed and prepended with a special "reversed" marker character.
- * If <code>withOriginal<code> argument is <code>true</code> then first the
+ * If <code>withOriginal</code> argument is <code>true</code> then first the
  * original token is returned, and then the reversed token (with
  * <code>positionIncrement == 0</code>) is returned. Otherwise only reversed
  * tokens are returned.
@@ -37,11 +36,11 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
  */
 public final class ReversedWildcardFilter extends TokenFilter {
   
-  private boolean withOriginal;
-  private char markerChar;
-  private State save;
-  private CharTermAttribute termAtt;
-  private PositionIncrementAttribute posAtt;
+  private final boolean withOriginal;
+  private final char markerChar;
+  private final CharTermAttribute termAtt;
+  private final PositionIncrementAttribute posAtt;
+  private State save = null;
 
   protected ReversedWildcardFilter(TokenStream input, boolean withOriginal, char markerChar) {
     super(input);
@@ -145,6 +144,12 @@ public final class ReversedWildcardFilter extends TokenFilter {
       // only if odd length
       buffer[end] = allowFrontSur ? endLow : frontHigh;
     }
+  }
+  
+  @Override
+  public void reset() throws IOException {
+    super.reset();
+    save = null;
   }
 
 }

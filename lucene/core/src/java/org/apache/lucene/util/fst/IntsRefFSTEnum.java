@@ -1,6 +1,4 @@
-package org.apache.lucene.util.fst;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.util.fst;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.fst;
+
 
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.IntsRef;
@@ -30,7 +30,7 @@ import java.io.IOException;
 
 public final class IntsRefFSTEnum<T> extends FSTEnum<T> {
   private final IntsRef current = new IntsRef(10);
-  private final InputOutput<T> result = new InputOutput<T>();
+  private final InputOutput<T> result = new InputOutput<>();
   private IntsRef target;
 
   /** Holds a single input (IntsRef) + output pair. */
@@ -58,7 +58,7 @@ public final class IntsRefFSTEnum<T> extends FSTEnum<T> {
     return setResult();
   }
 
-  /** Seeks to smallest term that's >= target. */
+  /** Seeks to smallest term that's &gt;= target. */
   public InputOutput<T> seekCeil(IntsRef target) throws IOException {
     this.target = target;
     targetLength = target.length;
@@ -66,7 +66,7 @@ public final class IntsRefFSTEnum<T> extends FSTEnum<T> {
     return setResult();
   }
 
-  /** Seeks to biggest term that's <= target. */
+  /** Seeks to biggest term that's &lt;= target. */
   public InputOutput<T> seekFloor(IntsRef target) throws IOException {
     this.target = target;
     targetLength = target.length;

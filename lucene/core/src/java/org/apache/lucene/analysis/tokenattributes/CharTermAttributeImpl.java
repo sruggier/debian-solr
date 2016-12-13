@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,96 +14,62 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
 
-import java.io.Serializable;
 import java.nio.CharBuffer;
 
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.AttributeImpl;
 import org.apache.lucene.util.AttributeReflector;
-import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 
-/**
- * The term text of a Token.
- */
-public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttribute, TermAttribute, Cloneable, Serializable {
+/** Default implementation of {@link CharTermAttribute}. */
+public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttribute, TermToBytesRefAttribute, Cloneable {
   private static int MIN_BUFFER_SIZE = 10;
   
-  private char[] termBuffer = new char[ArrayUtil.oversize(MIN_BUFFER_SIZE, RamUsageEstimator.NUM_BYTES_CHAR)];
+  private char[] termBuffer = new char[ArrayUtil.oversize(MIN_BUFFER_SIZE, Character.BYTES)];
   private int termLength = 0;
   
-  @Deprecated
-  public String term() {
-    // don't delegate to toString() here!
-    return new String(termBuffer, 0, termLength);
-  }
+  /** May be used by subclasses to convert to different charsets / encodings for implementing {@link #getBytesRef()}. */
+  protected BytesRefBuilder builder = new BytesRefBuilder();
+  
+  /** Initialize this attribute with empty term text */
+  public CharTermAttributeImpl() {}
 
+  @Override
   public final void copyBuffer(char[] buffer, int offset, int length) {
     growTermBuffer(length);
     System.arraycopy(buffer, offset, termBuffer, 0, length);
     termLength = length;
   }
 
-  @Deprecated
-  public void setTermBuffer(char[] buffer, int offset, int length) {
-    copyBuffer(buffer, offset, length);
-  }
-
-  @Deprecated
-  public void setTermBuffer(String buffer) {
-    int length = buffer.length();
-    growTermBuffer(length);
-    buffer.getChars(0, length, termBuffer, 0);
-    termLength = length;
-  }
-
-  @Deprecated
-  public void setTermBuffer(String buffer, int offset, int length) {
-    assert offset <= buffer.length();
-    assert offset + length <= buffer.length();
-    growTermBuffer(length);
-    buffer.getChars(offset, offset + length, termBuffer, 0);
-    termLength = length;
-  }
-
+  @Override
   public final char[] buffer() {
     return termBuffer;
   }
-
-  @Deprecated
-  public char[] termBuffer() {
-    return termBuffer;
-  }
   
+  @Override
   public final char[] resizeBuffer(int newSize) {
     if(termBuffer.length < newSize){
       // Not big enough; create a new array with slight
       // over allocation and preserve content
-      final char[] newCharBuffer = new char[ArrayUtil.oversize(newSize, RamUsageEstimator.NUM_BYTES_CHAR)];
+      final char[] newCharBuffer = new char[ArrayUtil.oversize(newSize, Character.BYTES)];
       System.arraycopy(termBuffer, 0, newCharBuffer, 0, termBuffer.length);
       termBuffer = newCharBuffer;
     }
     return termBuffer;   
-  }
-
-  @Deprecated
-  public char[] resizeTermBuffer(int newSize) {
-    return resizeBuffer(newSize);
   }
   
   private void growTermBuffer(int newSize) {
     if(termBuffer.length < newSize){
       // Not big enough; create a new array with slight
       // over allocation:
-      termBuffer = new char[ArrayUtil.oversize(newSize, RamUsageEstimator.NUM_BYTES_CHAR)];
+      termBuffer = new char[ArrayUtil.oversize(newSize, Character.BYTES)];
     }
   }
-  
-  @Deprecated
-  public int termLength() {
-    return termLength;
-  }
 
+  @Override
   public final CharTermAttribute setLength(int length) {
     if (length > termBuffer.length)
       throw new IllegalArgumentException("length " + length + " exceeds the size of the termBuffer (" + termBuffer.length + ")");
@@ -113,27 +77,34 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
     return this;
   }
   
+  @Override
   public final CharTermAttribute setEmpty() {
     termLength = 0;
     return this;
   }
   
-  @Deprecated
-  public void setTermLength(int length) {
-    setLength(length);
+  // *** TermToBytesRefAttribute interface ***
+
+  @Override
+  public BytesRef getBytesRef() {
+    builder.copyChars(termBuffer, 0, termLength);
+    return builder.get();
   }
   
   // *** CharSequence interface ***
+  @Override
   public final int length() {
     return termLength;
   }
   
+  @Override
   public final char charAt(int index) {
     if (index >= termLength)
       throw new IndexOutOfBoundsException();
     return termBuffer[index];
   }
   
+  @Override
   public final CharSequence subSequence(final int start, final int end) {
     if (start > termLength || end > termLength)
       throw new IndexOutOfBoundsException();
@@ -142,12 +113,14 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
   
   // *** Appendable interface ***
 
+  @Override
   public final CharTermAttribute append(CharSequence csq) {
     if (csq == null) // needed for Appendable compliance
       return appendNull();
     return append(csq, 0, csq.length());
   }
   
+  @Override
   public final CharTermAttribute append(CharSequence csq, int start, int end) {
     if (csq == null) // needed for Appendable compliance
       csq = "null";
@@ -184,6 +157,7 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
     }
   }
   
+  @Override
   public final CharTermAttribute append(char c) {
     resizeBuffer(termLength + 1)[termLength++] = c;
     return this;
@@ -191,6 +165,7 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
   
   // *** For performance some convenience methods in addition to CSQ's ***
   
+  @Override
   public final CharTermAttribute append(String s) {
     if (s == null) // needed for Appendable compliance
       return appendNull();
@@ -200,6 +175,7 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
     return this;
   }
   
+  @Override
   public final CharTermAttribute append(StringBuilder s) {
     if (s == null) // needed for Appendable compliance
       return appendNull();
@@ -209,6 +185,7 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
     return this;
   }
   
+  @Override
   public final CharTermAttribute append(CharTermAttribute ta) {
     if (ta == null) // needed for Appendable compliance
       return appendNull();
@@ -242,11 +219,13 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
   }
 
   @Override
-  public Object clone() {
+  public CharTermAttributeImpl clone() {
     CharTermAttributeImpl t = (CharTermAttributeImpl)super.clone();
     // Do a deep clone
     t.termBuffer = new char[this.termLength];
     System.arraycopy(this.termBuffer, 0, t.termBuffer, 0, this.termLength);
+    t.builder = new BytesRefBuilder();
+    t.builder.copyBytes(builder.get());
     return t;
   }
   
@@ -282,24 +261,19 @@ public class CharTermAttributeImpl extends AttributeImpl implements CharTermAttr
    */
   @Override
   public String toString() {
-    // CharSequence requires that only the contents are returned, but this is orginal code: "term=" + new String(termBuffer, 0, termLength)
     return new String(termBuffer, 0, termLength);
   }
   
   @Override
   public void reflectWith(AttributeReflector reflector) {
     reflector.reflect(CharTermAttribute.class, "term", toString());
+    reflector.reflect(TermToBytesRefAttribute.class, "bytes", getBytesRef());
   }
   
   @Override
   public void copyTo(AttributeImpl target) {
-    if (target instanceof CharTermAttribute) {
-      CharTermAttribute t = (CharTermAttribute) target;
-      t.copyBuffer(termBuffer, 0, termLength);
-    } else {
-      TermAttribute t = (TermAttribute) target;
-      t.setTermBuffer(termBuffer, 0, termLength);
-    }
+    CharTermAttribute t = (CharTermAttribute) target;
+    t.copyBuffer(termBuffer, 0, termLength);
   }
 
 }

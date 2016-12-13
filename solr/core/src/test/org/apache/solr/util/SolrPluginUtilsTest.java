@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,17 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.util;
 
 import org.apache.solr.SolrTestCaseJ4;
-import org.apache.solr.util.SolrPluginUtils;
+import org.apache.solr.request.SolrQueryRequest;
+import org.apache.solr.search.QParser;
+import org.apache.solr.search.QueryCommand;
+import org.apache.solr.search.QueryResult;
 import org.apache.solr.util.SolrPluginUtils.DisjunctionMaxQueryParser;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.search.DocList;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
-
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
@@ -37,6 +38,9 @@ import org.apache.lucene.search.BooleanClause.Occur;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -67,15 +71,15 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
     RefCounted<SolrIndexSearcher> holder = h.getCore().getSearcher();
     try {
       SolrIndexSearcher srchr = holder.get();
-      SolrIndexSearcher.QueryResult qr = new SolrIndexSearcher.QueryResult();
-      SolrIndexSearcher.QueryCommand cmd = new SolrIndexSearcher.QueryCommand();
+      QueryResult qr = new QueryResult();
+      QueryCommand cmd = new QueryCommand();
       cmd.setQuery(new MatchAllDocsQuery());
       cmd.setLen(10);
       qr = srchr.search(qr, cmd);
       
       DocList docs = qr.getDocList();
       assertEquals("wrong docs size", 3, docs.size());
-      Set<String> fields = new HashSet<String>();
+      Set<String> fields = new HashSet<>();
       fields.add("val_dynamic");
       fields.add("dynamic_val");
       fields.add("range_facet_l"); // copied from id
@@ -148,7 +152,7 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
   @Test
   public void testParseFieldBoosts() throws Exception {
 
-    Map<String,Float> e1 = new HashMap<String,Float>();
+    Map<String,Float> e1 = new HashMap<>();
     e1.put("fieldOne",2.3f);
     e1.put("fieldTwo",null);
     e1.put("fieldThree",-0.4f);
@@ -164,7 +168,7 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
                                "  fieldTwo fieldThree^-0.4   ",
                                " "}));
 
-    Map<String,Float> e2 = new HashMap<String,Float>();
+    Map<String,Float> e2 = new HashMap<>();
     assertEquals("empty e2", e2, SolrPluginUtils.parseFieldBoosts
                  (""));
     assertEquals("spacey e2", e2, SolrPluginUtils.parseFieldBoosts
@@ -176,9 +180,12 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
         
     Query out;
     String t;
-        
+
+    SolrQueryRequest req = req();
+    QParser qparser = QParser.getParser("hi", "dismax", req);
+
     DisjunctionMaxQueryParser qp =
-      new SolrPluginUtils.DisjunctionMaxQueryParser(h.getCore().getSchema());
+      new SolrPluginUtils.DisjunctionMaxQueryParser(qparser, req.getSchema().getDefaultSearchFieldName());
 
     qp.addAlias("hoss", 0.01f, SolrPluginUtils.parseFieldBoosts
                 ("title^2.0 title_stemmed name^1.2 subject^0.5"));
@@ -195,7 +202,7 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
     assertTrue(t+" sanity test isn't TermQuery: " + out.getClass(),
                out instanceof TermQuery);
     assertEquals(t+" sanity test is wrong field",
-                 h.getCore().getSchema().getDefaultSearchFieldName(),
+                 h.getCore().getLatestSchema().getDefaultSearchFieldName(),
                  ((TermQuery)out).getTerm().field());
 
     t = "subject:XXXXXXXX";
@@ -253,7 +260,7 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
                out instanceof BooleanQuery);
     {
       BooleanQuery bq = (BooleanQuery)out;
-      List<BooleanClause> clauses = bq.clauses();
+      List<BooleanClause> clauses = new ArrayList<>(bq.clauses());
       assertEquals(t+" wrong number of clauses", 2,
                    clauses.size());
       Query sub = clauses.get(0).getQuery();
@@ -276,7 +283,7 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
                out instanceof BooleanQuery);
     {
       BooleanQuery bq = (BooleanQuery)out;
-      List<BooleanClause> clauses = bq.clauses();
+      List<BooleanClause> clauses = new ArrayList<>(bq.clauses());
       assertEquals(t+" wrong number of clauses", 2,
                    clauses.size());
       Query sub = clauses.get(0).getQuery();
@@ -310,11 +317,11 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
     /* zero is zero is zero */
     assertEquals(0, calcMSM(5, "0"));
     assertEquals(0, calcMSM(5, "0%"));
-    assertEquals(0, calcMSM(5, "-5"));
-    assertEquals(0, calcMSM(5, "-100%"));
+    assertEquals(0, calcMSM(5, " -5 "));
+    assertEquals(0, calcMSM(5, "\n -100% \n"));
 
     /* basic integers */
-    assertEquals(3, calcMSM(5, "3"));
+    assertEquals(3, calcMSM(5, " \n3\n "));
     assertEquals(2, calcMSM(5, "-3"));
     assertEquals(3, calcMSM(3, "3"));
     assertEquals(0, calcMSM(3, "-3"));
@@ -322,13 +329,13 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
     assertEquals(0, calcMSM(3, "-5"));
 
     /* positive percentages with rounding */
-    assertEquals(0, calcMSM(3, "25%"));
+    assertEquals(0, calcMSM(3, " \n25% \n"));
     assertEquals(1, calcMSM(4, "25%"));
-    assertEquals(1, calcMSM(5, "25%"));
+    assertEquals(1, calcMSM(5, " 25% "));
     assertEquals(2, calcMSM(10, "25%"));
         
     /* negative percentages with rounding */
-    assertEquals(3, calcMSM(3, "-25%"));
+    assertEquals(3, calcMSM(3, " \n-25%\n "));
     assertEquals(3, calcMSM(4, "-25%"));
     assertEquals(4, calcMSM(5, "-25%"));
     assertEquals(8, calcMSM(10, "-25%"));
@@ -340,50 +347,140 @@ public class SolrPluginUtilsTest extends SolrTestCaseJ4 {
     assertEquals(0, calcMSM(4, "3<0"));
     assertEquals(0, calcMSM(5, "3<0"));
     assertEquals(1, calcMSM(1, "3<25%"));
-    assertEquals(2, calcMSM(2, "3<25%"));
+    assertEquals(2, calcMSM(2, " 3\n<\n25% "));
     assertEquals(3, calcMSM(3, "3<25%"));
-    assertEquals(1, calcMSM(4, "3<25%"));
+    assertEquals(1, calcMSM(4, "\n 3 < \n25%\n "));
     assertEquals(1, calcMSM(5, "3<25%"));
 
     /* multiple conditionals */
-    assertEquals(1, calcMSM(1, "3<-25% 10<-3"));
-    assertEquals(2, calcMSM(2, "3<-25% 10<-3"));
-    assertEquals(3, calcMSM(3, "3<-25% 10<-3"));
-    assertEquals(3, calcMSM(4, "3<-25% 10<-3"));
-    assertEquals(4, calcMSM(5, "3<-25% 10<-3"));
+    assertEquals(1, calcMSM(1, "\n3 < -25% 10 < -3 \n"));
+    assertEquals(2, calcMSM(2, " 3 < -25% 10 < -3\n"));
+    assertEquals(3, calcMSM(3, " 3 < -25% \n 10 < -3 \n"));
+    assertEquals(3, calcMSM(4, " 3 < -25% 10 < -3 "));
+    assertEquals(4, calcMSM(5, " 3 < -25% 10 < -3"));
     assertEquals(5, calcMSM(6, "3<-25% 10<-3"));
-    assertEquals(6, calcMSM(7, "3<-25% 10<-3"));
-    assertEquals(6, calcMSM(8, "3<-25% 10<-3"));
-    assertEquals(7, calcMSM(9, "3<-25% 10<-3"));
-    assertEquals(8, calcMSM(10, "3<-25% 10<-3"));
+    assertEquals(6, calcMSM(7, " 3 < -25% 10 < -3 "));
+    assertEquals(6, calcMSM(8, " 3 < -25% 10 \n < -3\n"));
+    assertEquals(7, calcMSM(9, " 3 < -25% 10 < -3 \n"));
+    assertEquals(8, calcMSM(10, " 3 < -25% 10 < -3"));
     assertEquals(8, calcMSM(11, "3<-25% 10<-3"));
     assertEquals(9, calcMSM(12, "3<-25% 10<-3"));
     assertEquals(97, calcMSM(100, "3<-25% 10<-3"));
 
-    BooleanQuery q = new BooleanQuery();
+    BooleanQuery.Builder q = new BooleanQuery.Builder();
     q.add(new TermQuery(new Term("a","b")), Occur.SHOULD);
     q.add(new TermQuery(new Term("a","c")), Occur.SHOULD);
     q.add(new TermQuery(new Term("a","d")), Occur.SHOULD);
     q.add(new TermQuery(new Term("a","d")), Occur.SHOULD);
 
     SolrPluginUtils.setMinShouldMatch(q, "0");
-    assertEquals(0, q.getMinimumNumberShouldMatch());
+    assertEquals(0, q.build().getMinimumNumberShouldMatch());
         
     SolrPluginUtils.setMinShouldMatch(q, "1");
-    assertEquals(1, q.getMinimumNumberShouldMatch());
+    assertEquals(1, q.build().getMinimumNumberShouldMatch());
         
     SolrPluginUtils.setMinShouldMatch(q, "50%");
-    assertEquals(2, q.getMinimumNumberShouldMatch());
+    assertEquals(2, q.build().getMinimumNumberShouldMatch());
 
     SolrPluginUtils.setMinShouldMatch(q, "99");
-    assertEquals(4, q.getMinimumNumberShouldMatch());
+    assertEquals(4, q.build().getMinimumNumberShouldMatch());
 
     q.add(new TermQuery(new Term("a","e")), Occur.MUST);
     q.add(new TermQuery(new Term("a","f")), Occur.MUST);
 
     SolrPluginUtils.setMinShouldMatch(q, "50%");
-    assertEquals(2, q.getMinimumNumberShouldMatch());
+    assertEquals(2, q.build().getMinimumNumberShouldMatch());
         
+  }
+
+  @Test
+  public void testMinShouldMatchAutoRelax() {
+    /* The basics should not be affected by autoRelax */
+    BooleanQuery.Builder q = new BooleanQuery.Builder();
+    q.add(new TermQuery(new Term("a","b")), Occur.SHOULD);
+    q.add(new TermQuery(new Term("a","c")), Occur.SHOULD);
+    q.add(new TermQuery(new Term("a","d")), Occur.SHOULD);
+    q.add(new TermQuery(new Term("a","d")), Occur.SHOULD);
+
+    SolrPluginUtils.setMinShouldMatch(q, "0", true);
+    assertEquals(0, q.build().getMinimumNumberShouldMatch());
+
+    SolrPluginUtils.setMinShouldMatch(q, "1", true);
+    assertEquals(1, q.build().getMinimumNumberShouldMatch());
+
+    SolrPluginUtils.setMinShouldMatch(q, "50%", true);
+    assertEquals(2, q.build().getMinimumNumberShouldMatch());
+
+    SolrPluginUtils.setMinShouldMatch(q, "99", true);
+    assertEquals(4, q.build().getMinimumNumberShouldMatch());
+
+    q.add(new TermQuery(new Term("a","e")), Occur.MUST);
+    q.add(new TermQuery(new Term("a","f")), Occur.MUST);
+
+    SolrPluginUtils.setMinShouldMatch(q, "50%", true);
+    assertEquals(2, q.build().getMinimumNumberShouldMatch());
+
+    /* Simulate stopwords through uneven disjuncts */
+    q = new BooleanQuery.Builder();
+    q.add(new DisjunctionMaxQuery(Collections.singleton(new TermQuery(new Term("a","foo"))), 0.0f), Occur.SHOULD);
+    DisjunctionMaxQuery dmq = new DisjunctionMaxQuery(
+        Arrays.asList(
+            new TermQuery(new Term("a","foo")),
+            new TermQuery(new Term("b","foo"))),
+        0f);
+    q.add(dmq, Occur.SHOULD);
+    dmq = new DisjunctionMaxQuery(
+        Arrays.asList(
+            new TermQuery(new Term("a","bar")),
+            new TermQuery(new Term("b","bar"))),
+        0f);
+    q.add(dmq, Occur.SHOULD);
+
+    // Without relax
+    SolrPluginUtils.setMinShouldMatch(q, "100%", false);
+    assertEquals(3, q.build().getMinimumNumberShouldMatch());
+
+    // With relax
+    SolrPluginUtils.setMinShouldMatch(q, "100%", true);
+    assertEquals(2, q.build().getMinimumNumberShouldMatch());
+
+    // Still same result with a MUST clause extra
+    q.add(new TermQuery(new Term("a","must")), Occur.MUST);
+    SolrPluginUtils.setMinShouldMatch(q, "100%", true);
+    assertEquals(2, q.build().getMinimumNumberShouldMatch());
+
+    // Combination of dismax and non-dismax SHOULD clauses
+    q.add(new TermQuery(new Term("b","should")), Occur.SHOULD);
+    SolrPluginUtils.setMinShouldMatch(q, "100%", true);
+    assertEquals(3, q.build().getMinimumNumberShouldMatch());
+  }
+
+  private class InvokeSettersTestClass {
+    private float aFloat = random().nextFloat();
+    public float getAFloat() {
+      return aFloat;
+    }
+    public void setAFloat(float aFloat) {
+      this.aFloat = aFloat;
+    }
+    public void setAFloat(String aFloat) {
+      this.aFloat = Float.parseFloat(aFloat);
+    }
+  }
+
+  @Test
+  public void testInvokeSetters() {
+    final Float theFloat = new Float(random().nextFloat());
+    implTestInvokeSetters(theFloat, theFloat);
+    implTestInvokeSetters(theFloat, theFloat.toString());
+  }
+
+  public void implTestInvokeSetters(final Float theFloat, final Object theFloatObject) {
+    final InvokeSettersTestClass bean = new InvokeSettersTestClass();
+    final Map<String,Object> initArgs = new HashMap<>();
+    initArgs.put("aFloat", theFloatObject);
+    SolrPluginUtils.invokeSetters(bean, initArgs.entrySet());
+    assertEquals(bean.getAFloat(), theFloat.floatValue(), 0.0);
   }
 
   /** macro */

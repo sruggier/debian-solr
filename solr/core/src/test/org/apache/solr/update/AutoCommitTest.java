@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,25 +14,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
 
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.apache.solr.common.params.MapSolrParams;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.core.SolrEventListener;
-import org.apache.solr.handler.XmlUpdateRequestHandler;
+import org.apache.solr.handler.UpdateRequestHandler;
 import org.apache.solr.request.SolrQueryRequestBase;
 import org.apache.solr.response.SolrQueryResponse;
 import org.apache.solr.search.SolrIndexSearcher;
 import org.apache.solr.util.AbstractSolrTestCase;
 import org.apache.solr.util.RefCounted;
+import org.apache.solr.util.TimeOut;
+import org.junit.BeforeClass;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 class NewSearcherListener implements SolrEventListener {
 
@@ -43,6 +50,8 @@ class NewSearcherListener implements SolrEventListener {
   private volatile TriggerOn triggerOnType;
   private volatile SolrIndexSearcher newSearcher;
 
+  private CountDownLatch latch;
+
   public NewSearcherListener() {
     this(TriggerOn.Both);
   }
@@ -51,10 +60,13 @@ class NewSearcherListener implements SolrEventListener {
     this.triggerOnType = type;
   }
 
+  @Override
   public void init(NamedList args) {}
 
+  @Override
   public void newSearcher(SolrIndexSearcher newSearcher,
       SolrIndexSearcher currentSearcher) {
+    waitForTrigger();
     if (triggerOnType == TriggerOn.Soft && lastType == TriggerOn.Soft) {
       triggered = true;
     } else if (triggerOnType == TriggerOn.Hard && lastType == TriggerOn.Hard) {
@@ -66,12 +78,37 @@ class NewSearcherListener implements SolrEventListener {
     // log.info("TEST: newSearcher event: triggered="+triggered+" newSearcher="+newSearcher);
   }
 
+  @Override
   public void postCommit() {
     lastType = TriggerOn.Hard;
   }
 
+  @Override
   public void postSoftCommit() {
     lastType = TriggerOn.Soft;
+  }
+
+  private void waitForTrigger() {
+    if (latch != null) {
+      try {
+        if (latch.await(30, TimeUnit.SECONDS) == false) {
+          throw new AssertionError("Timed out waiting for search trigger to be released");
+        }
+      } catch (InterruptedException e) {
+        throw new AssertionError("Interrupted waiting for new searcher");
+      }
+    }
+  }
+
+  public void pause() {
+    latch = new CountDownLatch(1);
+  }
+
+  public void unpause() {
+    if (latch != null) {
+      latch.countDown();
+      latch = null;
+    }
   }
 
   public void reset() {
@@ -79,9 +116,9 @@ class NewSearcherListener implements SolrEventListener {
     // log.info("TEST: trigger reset");
   }
 
-  boolean waitForNewSearcher(int timeout) {
-    long timeoutTime = System.currentTimeMillis() + timeout;
-    while (System.currentTimeMillis() < timeoutTime) {
+  boolean waitForNewSearcher(int timeoutMs) {
+    TimeOut timeout = new TimeOut(timeoutMs, TimeUnit.MILLISECONDS);
+    while (! timeout.hasTimedOut()) {
       if (triggered) {
         // check if the new searcher has been registered yet
         RefCounted<SolrIndexSearcher> registeredSearcherH = newSearcher.getCore().getSearcher();
@@ -100,12 +137,15 @@ class NewSearcherListener implements SolrEventListener {
   }
 }
 
+@Slow
 public class AutoCommitTest extends AbstractSolrTestCase {
 
-  @Override
-  public String getSchemaFile() { return "schema.xml"; }
-  @Override
-  public String getSolrConfigFile() { return "solrconfig.xml"; }
+  private static final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+   @BeforeClass
+  public static void beforeClass() throws Exception {
+    initCore("solrconfig.xml", "schema.xml");
+  }
 
   public static void verbose(Object... args) {
     if (!VERBOSE) return;
@@ -119,6 +159,14 @@ public class AutoCommitTest extends AbstractSolrTestCase {
     log.info(sb.toString());
     // System.out.println(sb.toString());
   }
+  
+  @Override
+  public void setUp() throws Exception {
+    super.setUp();
+    clearIndex();
+    // reload the core to clear stats
+    h.getCoreContainer().reload(h.getCore().getName());
+  }
 
   /**
    * Take a string and make it an iterable ContentStream
@@ -127,26 +175,26 @@ public class AutoCommitTest extends AbstractSolrTestCase {
    */
   public static Collection<ContentStream> toContentStreams( final String str, final String contentType )
   {
-    ArrayList<ContentStream> streams = new ArrayList<ContentStream>();
+    ArrayList<ContentStream> streams = new ArrayList<>();
     ContentStreamBase stream = new ContentStreamBase.StringStream( str );
-    stream.setContentType( contentType );
+    if (contentType != null) stream.setContentType( contentType );
     streams.add( stream );
     return streams;
   }
 
   public void testMaxDocs() throws Exception {
-
     SolrCore core = h.getCore();
+    
     NewSearcherListener trigger = new NewSearcherListener();
 
     DirectUpdateHandler2 updateHandler = (DirectUpdateHandler2)core.getUpdateHandler();
-    CommitTracker tracker = updateHandler.commitTracker;
+    CommitTracker tracker = updateHandler.softCommitTracker;
     tracker.setTimeUpperBound(-1);
     tracker.setDocsUpperBound(14);
     core.registerNewSearcherListener(trigger);
   
     
-    XmlUpdateRequestHandler handler = new XmlUpdateRequestHandler();
+    UpdateRequestHandler handler = new UpdateRequestHandler();
     handler.init( null );
     
     MapSolrParams params = new MapSolrParams( new HashMap<String, String>() );
@@ -167,7 +215,7 @@ public class AutoCommitTest extends AbstractSolrTestCase {
         adoc("id", "14", "subject", "info" ), null ) );
     handler.handleRequest( req, rsp );
 
-    assertTrue(trigger.waitForNewSearcher(10000));
+    assertTrue(trigger.waitForNewSearcher(15000));
 
     req.setContentStreams( toContentStreams(
         adoc("id", "15", "subject", "info" ), null ) );
@@ -184,17 +232,18 @@ public class AutoCommitTest extends AbstractSolrTestCase {
 
   public void testMaxTime() throws Exception {
     SolrCore core = h.getCore();
+    
     NewSearcherListener trigger = new NewSearcherListener();    
     core.registerNewSearcherListener(trigger);
     DirectUpdateHandler2 updater = (DirectUpdateHandler2) core.getUpdateHandler();
-    CommitTracker tracker = updater.commitTracker;
+    CommitTracker tracker = updater.softCommitTracker;
     // too low of a number can cause a slow host to commit before the test code checks that it
     // isn't there... causing a failure at "shouldn't find any"
     tracker.setTimeUpperBound(1000);
     tracker.setDocsUpperBound(-1);
     // updater.commitCallbacks.add(trigger);
     
-    XmlUpdateRequestHandler handler = new XmlUpdateRequestHandler();
+    UpdateRequestHandler handler = new UpdateRequestHandler();
     handler.init( null );
     
     MapSolrParams params = new MapSolrParams( new HashMap<String, String>() );
@@ -211,7 +260,7 @@ public class AutoCommitTest extends AbstractSolrTestCase {
     assertQ("shouldn't find any", req("id:529") ,"//result[@numFound=0]" );
 
     // Wait longer than the autocommit time
-    assertTrue(trigger.waitForNewSearcher(30000));
+    assertTrue(trigger.waitForNewSearcher(45000));
     trigger.reset();
     req.setContentStreams( toContentStreams(
       adoc("id", "530", "field_t", "what's inside?", "subject", "info"), null ) );
@@ -257,23 +306,24 @@ public class AutoCommitTest extends AbstractSolrTestCase {
   
   public void testCommitWithin() throws Exception {
     SolrCore core = h.getCore();
+    
     NewSearcherListener trigger = new NewSearcherListener();    
     core.registerNewSearcherListener(trigger);
     DirectUpdateHandler2 updater = (DirectUpdateHandler2) core.getUpdateHandler();
-    CommitTracker tracker = updater.commitTracker;
+    CommitTracker tracker = updater.softCommitTracker;
     tracker.setTimeUpperBound(0);
     tracker.setDocsUpperBound(-1);
     
-    XmlUpdateRequestHandler handler = new XmlUpdateRequestHandler();
+    UpdateRequestHandler handler = new UpdateRequestHandler();
     handler.init( null );
     
     MapSolrParams params = new MapSolrParams( new HashMap<String, String>() );
     
-    // Add a single document with commitWithin == 1 second
+    // Add a single document with commitWithin == 4 second
     SolrQueryResponse rsp = new SolrQueryResponse();
     SolrQueryRequestBase req = new SolrQueryRequestBase( core, params ) {};
     req.setContentStreams( toContentStreams(
-      adoc(1000, "id", "529", "field_t", "what's inside?", "subject", "info"), null ) );
+      adoc(4000, "id", "529", "field_t", "what's inside?", "subject", "info"), null ) );
     trigger.reset();
     handler.handleRequest( req, rsp );
 
@@ -293,6 +343,7 @@ public class AutoCommitTest extends AbstractSolrTestCase {
     assertQ("shouldn't find any", req("id:530") ,"//result[@numFound=0]" );
     
     // Delete one document with commitWithin
+    trigger.pause();
     req.setContentStreams( toContentStreams(
       delI("529", "commitWithin", "1000"), null ) );
     trigger.reset();
@@ -300,6 +351,7 @@ public class AutoCommitTest extends AbstractSolrTestCase {
       
     // Now make sure we can find it
     assertQ("should find one", req("id:529") ,"//result[@numFound=1]" );
+    trigger.unpause();
     
     // Wait for the commit to happen
     assertTrue("commitWithin failed to commit", trigger.waitForNewSearcher(30000));
@@ -314,7 +366,7 @@ public class AutoCommitTest extends AbstractSolrTestCase {
     // now make the call 10 times really fast and make sure it 
     // only commits once
     req.setContentStreams( toContentStreams(
-        adoc(1000, "id", "500" ), null ) );
+        adoc(2000, "id", "500" ), null ) );
     for( int i=0;i<10; i++ ) {
       handler.handleRequest( req, rsp );
     }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -19,33 +19,31 @@ package org.apache.solr.handler.dataimport;
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.wrapAndThrow;
 import static org.apache.solr.handler.dataimport.DataImportHandlerException.SEVERE;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.Map;
+
+import javax.script.Invocable;
+import javax.script.ScriptEngine;
+import javax.script.ScriptEngineManager;
+import javax.script.ScriptException;
 
 /**
  * <p>
  * A {@link Transformer} instance capable of executing functions written in scripting
  * languages as a {@link Transformer} instance.
  * </p>
- * <p/>
  * <p>
  * Refer to <a
  * href="http://wiki.apache.org/solr/DataImportHandler">http://wiki.apache.org/solr/DataImportHandler</a>
  * for more details.
  * </p>
- * <p/>
+ * <p>
  * <b>This API is experimental and may change in the future.</b>
  *
- * @version $Id$
  * @since solr 1.3
  */
 public class ScriptTransformer extends Transformer {
-  private Object engine;
-
-  private Method invokeFunctionMethod;
-
-  private String functionName;
+ private Invocable engine;
+ private String functionName;
 
   @Override
   public Object transformRow(Map<String, Object> row, Context context) {
@@ -54,17 +52,9 @@ public class ScriptTransformer extends Transformer {
         initEngine(context);
       if (engine == null)
         return row;
-      return invokeFunctionMethod.invoke(engine, functionName, new Object[]{
-              row, context});
+      return engine.invokeFunction(functionName, new Object[]{row, context});      
     } catch (DataImportHandlerException e) {
       throw e;
-    } catch (InvocationTargetException e) {
-      wrapAndThrow(SEVERE,e,
-              "Could not invoke method :"
-                      + functionName
-                      + "\n <script>\n"
-                      + context.getScript()
-                      + "</script>");
     } catch (Exception e) {
       wrapAndThrow(SEVERE,e, "Error invoking script for entity " + context.getEntityAttribute("name"));
     }
@@ -79,28 +69,23 @@ public class ScriptTransformer extends Transformer {
       throw new DataImportHandlerException(SEVERE,
           "<script> tag is not present under <dataConfig>");
     }
-    Object scriptEngineMgr = null;
-    Method evalMethod = null;
-    try {
-      scriptEngineMgr = Class.forName("javax.script.ScriptEngineManager")
-          .newInstance();
-    } catch (Exception e) {
-      wrapAndThrow(SEVERE, e, "<script> can be used only in java 6 or above");
+    ScriptEngineManager scriptEngineMgr = new ScriptEngineManager();
+    ScriptEngine scriptEngine = scriptEngineMgr.getEngineByName(scriptLang);
+    if (scriptEngine == null) {
+      throw new DataImportHandlerException(SEVERE,
+          "Cannot load Script Engine for language: " + scriptLang);
+    }
+    if (scriptEngine instanceof Invocable) {
+      engine = (Invocable) scriptEngine;
+    } else {
+      throw new DataImportHandlerException(SEVERE,
+          "The installed ScriptEngine for: " + scriptLang
+              + " does not implement Invocable.  Class is "
+              + scriptEngine.getClass().getName());
     }
     try {
-      Method getEngineMethod = scriptEngineMgr.getClass().getMethod(
-          "getEngineByName", String.class);
-      engine = getEngineMethod.invoke(scriptEngineMgr, scriptLang);
-      evalMethod = engine.getClass().getMethod("eval", String.class);
-      invokeFunctionMethod = engine.getClass().getMethod("invokeFunction",
-          String.class, Object[].class);
-    } catch (Exception e) {
-      wrapAndThrow(SEVERE, e, "Cannot load Script Engine for language: "
-          + scriptLang);
-    }
-    try {      
-      evalMethod.invoke(engine, scriptText);
-    } catch (Exception e) {
+      scriptEngine.eval(scriptText);
+    } catch (ScriptException e) {
       wrapAndThrow(SEVERE, e, "'eval' failed with language: " + scriptLang
           + " and script: \n" + scriptText);
     }

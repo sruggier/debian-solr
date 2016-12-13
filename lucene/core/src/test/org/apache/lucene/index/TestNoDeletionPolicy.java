@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -24,8 +24,7 @@ import java.util.Arrays;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field.Index;
-import org.apache.lucene.document.Field.Store;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
 import org.junit.Test;
@@ -70,15 +69,14 @@ public class TestNoDeletionPolicy extends LuceneTestCase {
   @Test
   public void testAllCommitsRemain() throws Exception {
     Directory dir = newDirectory();
-    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
-        .setIndexDeletionPolicy(NoDeletionPolicy.INSTANCE));
+    IndexWriter writer = new IndexWriter(dir, newIndexWriterConfig(new MockAnalyzer(random()))
+                                                .setIndexDeletionPolicy(NoDeletionPolicy.INSTANCE));
     for (int i = 0; i < 10; i++) {
       Document doc = new Document();
-      doc.add(newField("c", "a" + i, Store.YES, Index.ANALYZED));
+      doc.add(newTextField("c", "a" + i, Field.Store.YES));
       writer.addDocument(doc);
       writer.commit();
-      assertEquals("wrong number of commits !", i + 1, IndexReader.listCommits(dir).size());
+      assertEquals("wrong number of commits !", i + 1, DirectoryReader.listCommits(dir).size());
     }
     writer.close();
     dir.close();

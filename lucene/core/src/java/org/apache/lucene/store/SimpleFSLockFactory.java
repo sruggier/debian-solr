@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,131 +14,137 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
 
-import java.io.File;
+
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 
 /**
  * <p>Implements {@link LockFactory} using {@link
- * File#createNewFile()}.</p>
+ * Files#createFile}.</p>
  *
- * <p><b>NOTE:</b> the <a target="_top"
- * href="http://java.sun.com/j2se/1.4.2/docs/api/java/io/File.html#createNewFile()">javadocs
- * for <code>File.createNewFile</code></a> contain a vague
- * yet spooky warning about not using the API for file
- * locking.  This warning was added due to <a target="_top"
- * href="http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4676183">this
- * bug</a>, and in fact the only known problem with using
- * this API for locking is that the Lucene write lock may
- * not be released when the JVM exits abnormally.</p>
-
- * <p>When this happens, a {@link LockObtainFailedException}
- * is hit when trying to create a writer, in which case you
- * need to explicitly clear the lock file first.  You can
- * either manually remove the file, or use the {@link
- * org.apache.lucene.index.IndexWriter#unlock(Directory)}
- * API.  But, first be certain that no writer is in fact
+ * <p>The main downside with using this API for locking is 
+ * that the Lucene write lock may not be released when 
+ * the JVM exits abnormally.</p>
+ *
+ * <p>When this happens, an {@link LockObtainFailedException}
+ * is hit when trying to create a writer, in which case you may
+ * need to explicitly clear the lock file first by
+ * manually removing the file.  But, first be certain that
+ * no writer is in fact writing to the index otherwise you
+ * can easily corrupt your index.</p>
+ *
+ * <p>Special care needs to be taken if you change the locking
+ * implementation: First be certain that no writer is in fact
  * writing to the index otherwise you can easily corrupt
- * your index.</p>
+ * your index. Be sure to do the LockFactory change all Lucene
+ * instances and clean up all leftover lock files before starting
+ * the new configuration for the first time. Different implementations
+ * can not work together!</p>
  *
  * <p>If you suspect that this or any other LockFactory is
  * not working properly in your environment, you can easily
  * test it by using {@link VerifyingLockFactory}, {@link
  * LockVerifyServer} and {@link LockStressTest}.</p>
+ * 
+ * <p>This is a singleton, you have to use {@link #INSTANCE}.
  *
  * @see LockFactory
  */
 
-public class SimpleFSLockFactory extends FSLockFactory {
+public final class SimpleFSLockFactory extends FSLockFactory {
 
   /**
-   * Create a SimpleFSLockFactory instance, with null (unset)
-   * lock directory. When you pass this factory to a {@link FSDirectory}
-   * subclass, the lock directory is automatically set to the
-   * directory itself. Be sure to create one instance for each directory
-   * your create!
+   * Singleton instance
    */
-  public SimpleFSLockFactory() throws IOException {
-    this((File) null);
-  }
-
-  /**
-   * Instantiate using the provided directory (as a File instance).
-   * @param lockDir where lock files should be created.
-   */
-  public SimpleFSLockFactory(File lockDir) throws IOException {
-    setLockDir(lockDir);
-  }
-
-  /**
-   * Instantiate using the provided directory name (String).
-   * @param lockDirName where lock files should be created.
-   */
-  public SimpleFSLockFactory(String lockDirName) throws IOException {
-    setLockDir(new File(lockDirName));
-  }
+  public static final SimpleFSLockFactory INSTANCE = new SimpleFSLockFactory();
+  
+  private SimpleFSLockFactory() {}
 
   @Override
-  public Lock makeLock(String lockName) {
-    if (lockPrefix != null) {
-      lockName = lockPrefix + "-" + lockName;
+  protected Lock obtainFSLock(FSDirectory dir, String lockName) throws IOException {
+    Path lockDir = dir.getDirectory();
+    
+    // Ensure that lockDir exists and is a directory.
+    // note: this will fail if lockDir is a symlink
+    Files.createDirectories(lockDir);
+    
+    Path lockFile = lockDir.resolve(lockName);
+    
+    // create the file: this will fail if it already exists
+    try {
+      Files.createFile(lockFile);
+    } catch (FileAlreadyExistsException | AccessDeniedException e) {
+      // convert optional specific exception to our optional specific exception
+      throw new LockObtainFailedException("Lock held elsewhere: " + lockFile, e);
     }
-    return new SimpleFSLock(lockDir, lockName);
+    
+    // used as a best-effort check, to see if the underlying file has changed
+    final FileTime creationTime = Files.readAttributes(lockFile, BasicFileAttributes.class).creationTime();
+    
+    return new SimpleFSLock(lockFile, creationTime);
   }
+  
+  static final class SimpleFSLock extends Lock {
+    private final Path path;
+    private final FileTime creationTime;
+    private volatile boolean closed;
 
-  @Override
-  public void clearLock(String lockName) throws IOException {
-    if (lockDir.exists()) {
-      if (lockPrefix != null) {
-        lockName = lockPrefix + "-" + lockName;
+    SimpleFSLock(Path path, FileTime creationTime) throws IOException {
+      this.path = path;
+      this.creationTime = creationTime;
+    }
+
+    @Override
+    public void ensureValid() throws IOException {
+      if (closed) {
+        throw new AlreadyClosedException("Lock instance already released: " + this);
       }
-      File lockFile = new File(lockDir, lockName);
-      if (lockFile.exists() && !lockFile.delete()) {
-        throw new IOException("Cannot delete " + lockFile);
+      // try to validate the backing file name, that it still exists,
+      // and has the same creation time as when we obtained the lock. 
+      // if it differs, someone deleted our lock file (and we are ineffective)
+      FileTime ctime = Files.readAttributes(path, BasicFileAttributes.class).creationTime(); 
+      if (!creationTime.equals(ctime)) {
+        throw new AlreadyClosedException("Underlying file changed by an external force at " + ctime + ", (lock=" + this + ")");
       }
     }
-  }
-}
 
-class SimpleFSLock extends Lock {
-
-  File lockFile;
-  File lockDir;
-
-  public SimpleFSLock(File lockDir, String lockFileName) {
-    this.lockDir = lockDir;
-    lockFile = new File(lockDir, lockFileName);
-  }
-
-  @Override
-  public boolean obtain() throws IOException {
-
-    // Ensure that lockDir exists and is a directory:
-    if (!lockDir.exists()) {
-      if (!lockDir.mkdirs())
-        throw new IOException("Cannot create directory: " +
-                              lockDir.getAbsolutePath());
-    } else if (!lockDir.isDirectory()) {
-      // TODO: NoSuchDirectoryException instead?
-      throw new IOException("Found regular file where directory expected: " + 
-                            lockDir.getAbsolutePath());
+    @Override
+    public synchronized void close() throws IOException {
+      if (closed) {
+        return;
+      }
+      try {
+        // NOTE: unlike NativeFSLockFactory, we can potentially delete someone else's
+        // lock if things have gone wrong. we do best-effort check (ensureValid) to
+        // avoid doing this.
+        try {
+          ensureValid();
+        } catch (Throwable exc) {
+          // notify the user they may need to intervene.
+          throw new LockReleaseFailedException("Lock file cannot be safely removed. Manual intervention is recommended.", exc);
+        }
+        // we did a best effort check, now try to remove the file. if something goes wrong,
+        // we need to make it clear to the user that the directory may still remain locked.
+        try {
+          Files.delete(path);
+        } catch (Throwable exc) {
+          throw new LockReleaseFailedException("Unable to remove lock file. Manual intervention is recommended", exc);
+        }
+      } finally {
+        closed = true;
+      }
     }
-    return lockFile.createNewFile();
-  }
 
-  @Override
-  public void release() throws LockReleaseFailedException {
-    if (lockFile.exists() && !lockFile.delete())
-      throw new LockReleaseFailedException("failed to delete " + lockFile);
-  }
-
-  @Override
-  public boolean isLocked() {
-    return lockFile.exists();
-  }
-
-  @Override
-  public String toString() {
-    return "SimpleFSLock@" + lockFile;
+    @Override
+    public String toString() {
+      return "SimpleFSLock(path=" + path + ",creationTime=" + creationTime + ")";
+    }
   }
 }

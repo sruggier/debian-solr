@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,62 +14,51 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler.component;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.lucene.search.FieldCache;
 import org.apache.solr.common.SolrException;
+import org.apache.solr.common.params.ShardParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.params.StatsParams;
-import org.apache.solr.common.params.ShardParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
-import org.apache.solr.handler.component.StatsValues;
-import org.apache.solr.handler.component.FieldFacetStats;
-import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.schema.FieldType;
-import org.apache.solr.schema.SchemaField;
-import org.apache.solr.schema.TrieField;
-import org.apache.solr.search.DocIterator;
 import org.apache.solr.search.DocSet;
-import org.apache.solr.search.SolrIndexSearcher;
-import org.apache.solr.request.UnInvertedField;
 
 /**
  * Stats component calculates simple statistics on numeric field values
- * 
- * @version $Id$
  * @since solr 1.4
  */
 public class StatsComponent extends SearchComponent {
 
   public static final String COMPONENT_NAME = "stats";
-  
+
   @Override
   public void prepare(ResponseBuilder rb) throws IOException {
     if (rb.req.getParams().getBool(StatsParams.STATS,false)) {
       rb.setNeedDocSet( true );
       rb.doStats = true;
+      rb._statsInfo = new StatsInfo(rb);
     }
   }
 
   @Override
   public void process(ResponseBuilder rb) throws IOException {
-    if (rb.doStats) {
-      SolrParams params = rb.req.getParams();
-      SimpleStats s = new SimpleStats(rb.req,
-              rb.getResults().docSet,
-              params );
+    if (!rb.doStats) return;
+    Map<String, StatsValues> statsValues = new LinkedHashMap<>();
 
-      // TODO ???? add this directly to the response, or to the builder?
-      rb.rsp.add( "stats", s.getStatsCounts() );
+    for (StatsField statsField : rb._statsInfo.getStatsFields()) {
+      DocSet docs = statsField.computeBaseDocSet();
+      statsValues.put(statsField.getOutputKey(), statsField.computeLocalStatsValues(docs));
     }
+    
+    rb.rsp.add( "stats", convertToResponse(statsValues) );
   }
 
   @Override
@@ -82,16 +71,10 @@ public class StatsComponent extends SearchComponent {
     if (!rb.doStats) return;
 
     if ((sreq.purpose & ShardRequest.PURPOSE_GET_TOP_IDS) != 0) {
-        sreq.purpose |= ShardRequest.PURPOSE_GET_STATS;
-
-        StatsInfo si = rb._statsInfo;
-        if (si == null) {
-          rb._statsInfo = si = new StatsInfo();
-          si.parse(rb.req.getParams(), rb);
-          // should already be true...
-          // sreq.params.set(StatsParams.STATS, "true");
-        }
+      sreq.purpose |= ShardRequest.PURPOSE_GET_STATS;
     } else {
+
+
       // turn off stats on other requests
       sreq.params.set(StatsParams.STATS, "false");
       // we could optionally remove stats params
@@ -102,17 +85,27 @@ public class StatsComponent extends SearchComponent {
   public void handleResponses(ResponseBuilder rb, ShardRequest sreq) {
     if (!rb.doStats || (sreq.purpose & ShardRequest.PURPOSE_GET_STATS) == 0) return;
 
-    StatsInfo si = rb._statsInfo;
+    Map<String, StatsValues> allStatsValues = rb._statsInfo.getAggregateStatsValues();
 
     for (ShardResponse srsp : sreq.responses) {
-      NamedList stats = (NamedList) srsp.getSolrResponse().getResponse().get("stats");
+      NamedList stats = null;
+      try {
+        stats = (NamedList<NamedList<NamedList<?>>>) 
+          srsp.getSolrResponse().getResponse().get("stats");
+      } catch (Exception e) {
+        if (rb.req.getParams().getBool(ShardParams.SHARDS_TOLERANT, false)) {
+          continue; // looks like a shard did not return anything
+        }
+        throw new SolrException(SolrException.ErrorCode.SERVER_ERROR,
+            "Unable to read stats info for shard: " + srsp.getShard(), e);
+      }
 
-      NamedList stats_fields = (NamedList) stats.get("stats_fields");
+      NamedList stats_fields = unwrapStats(stats);
       if (stats_fields != null) {
         for (int i = 0; i < stats_fields.size(); i++) {
-          String field = stats_fields.getName(i);
-          StatsValues stv = si.statsFields.get(field);
-          NamedList shardStv = (NamedList) stats_fields.get(field);
+          String key = stats_fields.getName(i);
+          StatsValues stv = allStatsValues.get(key);
+          NamedList shardStv = (NamedList) stats_fields.get(key);
           stv.accumulate(shardStv);
         }
       }
@@ -125,25 +118,40 @@ public class StatsComponent extends SearchComponent {
     // wait until STAGE_GET_FIELDS
     // so that "result" is already stored in the response (for aesthetics)
 
-    StatsInfo si = rb._statsInfo;
+    Map<String, StatsValues> allStatsValues = rb._statsInfo.getAggregateStatsValues();
+    rb.rsp.add("stats", convertToResponse(allStatsValues));
 
-    NamedList stats = new SimpleOrderedMap();
-    NamedList stats_fields = new SimpleOrderedMap();
-    stats.add("stats_fields", stats_fields);
-    for (String field : si.statsFields.keySet()) {
-      NamedList stv = si.statsFields.get(field).getStatsValues();
-      if ((Long) stv.get("count") != 0) {
-        stats_fields.add(field, stv);
-      } else {
-        stats_fields.add(field, null);
-      }
-    }
-
-    rb.rsp.add("stats", stats);
-
-    rb._statsInfo = null;
+    rb._statsInfo = null; // free some objects 
   }
 
+  /**
+   * Helper to pull the "stats_fields" out of the extra "stats" wrapper
+   */
+  public static NamedList<NamedList<?>> unwrapStats(NamedList<NamedList<NamedList<?>>> stats) {
+    if (null == stats) return null;
+
+    return stats.get("stats_fields");
+  }
+
+  /**
+   * Given a map of {@link StatsValues} using the appropriate response key,
+   * builds up the necessary "stats" data structure for including in the response -- 
+   * including the esoteric "stats_fields" wrapper.
+   */
+  public static NamedList<NamedList<NamedList<?>>> convertToResponse
+    (Map<String,StatsValues> statsValues) {
+
+    NamedList<NamedList<NamedList<?>>> stats = new SimpleOrderedMap<>();
+    NamedList<NamedList<?>> stats_fields = new SimpleOrderedMap<>();
+    stats.add("stats_fields", stats_fields);
+    
+    for (Map.Entry<String,StatsValues> entry : statsValues.entrySet()) {
+      String key = entry.getKey();
+      NamedList stv = entry.getValue().getStatsValues();
+      stats_fields.add(key, stv);
+    }
+    return stats;
+  }
 
   /////////////////////////////////////////////
   ///  SolrInfoMBean
@@ -153,160 +161,89 @@ public class StatsComponent extends SearchComponent {
   public String getDescription() {
     return "Calculate Statistics";
   }
-
-  @Override
-  public String getVersion() {
-    return "$Revision$";
-  }
-
-  @Override
-  public String getSourceId() {
-    return "$Id$";
-  }
-
-  @Override
-  public String getSource() {
-    return "$URL$";
-  }
-
 }
 
+/**
+ * Models all of the information about stats needed for a single request
+ * @see StatsField
+ */
 class StatsInfo {
-  Map<String, StatsValues> statsFields;
 
-  void parse(SolrParams params, ResponseBuilder rb) {
-    statsFields = new HashMap<String, StatsValues>();
+  private final ResponseBuilder rb;
+  private final List<StatsField> statsFields = new ArrayList<>(7);
+  private final Map<String, StatsValues> distribStatsValues = new LinkedHashMap<>();
+  private final Map<String, StatsField> statsFieldMap = new LinkedHashMap<>();
+  private final Map<String, List<StatsField>> tagToStatsFields = new LinkedHashMap<>();
 
-    String[] statsFs = params.getParams(StatsParams.STATS_FIELD);
-    if (statsFs != null) {
-      for (String field : statsFs) {
-        FieldType ft = rb.req.getSchema().getFieldType(field);
-        statsFields.put(field, StatsValuesFactory.createStatsValues(ft));
-      }
-    }
-  }
-}
-
-
-class SimpleStats {
-
-  /** The main set of documents */
-  protected DocSet docs;
-  /** Configuration params behavior should be driven by */
-  protected SolrParams params;
-  /** Searcher to use for all calculations */
-  protected SolrIndexSearcher searcher;
-  protected SolrQueryRequest req;
-
-  public SimpleStats(SolrQueryRequest req,
-                      DocSet docs,
-                      SolrParams params) {
-    this.req = req;
-    this.searcher = req.getSearcher();
-    this.docs = docs;
-    this.params = params;
-  }
-
-  public NamedList<Object> getStatsCounts() throws IOException {
-    NamedList<Object> res = new SimpleOrderedMap<Object>();
-    res.add("stats_fields", getStatsFields());
-    return res;
-  }
-
-  public NamedList getStatsFields() throws IOException {
-    NamedList<NamedList<Number>> res = new SimpleOrderedMap<NamedList<Number>>();
-    String[] statsFs = params.getParams(StatsParams.STATS_FIELD);
-    boolean isShard = params.getBool(ShardParams.IS_SHARD, false);
-    if (null != statsFs) {
-      for (String f : statsFs) {
-        String[] facets = params.getFieldParams(f, StatsParams.STATS_FACET);
-        if (facets == null) {
-          facets = new String[0]; // make sure it is something...
-        }
-        SchemaField sf = searcher.getSchema().getField(f);
-        FieldType ft = sf.getType();
-        NamedList stv;
-
-        // Currently, only UnInvertedField can deal with multi-part trie fields
-        String prefix = TrieField.getMainValuePrefix(ft);
-
-        if (sf.multiValued() || ft.multiValuedFieldCache() || prefix!=null) {
-          //use UnInvertedField for multivalued fields
-          UnInvertedField uif = UnInvertedField.getUnInvertedField(f, searcher);
-          stv = uif.getStats(searcher, docs, facets).getStatsValues();
-        } else {
-          stv = getFieldCacheStats(f, facets);
-        }
-        if (isShard == true || (Long) stv.get("count") > 0) {
-          res.add(f, stv);
-        } else {
-          res.add(f, null);
-        }
-      }
-    }
-    return res;
-  }
-  
-  public NamedList getFieldCacheStats(String fieldName, String[] facet ) {
-    FieldType ft = searcher.getSchema().getFieldType(fieldName);
-
-    FieldCache.StringIndex si;
-    try {
-      si = FieldCache.DEFAULT.getStringIndex(searcher.getReader(), fieldName);
-    } 
-    catch (IOException e) {
-      throw new RuntimeException( "failed to open field cache for: "+fieldName, e );
-    }
-    StatsValues allstats = StatsValuesFactory.createStatsValues(ft);
-    final int nTerms = si.lookup.length - 1;
-    if ( nTerms <= 0 || docs.size() <= 0 ) return allstats.getStatsValues();
-
-    // don't worry about faceting if no documents match...
-    List<FieldFacetStats> facetStats = new ArrayList<FieldFacetStats>();
-    FieldCache.StringIndex facetTermsIndex;
-    for( String facetField : facet ) {
-      FieldType facetFieldType = searcher.getSchema().getFieldType(facetField);
-
-      if (facetFieldType.isTokenized() || facetFieldType.isMultiValued()) {
-        throw new SolrException(SolrException.ErrorCode.BAD_REQUEST,
-          "Stats can only facet on single-valued fields, not: " + facetField
-          + "[" + facetFieldType + "]");
-        }
-      try {
-        facetTermsIndex = FieldCache.DEFAULT.getStringIndex(searcher.getReader(), facetField);
-      }
-      catch (IOException e) {
-        throw new RuntimeException( "failed to open field cache for: "
-          + facetField, e );
-      }
-      facetStats.add(new FieldFacetStats(facetField, facetTermsIndex, facetFieldType, nTerms, ft));
+  public StatsInfo(ResponseBuilder rb) { 
+    this.rb = rb;
+    SolrParams params = rb.req.getParams();
+    String[] statsParams = params.getParams(StatsParams.STATS_FIELD);
+    if (null == statsParams) {
+      // no stats.field params, nothing to parse.
+      return;
     }
     
-    
-    DocIterator iter = docs.iterator();
-    while (iter.hasNext()) {
-      int docID = iter.nextDoc();
-      String raw = si.lookup[si.order[docID]];
-      String v;
-      if( raw != null ) {
-        v = ft.indexedToReadable(raw);
-        allstats.accumulate(v);
-      } else {
-        v = null;
-        allstats.missing();
+    for (String paramValue : statsParams) {
+      StatsField current = new StatsField(rb, paramValue);
+      statsFields.add(current);
+      for (String tag : current.getTagList()) {
+        List<StatsField> fieldList = tagToStatsFields.get(tag);
+        if (fieldList == null) {
+          fieldList = new ArrayList<>();
+        }
+        fieldList.add(current);
+        tagToStatsFields.put(tag, fieldList);
       }
-
-      // now update the facets
-      for (FieldFacetStats f : facetStats) {
-        f.facet(docID, v);
-      }
+      statsFieldMap.put(current.getOutputKey(), current);
+      distribStatsValues.put(current.getOutputKey(), 
+                             StatsValuesFactory.createStatsValues(current));
     }
-
-    for (FieldFacetStats f : facetStats) {
-      allstats.addFacet(f.name, f.facetStatsValues);
-    }
-    return allstats.getStatsValues();
   }
 
+  /**
+   * Returns an immutable list of {@link StatsField} instances
+   * modeling each of the {@link StatsParams#STATS_FIELD} params specified
+   * as part of this request
+   */
+  public List<StatsField> getStatsFields() {
+    return Collections.unmodifiableList(statsFields);
+  }
+
+  /**
+   * Returns the {@link StatsField} associated with the specified (effective) 
+   * outputKey, or null if there was no {@link StatsParams#STATS_FIELD} param
+   * that would corrispond with that key.
+   */
+  public StatsField getStatsField(String outputKey) {
+    return statsFieldMap.get(outputKey);
+  }
+
+  /**
+   * Return immutable list of {@link StatsField} instances by string tag local parameter.
+   *
+   * @param tag tag local parameter
+   * @return list of stats fields
+   */
+  public List<StatsField> getStatsFieldsByTag(String tag) {
+    List<StatsField> raw = tagToStatsFields.get(tag);
+    if (null == raw) {
+      return Collections.emptyList();
+    } else {
+      return Collections.unmodifiableList(raw);
+    }
+  }
+
+  /**
+   * Returns an immutable map of response key =&gt; {@link StatsValues}
+   * instances for the current distributed request.  
+   * Depending on where we are in the process of handling this request, 
+   * these {@link StatsValues} instances may not be complete -- but they 
+   * will never be null.
+   */
+  public Map<String, StatsValues> getAggregateStatsValues() {
+    return Collections.unmodifiableMap(distribStatsValues);
+  }
 
 }
+

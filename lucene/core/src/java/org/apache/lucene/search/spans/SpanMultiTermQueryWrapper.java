@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,17 +14,23 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
+
 
 import java.io.IOException;
-import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.TermContext;
+import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MultiTermQuery;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.TopTermsRewrite;
 import org.apache.lucene.search.ScoringRewrite;
-import org.apache.lucene.search.BooleanClause.Occur; // javadocs only
+import org.apache.lucene.search.TopTermsRewrite;
 
 /**
  * Wraps any {@link MultiTermQuery} as a {@link SpanQuery}, 
@@ -36,7 +40,7 @@ import org.apache.lucene.search.BooleanClause.Occur; // javadocs only
  * the expanded terms, but this can be customized. 
  * <p>
  * Example:
- * <blockquote><pre>
+ * <blockquote><pre class="prettyprint">
  * {@code
  * WildcardQuery wildcard = new WildcardQuery(new Term("field", "bro?n"));
  * SpanQuery spanWildcard = new SpanMultiTermQueryWrapper<WildcardQuery>(wildcard);
@@ -45,60 +49,36 @@ import org.apache.lucene.search.BooleanClause.Occur; // javadocs only
  * </pre></blockquote>
  */
 public class SpanMultiTermQueryWrapper<Q extends MultiTermQuery> extends SpanQuery {
+
   protected final Q query;
-  private Method getFieldMethod = null, getTermMethod = null;
+  private SpanRewriteMethod rewriteMethod;
 
   /**
    * Create a new SpanMultiTermQueryWrapper. 
    * 
    * @param query Query to wrap.
-   * <p>
-   * NOTE: This will call {@link MultiTermQuery#setRewriteMethod(MultiTermQuery.RewriteMethod)}
-   * on the wrapped <code>query</code>, changing its rewrite method to a suitable one for spans.
-   * Be sure to not change the rewrite method on the wrapped query afterwards! Doing so will
-   * throw {@link UnsupportedOperationException} on rewriting this query!
-   * In Lucene 3.x, MultiTermQuery allows queries to rewrite to different field names, but SpanQuery
-   * needs a fixed field. The wrapped query must therefore support getField() or getTerm().
-   * @throws IllegalArgumentException if the wrapped query does not provide getField() or getTerm().
    */
   @SuppressWarnings({"rawtypes","unchecked"})
   public SpanMultiTermQueryWrapper(Q query) {
-    this.query = query;
-    
+    this.query = Objects.requireNonNull(query);
+    this.rewriteMethod = selectRewriteMethod(query);
+  }
+
+  private static SpanRewriteMethod selectRewriteMethod(MultiTermQuery query) {
     MultiTermQuery.RewriteMethod method = query.getRewriteMethod();
     if (method instanceof TopTermsRewrite) {
       final int pqsize = ((TopTermsRewrite) method).getSize();
-      setRewriteMethod(new TopTermsSpanBooleanQueryRewrite(pqsize));
+      return new TopTermsSpanBooleanQueryRewrite(pqsize);
     } else {
-      setRewriteMethod(SCORING_SPAN_QUERY_REWRITE); 
-    }
-    
-    // In Lucene 3.x, MTQ has no fixed field, we need to get it by reflection.
-    // If the underlying query does not allow to get a constant field, we throw IAE:
-    try {
-      getFieldMethod = query.getClass().getMethod("getField");
-    } catch (Exception e1) {
-      try {
-        getTermMethod = query.getClass().getMethod("getTerm");
-      } catch (Exception e2) {
-        try {
-          getTermMethod = query.getClass().getMethod("getPrefix");
-        } catch (Exception e3) {
-          throw new IllegalArgumentException("SpanMultiTermQueryWrapper can only wrap MultiTermQueries"+
-            " that can return a field name using getField() or getTerm()");
-        }
-      }
+      return SCORING_SPAN_QUERY_REWRITE;
     }
   }
-  
+
   /**
    * Expert: returns the rewriteMethod
    */
   public final SpanRewriteMethod getRewriteMethod() {
-    final MultiTermQuery.RewriteMethod m = query.getRewriteMethod();
-    if (!(m instanceof SpanRewriteMethod))
-      throw new UnsupportedOperationException("You can only use SpanMultiTermQueryWrapper with a suitable SpanRewriteMethod.");
-    return (SpanRewriteMethod) m;
+    return rewriteMethod;
   }
 
   /**
@@ -106,58 +86,50 @@ public class SpanMultiTermQueryWrapper<Q extends MultiTermQuery> extends SpanQue
    * to be a span rewrite method.
    */
   public final void setRewriteMethod(SpanRewriteMethod rewriteMethod) {
-    query.setRewriteMethod(rewriteMethod);
-  }
-  
-  @Override
-  public Spans getSpans(IndexReader reader) throws IOException {
-    throw new UnsupportedOperationException("Query should have been rewritten");
+    this.rewriteMethod = rewriteMethod;
   }
 
   @Override
   public String getField() {
-    try {
-      if (getFieldMethod != null) {
-        return (String) getFieldMethod.invoke(query);
-      } else {
-        assert getTermMethod != null;
-        return ((Term) getTermMethod.invoke(query)).field();
-      }
-    } catch (Exception e) {
-      throw new RuntimeException("Cannot invoke getField() or getTerm() on wrapped query.", e);
-    }
+    return query.getField();
+  }
+
+  @Override
+  public SpanWeight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
+    throw new IllegalArgumentException("Rewrite first!");
+  }
+
+  /** Returns the wrapped query */
+  public Query getWrappedQuery() {
+    return query;
   }
 
   @Override
   public String toString(String field) {
     StringBuilder builder = new StringBuilder();
     builder.append("SpanMultiTermQueryWrapper(");
-    builder.append(query.toString(field));
+    // NOTE: query.toString must be placed in a temp local to avoid compile errors on Java 8u20
+    // see https://bugs.openjdk.java.net/browse/JDK-8056984?page=com.atlassian.streams.streams-jira-plugin:activity-stream-issue-tab
+    String queryStr = query.toString(field);
+    builder.append(queryStr);
     builder.append(")");
     return builder.toString();
   }
 
   @Override
   public Query rewrite(IndexReader reader) throws IOException {
-    final Query q = query.rewrite(reader);
-    if (!(q instanceof SpanQuery))
-      throw new UnsupportedOperationException("You can only use SpanMultiTermQueryWrapper with a suitable SpanRewriteMethod.");
-    return q;
+    return rewriteMethod.rewrite(reader, query);
   }
   
   @Override
   public int hashCode() {
-    return 31 * query.hashCode();
+    return classHash() * 31 + query.hashCode();
   }
 
   @Override
-  @SuppressWarnings({"rawtypes","unchecked"})
-  public boolean equals(Object obj) {
-    if (this == obj) return true;
-    if (obj == null) return false;
-    if (getClass() != obj.getClass()) return false;
-    final SpanMultiTermQueryWrapper other = (SpanMultiTermQueryWrapper) obj;
-    return query.equals(other.query);
+  public boolean equals(Object other) {
+    return sameClassAs(other) &&
+           query.equals(((SpanMultiTermQueryWrapper<?>) other).query);
   }
 
   /** Abstract class that defines how the query is rewritten. */
@@ -174,28 +146,31 @@ public class SpanMultiTermQueryWrapper<Q extends MultiTermQuery> extends SpanQue
    * @see #setRewriteMethod
    */
   public final static SpanRewriteMethod SCORING_SPAN_QUERY_REWRITE = new SpanRewriteMethod() {
-    private final ScoringRewrite<SpanOrQuery> delegate = new ScoringRewrite<SpanOrQuery>() {
+    private final ScoringRewrite<List<SpanQuery>> delegate = new ScoringRewrite<List<SpanQuery>>() {
       @Override
-      protected SpanOrQuery getTopLevelQuery() {
-        return new SpanOrQuery();
+      protected List<SpanQuery> getTopLevelBuilder() {
+        return new ArrayList<SpanQuery>();
+      }
+
+      protected Query build(List<SpanQuery> builder) {
+        return new SpanOrQuery(builder.toArray(new SpanQuery[builder.size()]));
       }
 
       @Override
-      protected void addClause(SpanOrQuery topLevel, Term term, float boost) {
-        final SpanTermQuery q = new SpanTermQuery(term);
-        q.setBoost(boost);
-        topLevel.addClause(q);
+      protected void checkMaxClauseCount(int count) {
+        // we accept all terms as SpanOrQuery has no limits
+      }
+    
+      @Override
+      protected void addClause(List<SpanQuery> topLevel, Term term, int docCount, float boost, TermContext states) {
+        final SpanTermQuery q = new SpanTermQuery(term, states);
+        topLevel.add(q);
       }
     };
     
     @Override
     public SpanQuery rewrite(IndexReader reader, MultiTermQuery query) throws IOException {
-      return delegate.rewrite(reader, query);
-    }
-
-    // Make sure we are still a singleton even after deserializing
-    protected Object readResolve() {
-      return SCORING_SPAN_QUERY_REWRITE;
+      return (SpanQuery) delegate.rewrite(reader, query);
     }
   };
   
@@ -211,29 +186,33 @@ public class SpanMultiTermQueryWrapper<Q extends MultiTermQuery> extends SpanQue
    * @see #setRewriteMethod
    */
   public static final class TopTermsSpanBooleanQueryRewrite extends SpanRewriteMethod  {
-    private final TopTermsRewrite<SpanOrQuery> delegate;
+    private final TopTermsRewrite<List<SpanQuery>> delegate;
   
     /** 
      * Create a TopTermsSpanBooleanQueryRewrite for 
      * at most <code>size</code> terms.
      */
     public TopTermsSpanBooleanQueryRewrite(int size) {
-      delegate = new TopTermsRewrite<SpanOrQuery>(size) {
+      delegate = new TopTermsRewrite<List<SpanQuery>>(size) {
         @Override
         protected int getMaxSize() {
           return Integer.MAX_VALUE;
         }
     
         @Override
-        protected SpanOrQuery getTopLevelQuery() {
-          return new SpanOrQuery();
+        protected List<SpanQuery> getTopLevelBuilder() {
+          return new ArrayList<SpanQuery>();
         }
 
         @Override
-        protected void addClause(SpanOrQuery topLevel, Term term, float boost) {
-          final SpanTermQuery q = new SpanTermQuery(term);
-          q.setBoost(boost);
-          topLevel.addClause(q);
+        protected Query build(List<SpanQuery> builder) {
+          return new SpanOrQuery(builder.toArray(new SpanQuery[builder.size()]));
+        }
+
+        @Override
+        protected void addClause(List<SpanQuery> topLevel, Term term, int docFreq, float boost, TermContext states) {
+          final SpanTermQuery q = new SpanTermQuery(term, states);
+          topLevel.add(q);
         }
       };
     }
@@ -245,7 +224,7 @@ public class SpanMultiTermQueryWrapper<Q extends MultiTermQuery> extends SpanQue
 
     @Override
     public SpanQuery rewrite(IndexReader reader, MultiTermQuery query) throws IOException {
-      return delegate.rewrite(reader, query);
+      return (SpanQuery) delegate.rewrite(reader, query);
     }
   
     @Override

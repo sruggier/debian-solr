@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,15 +14,11 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.nio.file.Path;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -42,12 +36,16 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.FailOnNonBulkMergesInfoStream;
 import org.apache.lucene.util.LineFileDocs;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.NamedThreadFactory;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.PrintStreamInfoStream;
+import org.apache.lucene.util.TestUtil;
 
 // TODO
 //   - mix in forceMerge, addIndexes
@@ -91,19 +89,19 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
     return in;
   }
 
-  protected void updateDocuments(Term id, Collection<Document> docs) throws Exception {
+  protected void updateDocuments(Term id, List<? extends Iterable<? extends IndexableField>> docs) throws Exception {
     writer.updateDocuments(id, docs);
   }
 
-  protected void addDocuments(Term id, Collection<Document> docs) throws Exception {
+  protected void addDocuments(Term id, List<? extends Iterable<? extends IndexableField>> docs) throws Exception {
     writer.addDocuments(docs);
   }
 
-  protected void addDocument(Term id, Document doc) throws Exception {
+  protected void addDocument(Term id, Iterable<? extends IndexableField> doc) throws Exception {
     writer.addDocument(doc);
   }
 
-  protected void updateDocument(Term term, Document doc) throws Exception {
+  protected void updateDocument(Term term, Iterable<? extends IndexableField> doc) throws Exception {
     writer.updateDocument(term, doc);
   }
 
@@ -119,31 +117,30 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                                          final long stopTime,
                                          final Set<String> delIDs,
                                          final Set<String> delPackIDs,
-                                         final List<SubDocs> allSubDocs)
-    throws Exception {
+                                         final List<SubDocs> allSubDocs) {
     final Thread[] threads = new Thread[numThreads];
     for(int thread=0;thread<numThreads;thread++) {
       threads[thread] = new Thread() {
           @Override
           public void run() {
             // TODO: would be better if this were cross thread, so that we make sure one thread deleting anothers added docs works:
-            final List<String> toDeleteIDs = new ArrayList<String>();
-            final List<SubDocs> toDeleteSubDocs = new ArrayList<SubDocs>();
+            final List<String> toDeleteIDs = new ArrayList<>();
+            final List<SubDocs> toDeleteSubDocs = new ArrayList<>();
             while(System.currentTimeMillis() < stopTime && !failed.get()) {
               try {
 
                 // Occasional longish pause if running
                 // nightly
-                if (LuceneTestCase.TEST_NIGHTLY && random.nextInt(6) == 3) {
+                if (LuceneTestCase.TEST_NIGHTLY && random().nextInt(6) == 3) {
                   if (VERBOSE) {
                     System.out.println(Thread.currentThread().getName() + ": now long sleep");
                   }
-                  Thread.sleep(_TestUtil.nextInt(random, 50, 500));
+                  Thread.sleep(TestUtil.nextInt(random(), 50, 500));
                 }
 
                 // Rate limit ingest rate:
-                if (random.nextInt(7) == 5) {
-                  Thread.sleep(_TestUtil.nextInt(random, 1, 10));
+                if (random().nextInt(7) == 5) {
+                  Thread.sleep(TestUtil.nextInt(random(), 1, 10));
                   if (VERBOSE) {
                     System.out.println(Thread.currentThread().getName() + ": done sleep");
                   }
@@ -156,21 +153,21 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
                 // Maybe add randomly named field
                 final String addedField;
-                if (random.nextBoolean()) {
-                  addedField = "extra" + random.nextInt(40);
-                  doc.add(newField(addedField, "a random field", Field.Store.YES, Field.Index.ANALYZED));
+                if (random().nextBoolean()) {
+                  addedField = "extra" + random().nextInt(40);
+                  doc.add(newTextField(addedField, "a random field", Field.Store.YES));
                 } else {
                   addedField = null;
                 }
 
-                if (random.nextBoolean()) {
+                if (random().nextBoolean()) {
 
-                  if (random.nextBoolean()) {
+                  if (random().nextBoolean()) {
                     // Add/update doc block:
                     final String packID;
                     final SubDocs delSubDocs;
-                    if (toDeleteSubDocs.size() > 0 && random.nextBoolean()) {
-                      delSubDocs = toDeleteSubDocs.get(random.nextInt(toDeleteSubDocs.size()));
+                    if (toDeleteSubDocs.size() > 0 && random().nextBoolean()) {
+                      delSubDocs = toDeleteSubDocs.get(random().nextInt(toDeleteSubDocs.size()));
                       assert !delSubDocs.deleted;
                       toDeleteSubDocs.remove(delSubDocs);
                       // Update doc block, replacing prior packID
@@ -181,23 +178,23 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                       packID = packCount.getAndIncrement() + "";
                     }
 
-                    final Field packIDField = newField("packID", packID, Field.Store.YES, Field.Index.NOT_ANALYZED);
-                    final List<String> docIDs = new ArrayList<String>();
+                    final Field packIDField = newStringField("packID", packID, Field.Store.YES);
+                    final List<String> docIDs = new ArrayList<>();
                     final SubDocs subDocs = new SubDocs(packID, docIDs);
-                    final List<Document> docsList = new ArrayList<Document>();
+                    final List<Document> docsList = new ArrayList<>();
 
                     allSubDocs.add(subDocs);
                     doc.add(packIDField);
-                    docsList.add(_TestUtil.cloneDocument(doc));
+                    docsList.add(TestUtil.cloneDocument(doc));
                     docIDs.add(doc.get("docid"));
 
-                    final int maxDocCount = _TestUtil.nextInt(random, 1, 10);
+                    final int maxDocCount = TestUtil.nextInt(random(), 1, 10);
                     while(docsList.size() < maxDocCount) {
                       doc = docs.nextDoc();
                       if (doc == null) {
                         break;
                       }
-                      docsList.add(_TestUtil.cloneDocument(doc));
+                      docsList.add(TestUtil.cloneDocument(doc));
                       docIDs.add(doc.get("docid"));
                     }
                     addCount.addAndGet(docsList.size());
@@ -220,7 +217,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                     }
                     doc.removeField("packID");
 
-                    if (random.nextInt(5) == 2) {
+                    if (random().nextInt(5) == 2) {
                       if (VERBOSE) {
                         System.out.println(Thread.currentThread().getName() + ": buffer del id:" + packID);
                       }
@@ -236,7 +233,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                     addDocument(new Term("docid", docid), doc);
                     addCount.getAndIncrement();
 
-                    if (random.nextInt(5) == 3) {
+                    if (random().nextInt(5) == 3) {
                       if (VERBOSE) {
                         System.out.println(Thread.currentThread().getName() + ": buffer del id:" + doc.get("docid"));
                       }
@@ -255,7 +252,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                   updateDocument(new Term("docid", docid), doc);
                   addCount.getAndIncrement();
 
-                  if (random.nextInt(5) == 3) {
+                  if (random().nextInt(5) == 3) {
                     if (VERBOSE) {
                       System.out.println(Thread.currentThread().getName() + ": buffer del id:" + doc.get("docid"));
                     }
@@ -263,7 +260,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                   }
                 }
 
-                if (random.nextInt(30) == 17) {
+                if (random().nextInt(30) == 17) {
                   if (VERBOSE) {
                     System.out.println(Thread.currentThread().getName() + ": apply " + toDeleteIDs.size() + " deletes");
                   }
@@ -310,7 +307,6 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
             doAfterIndexingThreadDone();
           }
         };
-      threads[thread].setDaemon(true);
       threads[thread].start();
     }
 
@@ -318,7 +314,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
   }
 
   protected void runSearchThreads(final long stopTimeMS) throws Exception {
-    final int numThreads = _TestUtil.nextInt(random, 1, 5);
+    final int numThreads = TestUtil.nextInt(random(), 1, 5);
     final Thread[] searchThreads = new Thread[numThreads];
     final AtomicInteger totHits = new AtomicInteger();
 
@@ -330,13 +326,35 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
       searchThreads[thread] = new Thread() {
           @Override
           public void run() {
-            while (System.currentTimeMillis() < stopTimeMS) {
+            if (VERBOSE) {
+              System.out.println(Thread.currentThread().getName() + ": launch search thread");
+            }
+            while (System.currentTimeMillis() < stopTimeMS && !failed.get()) {
               try {
                 final IndexSearcher s = getCurrentSearcher();
                 try {
+                  // Verify 1) IW is correctly setting
+                  // diagnostics, and 2) segment warming for
+                  // merged segments is actually happening:
+                  for(final LeafReaderContext sub : s.getIndexReader().leaves()) {
+                    SegmentReader segReader = (SegmentReader) sub.reader();
+                    Map<String,String> diagnostics = segReader.getSegmentInfo().info.getDiagnostics();
+                    assertNotNull(diagnostics);
+                    String source = diagnostics.get("source");
+                    assertNotNull(source);
+                    if (source.equals("merge")) {
+                      assertTrue("sub reader " + sub + " wasn't warmed: warmed=" + warmed + " diagnostics=" + diagnostics + " si=" + segReader.getSegmentInfo(),
+                                 !assertMergedSegmentsWarmed || warmed.containsKey(segReader.core));
+                    }
+                  }
                   if (s.getIndexReader().numDocs() > 0) {
                     smokeTestSearcher(s);
-                    TermEnum termEnum = s.getIndexReader().terms(new Term("body", ""));
+                    Fields fields = MultiFields.getFields(s.getIndexReader());
+                    Terms terms = fields.terms("body");
+                    if (terms == null) {
+                      continue;
+                    }
+                    TermsEnum termsEnum = terms.iterator();
                     int seenTermCount = 0;
                     int shift;
                     int trigger; 
@@ -345,10 +363,10 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                       trigger = 1;
                     } else {
                       trigger = totTermCount.get()/30;
-                      shift = random.nextInt(trigger);
+                      shift = random().nextInt(trigger);
                     }
-                    while(System.currentTimeMillis() < stopTimeMS) {
-                      Term term = termEnum.term();
+                    while (System.currentTimeMillis() < stopTimeMS) {
+                      BytesRef term = termsEnum.next();
                       if (term == null) {
                         totTermCount.set(seenTermCount);
                         break;
@@ -359,10 +377,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
                         //if (VERBOSE) {
                         //System.out.println(Thread.currentThread().getName() + " now search body:" + term.utf8ToString());
                         //}
-                        totHits.addAndGet(runQuery(s, new TermQuery(term)));
-                      }
-                      if (!termEnum.next()) {
-                        break;
+                        totHits.addAndGet(runQuery(s, new TermQuery(new Term("body", BytesRef.deepCopyOf(term)))));
                       }
                     }
                     //if (VERBOSE) {
@@ -381,12 +396,11 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
             }
           }
         };
-      searchThreads[thread].setDaemon(true);
       searchThreads[thread].start();
     }
 
-    for(int thread=0;thread<searchThreads.length;thread++) {
-      searchThreads[thread].join();
+    for(Thread thread : searchThreads) {
+      thread.join();
     }
 
     if (VERBOSE) {
@@ -400,6 +414,10 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
   protected void doClose() throws Exception {
   }
 
+  protected boolean assertMergedSegmentsWarmed = true;
+
+  private final Map<SegmentCoreReaders,Boolean> warmed = Collections.synchronizedMap(new WeakHashMap<SegmentCoreReaders,Boolean>());
+
   public void runTest(String testName) throws Exception {
 
     failed.set(false);
@@ -409,11 +427,20 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
     final long t0 = System.currentTimeMillis();
 
+    Random random = new Random(random().nextLong());
     final LineFileDocs docs = new LineFileDocs(random);
-    final File tempDir = _TestUtil.getTempDir(testName);
-    dir = newFSDirectory(tempDir);
-    ((MockDirectoryWrapper) dir).setCheckIndexOnClose(false); // don't double-checkIndex, we do it ourselves.
-    final IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
+    final Path tempDir = createTempDir(testName);
+    dir = getDirectory(newMockFSDirectory(tempDir)); // some subclasses rely on this being MDW
+    if (dir instanceof BaseDirectoryWrapper) {
+      ((BaseDirectoryWrapper) dir).setCheckIndexOnClose(false); // don't double-checkIndex, we do it ourselves.
+    }
+    MockAnalyzer analyzer = new MockAnalyzer(random());
+    analyzer.setMaxTokenLength(TestUtil.nextInt(random(), 1, IndexWriter.MAX_TERM_LENGTH));
+    final IndexWriterConfig conf = newIndexWriterConfig(analyzer).setCommitOnClose(false);
+    conf.setInfoStream(new FailOnNonBulkMergesInfoStream());
+    if (conf.getMergePolicy() instanceof MockRandomMergePolicy) {
+      ((MockRandomMergePolicy)conf.getMergePolicy()).setDoNonBulkMerges(false);
+    }
 
     if (LuceneTestCase.TEST_NIGHTLY) {
       // newIWConfig makes smallish max seg size, which
@@ -427,27 +454,33 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
       } else if (mp instanceof LogMergePolicy) {
         ((LogMergePolicy) mp).setMaxMergeDocs(100000);
       }
+      // when running nightly, merging can still have crazy parameters, 
+      // and might use many per-field codecs. turn on CFS for IW flushes
+      // and ensure CFS ratio is reasonable to keep it contained.
+      conf.setUseCompoundFile(true);
+      mp.setNoCFSRatio(Math.max(0.25d, mp.getNoCFSRatio()));
     }
 
     conf.setMergedSegmentWarmer(new IndexWriter.IndexReaderWarmer() {
       @Override
-      public void warm(IndexReader reader) throws IOException {
+      public void warm(LeafReader reader) throws IOException {
         if (VERBOSE) {
           System.out.println("TEST: now warm merged reader=" + reader);
         }
+        warmed.put(((SegmentReader) reader).core, Boolean.TRUE);
         final int maxDoc = reader.maxDoc();
+        final Bits liveDocs = reader.getLiveDocs();
         int sum = 0;
         final int inc = Math.max(1, maxDoc/50);
         for(int docID=0;docID<maxDoc;docID += inc) {
-          if (!reader.isDeleted(docID)) {
+          if (liveDocs == null || liveDocs.get(docID)) {
             final Document doc = reader.document(docID);
             sum += doc.getFields().size();
           }
         }
 
-        IndexSearcher searcher = newSearcher(reader);
+        IndexSearcher searcher = newSearcher(reader, false);
         sum += searcher.search(new TermQuery(new Term("body", "united")), 10).totalHits;
-        searcher.close();
 
         if (VERBOSE) {
           System.out.println("TEST: warm visited " + sum + " fields");
@@ -455,17 +488,25 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
       }
       });
 
-    writer = new IndexWriter(dir, conf);
     if (VERBOSE) {
-      writer.setInfoStream(System.out);
+      conf.setInfoStream(new PrintStreamInfoStream(System.out) {
+          @Override
+          public void message(String component, String message) {
+            if ("TP".equals(component)) {
+              return; // ignore test points!
+            }
+            super.message(component, message);
+          }
+        });
     }
-    _TestUtil.reduceOpenFiles(writer);
+    writer = new IndexWriter(dir, conf);
+    TestUtil.reduceOpenFiles(writer);
 
-    final ExecutorService es = random.nextBoolean() ? null : Executors.newCachedThreadPool(new NamedThreadFactory(testName));
+    final ExecutorService es = random().nextBoolean() ? null : Executors.newCachedThreadPool(new NamedThreadFactory(testName));
 
     doAfterWriter(es);
 
-    final int NUM_INDEX_THREADS = _TestUtil.nextInt(random, 2, 4);
+    final int NUM_INDEX_THREADS = TestUtil.nextInt(random(), 2, 4);
 
     final int RUN_TIME_SEC = LuceneTestCase.TEST_NIGHTLY ? 300 : RANDOM_MULTIPLIER;
 
@@ -478,7 +519,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
     final Thread[] indexThreads = launchIndexingThreads(docs, NUM_INDEX_THREADS, stopTime, delIDs, delPackIDs, allSubDocs);
 
     if (VERBOSE) {
-      System.out.println("TEST: DONE start indexing threads [" + (System.currentTimeMillis()-t0) + " ms]");
+      System.out.println("TEST: DONE start " + NUM_INDEX_THREADS + " indexing threads [" + (System.currentTimeMillis()-t0) + " ms]");
     }
 
     // Let index build up a bit
@@ -490,8 +531,8 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
       System.out.println("TEST: all searching done [" + (System.currentTimeMillis()-t0) + " ms]");
     }
     
-    for(int thread=0;thread<indexThreads.length;thread++) {
-      indexThreads[thread].join();
+    for(Thread thread : indexThreads) {
+      thread.join();
     }
 
     if (VERBOSE) {
@@ -579,7 +620,7 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
       if (!delIDs.contains(stringID)) {
         final TopDocs hits = s.search(new TermQuery(new Term("docid", stringID)), 1);
         if (hits.totalHits != 1) {
-          System.out.println("doc id=" + stringID + " is not supposed to be deleted, but got hitCount=" + hits.totalHits);
+          System.out.println("doc id=" + stringID + " is not supposed to be deleted, but got hitCount=" + hits.totalHits + "; delIDs=" + delIDs);
           doFail = true;
         }
       }
@@ -593,11 +634,15 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
     assertEquals("index=" + writer.segString() + " addCount=" + addCount + " delCount=" + delCount, addCount.get() - delCount.get(), writer.numDocs());
 
-    assertFalse(writer.anyNonBulkMerges);
     doClose();
-    writer.close(false);
 
-    // Cannot shutdown until after writer is closed because
+    try {
+      writer.commit();
+    } finally {
+      writer.close();
+    }
+
+    // Cannot close until after writer is closed because
     // writer has merged segment warmer that uses IS to run
     // searches, and that IS may be using this es!
     if (es != null) {
@@ -605,9 +650,8 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
       es.awaitTermination(1, TimeUnit.SECONDS);
     }
 
-    _TestUtil.checkIndex(dir);
+    TestUtil.checkIndex(dir);
     dir.close();
-    _TestUtil.rmDir(tempDir);
 
     if (VERBOSE) {
       System.out.println("TEST: done [" + (System.currentTimeMillis()-t0) + " ms]");
@@ -616,15 +660,17 @@ public abstract class ThreadedIndexingAndSearchingTestCase extends LuceneTestCas
 
   private int runQuery(IndexSearcher s, Query q) throws Exception {
     s.search(q, 10);
-    return s.search(q, null, 10, new Sort(new SortField("title", SortField.STRING))).totalHits;
+    int hitCount = s.search(q, 10, new Sort(new SortField("titleDV", SortField.Type.STRING))).totalHits;
+    final Sort dvSort = new Sort(new SortField("titleDV", SortField.Type.STRING));
+    int hitCount2 = s.search(q, 10, dvSort).totalHits;
+    assertEquals(hitCount, hitCount2);
+    return hitCount;
   }
 
   protected void smokeTestSearcher(IndexSearcher s) throws Exception {
     runQuery(s, new TermQuery(new Term("body", "united")));
     runQuery(s, new TermQuery(new Term("titleTokenized", "states")));
-    PhraseQuery pq = new PhraseQuery();
-    pq.add(new Term("body", "united"));
-    pq.add(new Term("body", "states"));
+    PhraseQuery pq = new PhraseQuery("body", "united", "states");
     runQuery(s, pq);
   }
 }

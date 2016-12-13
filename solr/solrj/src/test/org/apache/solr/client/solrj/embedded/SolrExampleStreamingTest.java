@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,47 +14,108 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.client.solrj.embedded;
 
+import org.apache.lucene.util.LuceneTestCase.Slow;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrExampleTests;
-import org.apache.solr.client.solrj.SolrServer;
-import org.apache.solr.client.solrj.impl.CommonsHttpSolrServer;
-import org.apache.solr.client.solrj.impl.StreamingUpdateSolrServer;
-import org.apache.solr.util.ExternalPaths;
+import org.apache.solr.client.solrj.impl.ConcurrentUpdateSolrClient;
+import org.apache.solr.client.solrj.impl.XMLResponseParser;
+import org.apache.solr.client.solrj.request.RequestWriter;
+import org.apache.solr.client.solrj.request.UpdateRequest;
+import org.apache.solr.common.SolrInputDocument;
 import org.junit.BeforeClass;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.List;
 
 /**
  * 
- * @version $Id: SolrExampleJettyTest.java 724175 2008-12-07 19:07:11Z ryan $
+ *
  * @since solr 1.3
  */
+@Slow
 public class SolrExampleStreamingTest extends SolrExampleTests {
+
+  protected Throwable handledException = null;
+
   @BeforeClass
   public static void beforeTest() throws Exception {
-    createJetty(ExternalPaths.EXAMPLE_HOME, null, null);
+    createJetty(legacyExampleCollection1SolrHome());
+  }
+  
+  public class ErrorTrackingConcurrentUpdateSolrClient extends ConcurrentUpdateSolrClient {
+    public Throwable lastError = null;
+
+    public ErrorTrackingConcurrentUpdateSolrClient(String solrServerUrl, int queueSize, int threadCount) {
+      super(solrServerUrl, queueSize, threadCount);
+    }
+    
+    @Override
+    public void handleError(Throwable ex) {
+      handledException = lastError = ex;
+    }
   }
 
   @Override
-  public SolrServer createNewSolrServer()
+  public SolrClient createNewSolrClient()
   {
     try {
       // setup the server...
-      String url = "http://localhost:"+port+context;       // smaller queue size hits locks more often
-      CommonsHttpSolrServer s = new StreamingUpdateSolrServer( url, 2, 5 ) {
-        @Override
-        public void handleError(Throwable ex) {
-          // do something...    TODO?
-        }
-      };
-      s.setConnectionTimeout(100); // 1/10th sec
-      s.setDefaultMaxConnectionsPerHost(100);
-      s.setMaxTotalConnections(100);
-      return s;
+      String url = jetty.getBaseUrl().toString() + "/collection1";
+      // smaller queue size hits locks more often
+      ConcurrentUpdateSolrClient concurrentClient = new ErrorTrackingConcurrentUpdateSolrClient( url, 2, 5 );
+      concurrentClient.setParser(new XMLResponseParser());
+      concurrentClient.setRequestWriter(new RequestWriter());
+      return concurrentClient;
     }
+    
     catch( Exception ex ) {
       throw new RuntimeException( ex );
     }
   }
+
+  public void testWaitOptions() throws Exception {
+    // SOLR-3903
+    final List<Throwable> failures = new ArrayList<>();
+    final String serverUrl = jetty.getBaseUrl().toString() + "/collection1";
+    try (ConcurrentUpdateSolrClient concurrentClient = new FailureRecordingConcurrentUpdateSolrClient(serverUrl, 2, 2)) {
+      int docId = 42;
+      for (UpdateRequest.ACTION action : EnumSet.allOf(UpdateRequest.ACTION.class)) {
+        for (boolean waitSearch : Arrays.asList(true, false)) {
+          for (boolean waitFlush : Arrays.asList(true, false)) {
+            UpdateRequest updateRequest = new UpdateRequest();
+            SolrInputDocument document = new SolrInputDocument();
+            document.addField("id", docId++);
+            updateRequest.add(document);
+            updateRequest.setAction(action, waitSearch, waitFlush);
+            concurrentClient.request(updateRequest);
+          }
+        }
+      }
+      concurrentClient.commit();
+      concurrentClient.blockUntilFinished();
+    }
+
+    if (0 != failures.size()) {
+      assertEquals(failures.size() + " Unexpected Exception, starting with...", 
+                   null, failures.get(0));
+    }
+  }
+  
+  class FailureRecordingConcurrentUpdateSolrClient extends ConcurrentUpdateSolrClient {
+    private final List<Throwable> failures = new ArrayList<>();
+    
+    public FailureRecordingConcurrentUpdateSolrClient(String serverUrl, int queueSize, int numThreads) {
+      super(serverUrl, null, queueSize, numThreads, null, false);
+    }
+    
+    @Override
+    public void handleError(Throwable ex) {
+      failures.add(ex);
+    }
+  }
+
 }

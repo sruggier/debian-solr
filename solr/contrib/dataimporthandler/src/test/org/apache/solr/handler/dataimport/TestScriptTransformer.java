@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,9 +16,9 @@
  */
 package org.apache.solr.handler.dataimport;
 
+import org.apache.solr.handler.dataimport.config.DIHConfiguration;
 import org.junit.Test;
 import org.w3c.dom.Document;
-import org.w3c.dom.Element;
 import org.xml.sax.InputSource;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -30,14 +30,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * <p>
  * Test for ScriptTransformer
- * </p>
- * <p/>
- * All tests in this have been ignored because script support is only available
- * in Java 1.6+
  *
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class TestScriptTransformer extends AbstractDataImportHandlerTestCase {
@@ -48,23 +43,22 @@ public class TestScriptTransformer extends AbstractDataImportHandlerTestCase {
       String script = "function f1(row,context){"
               + "row.put('name','Hello ' + row.get('name'));" + "return row;\n" + "}";
       Context context = getContext("f1", script);
-      Map<String, Object> map = new HashMap<String, Object>();
+      Map<String, Object> map = new HashMap<>();
       map.put("name", "Scott");
-      EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null);
+      EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null, null);
       sep.init(context);
       sep.applyTransformer(map);
-      assertEquals(map.get("name"), "Hello Scott");
-    } catch (DataImportHandlerException e) {
-      assumeFalse("JRE does not contain a JavaScript engine (OpenJDK)",
-          e.getMessage().startsWith("<script> can be used only in java 6 or above")
-              || e.getMessage().startsWith("Cannot load Script Engine for language:"));
+      assertEquals("Hello Scott", map.get("name").toString());
+    } catch (DataImportHandlerException e) {    
+      assumeFalse("This JVM does not have JavaScript installed.  Test Skipped.", e
+          .getMessage().startsWith("Cannot load Script Engine for language"));
       throw e;
     }
   }
 
   private Context getContext(String funcName, String script) {
-    List<Map<String, String>> fields = new ArrayList<Map<String, String>>();
-    Map<String, String> entity = new HashMap<String, String>();
+    List<Map<String, String>> fields = new ArrayList<>();
+    Map<String, String> entity = new HashMap<>();
     entity.put("name", "hello");
     entity.put("transformer", "script:" + funcName);
 
@@ -82,16 +76,15 @@ public class TestScriptTransformer extends AbstractDataImportHandlerTestCase {
               + "row.put('name','Hello ' + row.get('name'));" + "return row;\n" + "}";
 
       Context context = getContext("f1", script);
-      Map<String, Object> map = new HashMap<String, Object>();
+      Map<String, Object> map = new HashMap<>();
       map.put("name", "Scott");
-      EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null);
+      EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null, null);
       sep.init(context);
       sep.applyTransformer(map);
-      assertEquals(map.get("name"), "Hello Scott");
-    } catch (DataImportHandlerException e) {
-      assumeFalse("JRE does not contain a JavaScript engine (OpenJDK)",
-          e.getMessage().startsWith("<script> can be used only in java 6 or above")
-              || e.getMessage().startsWith("Cannot load Script Engine for language:"));
+      assertEquals("Hello Scott", map.get("name").toString());
+    } catch (DataImportHandlerException e) {   
+      assumeFalse("This JVM does not have JavaScript installed.  Test Skipped.", e
+          .getMessage().startsWith("Cannot load Script Engine for language"));
       throw e;
     }
   }
@@ -102,14 +95,12 @@ public class TestScriptTransformer extends AbstractDataImportHandlerTestCase {
       DocumentBuilder builder = DocumentBuilderFactory.newInstance()
               .newDocumentBuilder();
       Document document = builder.parse(new InputSource(new StringReader(xml)));
-      DataConfig config = new DataConfig();
-      config.readFromXml((Element) document.getElementsByTagName("dataConfig")
-              .item(0));
-      assertTrue(config.script.text.indexOf("checkNextToken") > -1);
-    } catch (DataImportHandlerException e) {
-      assumeFalse("JRE does not contain a JavaScript engine (OpenJDK)",
-          e.getMessage().startsWith("<script> can be used only in java 6 or above")
-              || e.getMessage().startsWith("Cannot load Script Engine for language:"));
+      DataImporter di = new DataImporter();
+      DIHConfiguration dc = di.readFromXml(document);
+      assertTrue(dc.getScript().getText().indexOf("checkNextToken") > -1);
+    } catch (DataImportHandlerException e) {    
+      assumeFalse("This JVM does not have JavaScript installed.  Test Skipped.", e
+          .getMessage().startsWith("Cannot load Script Engine for language"));
       throw e;
     }
   }
@@ -120,15 +111,13 @@ public class TestScriptTransformer extends AbstractDataImportHandlerTestCase {
       DocumentBuilder builder = DocumentBuilderFactory.newInstance()
               .newDocumentBuilder();
       Document document = builder.parse(new InputSource(new StringReader(xml)));
-      DataConfig config = new DataConfig();
-      config.readFromXml((Element) document.getElementsByTagName("dataConfig")
-              .item(0));
-
-      Context c = getContext("checkNextToken", config.script.text);
+      DataImporter di = new DataImporter();
+      DIHConfiguration dc = di.readFromXml(document);
+      Context c = getContext("checkNextToken", dc.getScript().getText());
 
       Map map = new HashMap();
       map.put("nextToken", "hello");
-      EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null);
+      EntityProcessorWrapper sep = new EntityProcessorWrapper(new SqlEntityProcessor(), null, null);
       sep.init(c);
       sep.applyTransformer(map);
       assertEquals("true", map.get("$hasMore"));
@@ -136,10 +125,9 @@ public class TestScriptTransformer extends AbstractDataImportHandlerTestCase {
       map.put("nextToken", "");
       sep.applyTransformer(map);
       assertNull(map.get("$hasMore"));
-    } catch (DataImportHandlerException e) {
-      assumeFalse("JRE does not contain a JavaScript engine (OpenJDK)",
-          e.getMessage().startsWith("<script> can be used only in java 6 or above")
-              || e.getMessage().startsWith("Cannot load Script Engine for language:"));
+    } catch (DataImportHandlerException e) {    
+      assumeFalse("This JVM does not have JavaScript installed.  Test Skipped.", e
+          .getMessage().startsWith("Cannot load Script Engine for language"));
       throw e;
     }
   }

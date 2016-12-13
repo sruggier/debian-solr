@@ -1,6 +1,4 @@
-package org.apache.lucene.util.fst;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,11 +14,14 @@ package org.apache.lucene.util.fst;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util.fst;
+
 
 import java.io.IOException;
 
 import org.apache.lucene.store.DataInput;
 import org.apache.lucene.store.DataOutput;
+import org.apache.lucene.util.Accountable;
 
 /**
  * Represents the outputs for an FST, providing the basic
@@ -40,18 +41,48 @@ public abstract class Outputs<T> {
   // (new object per byte/char/int) if eg used during
   // analysis
 
-  /** Eg common("foo", "foobar") -> "foo" */
+  /** Eg common("foobar", "food") -&gt; "foo" */
   public abstract T common(T output1, T output2);
 
-  /** Eg subtract("foobar", "foo") -> "bar" */
+  /** Eg subtract("foobar", "foo") -&gt; "bar" */
   public abstract T subtract(T output, T inc);
 
-  /** Eg add("foo", "bar") -> "foobar" */
+  /** Eg add("foo", "bar") -&gt; "foobar" */
   public abstract T add(T prefix, T output);
 
+  /** Encode an output value into a {@link DataOutput}. */
   public abstract void write(T output, DataOutput out) throws IOException;
 
+  /** Encode an final node output value into a {@link
+   *  DataOutput}.  By default this just calls {@link #write(Object,
+   *  DataOutput)}. */
+  public void writeFinalOutput(T output, DataOutput out) throws IOException {
+    write(output, out);
+  }
+
+  /** Decode an output value previously written with {@link
+   *  #write(Object, DataOutput)}. */
   public abstract T read(DataInput in) throws IOException;
+
+  /** Skip the output; defaults to just calling {@link #read}
+   *  and discarding the result. */
+  public void skipOutput(DataInput in) throws IOException {
+    read(in);
+  }
+
+  /** Decode an output value previously written with {@link
+   *  #writeFinalOutput(Object, DataOutput)}.  By default this
+   *  just calls {@link #read(DataInput)}. */
+  public T readFinalOutput(DataInput in) throws IOException {
+    return read(in);
+  }
+  
+  /** Skip the output previously written with {@link #writeFinalOutput};
+   *  defaults to just calling {@link #readFinalOutput} and discarding
+   *  the result. */
+  public void skipFinalOutput(DataInput in) throws IOException {
+    skipOutput(in);
+  }
 
   /** NOTE: this output is compared with == so you must
    *  ensure that all methods return the single object if
@@ -65,4 +96,8 @@ public abstract class Outputs<T> {
   public T merge(T first, T second) {
     throw new UnsupportedOperationException();
   }
+
+  /** Return memory usage for the provided output.
+   *  @see Accountable */
+  public abstract long ramBytesUsed(T output);
 }

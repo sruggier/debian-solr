@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,40 +14,54 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
 
-import java.io.File;
+
 import java.io.FileNotFoundException;
-import java.io.FilenameFilter;
+import java.io.FilterOutputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
-
+import java.nio.channels.ClosedChannelException; // javadoc @link
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.OpenOption;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
-import static java.util.Collections.synchronizedSet;
-
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.lucene.util.ThreadInterruptedException;
+import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.util.Constants;
+import org.apache.lucene.util.IOUtils;
 
 /**
- * <a name="subclasses"/>
  * Base class for Directory implementations that store index
- * files in the file system.  There are currently three core
+ * files in the file system.  
+ * <a name="subclasses"></a>
+ * There are currently three core
  * subclasses:
  *
  * <ul>
  *
- *  <li> {@link SimpleFSDirectory} is a straightforward
- *       implementation using java.io.RandomAccessFile.
+ *  <li>{@link SimpleFSDirectory} is a straightforward
+ *       implementation using Files.newByteChannel.
  *       However, it has poor concurrent performance
  *       (multiple threads will bottleneck) as it
  *       synchronizes when multiple threads read from the
  *       same file.
  *
- *  <li> {@link NIOFSDirectory} uses java.nio's
+ *  <li>{@link NIOFSDirectory} uses java.nio's
  *       FileChannel's positional io when reading to avoid
  *       synchronization when reading from the same file.
  *       Unfortunately, due to a Windows-only <a
@@ -58,12 +70,10 @@ import org.apache.lucene.util.Constants;
  *       on all other platforms this is the preferred
  *       choice. Applications using {@link Thread#interrupt()} or
  *       {@link Future#cancel(boolean)} should use
- *       {@link SimpleFSDirectory} instead. See {@link NIOFSDirectory} java doc
+ *       {@code RAFDirectory} instead. See {@link NIOFSDirectory} java doc
  *       for details.
  *        
- *        
- *
- *  <li> {@link MMapDirectory} uses memory-mapped IO when
+ *  <li>{@link MMapDirectory} uses memory-mapped IO when
  *       reading. This is a good choice if you have plenty
  *       of virtual memory relative to your index size, eg
  *       if you are running on a 64 bit JRE, or you are
@@ -87,14 +97,9 @@ import org.apache.lucene.util.Constants;
  *       an important limitation to be aware of. This class supplies a
  *       (possibly dangerous) workaround mentioned in the bug report,
  *       which may fail on non-Sun JVMs.
- *       
- *       Applications using {@link Thread#interrupt()} or
- *       {@link Future#cancel(boolean)} should use
- *       {@link SimpleFSDirectory} instead. See {@link MMapDirectory}
- *       java doc for details.
  * </ul>
  *
- * Unfortunately, because of system peculiarities, there is
+ * <p>Unfortunately, because of system peculiarities, there is
  * no single overall best implementation.  Therefore, we've
  * added the {@link #open} method, to allow Lucene to choose
  * the best FSDirectory implementation given your
@@ -104,55 +109,68 @@ import org.apache.lucene.util.Constants;
  * #open}.  For all others, you should instantiate the
  * desired implementation directly.
  *
+ * <p><b>NOTE:</b> Accessing one of the above subclasses either directly or
+ * indirectly from a thread while it's interrupted can close the
+ * underlying channel immediately if at the same time the thread is
+ * blocked on IO. The channel will remain closed and subsequent access
+ * to the index will throw a {@link ClosedChannelException}.
+ * Applications using {@link Thread#interrupt()} or
+ * {@link Future#cancel(boolean)} should use the slower legacy
+ * {@code RAFDirectory} from the {@code misc} Lucene module instead.
+ *
  * <p>The locking implementation is by default {@link
  * NativeFSLockFactory}, but can be changed by
  * passing in a custom {@link LockFactory} instance.
  *
  * @see Directory
  */
-public abstract class FSDirectory extends Directory {
+public abstract class FSDirectory extends BaseDirectory {
 
-  /**
-   * Default read chunk size.  This is a conditional default: on 32bit JVMs, it defaults to 100 MB.  On 64bit JVMs, it's
-   * <code>Integer.MAX_VALUE</code>.
-   *
-   * @see #setReadChunkSize
-   */
-  public static final int DEFAULT_READ_CHUNK_SIZE = Constants.JRE_IS_64BIT ? Integer.MAX_VALUE : 100 * 1024 * 1024;
+  protected final Path directory; // The underlying filesystem directory
 
-  protected final File directory; // The underlying filesystem directory
-  protected final Set<String> staleFiles = synchronizedSet(new HashSet<String>()); // Files written, but not yet sync'ed
-  private int chunkSize = DEFAULT_READ_CHUNK_SIZE; // LUCENE-1566
+  /** Maps files that we are trying to delete (or we tried already but failed)
+   *  before attempting to delete that key. */
+  private final Set<String> pendingDeletes = Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
 
-  // returns the canonical version of the directory, creating it if it doesn't exist.
-  private static File getCanonicalPath(File file) throws IOException {
-    return new File(file.getCanonicalPath());
-  }
+  private final AtomicInteger opsSinceLastDelete = new AtomicInteger();
+
+  /** Used to generate temp file names in {@link #createTempOutput}. */
+  private final AtomicLong nextTempFileCounter = new AtomicLong();
 
   /** Create a new FSDirectory for the named location (ctor for subclasses).
+   * The directory is created at the named location if it does not yet exist.
+   * 
+   * <p>{@code FSDirectory} resolves the given Path to a canonical /
+   * real path to ensure it can correctly lock the index directory and no other process
+   * can interfere with changing possible symlinks to the index directory inbetween.
+   * If you want to use symlinks and change them dynamically, close all
+   * {@code IndexWriters} and create a new {@code FSDirecory} instance.
    * @param path the path of the directory
    * @param lockFactory the lock factory to use, or null for the default
    * ({@link NativeFSLockFactory});
-   * @throws IOException
+   * @throws IOException if there is a low-level I/O error
    */
-  protected FSDirectory(File path, LockFactory lockFactory) throws IOException {
-    // new ctors use always NativeFSLockFactory as default:
-    if (lockFactory == null) {
-      lockFactory = new NativeFSLockFactory();
+  protected FSDirectory(Path path, LockFactory lockFactory) throws IOException {
+    super(lockFactory);
+    // If only read access is permitted, createDirectories fails even if the directory already exists.
+    if (!Files.isDirectory(path)) {
+      Files.createDirectories(path);  // create directory, if it doesn't exist
     }
-    directory = getCanonicalPath(path);
-
-    if (directory.exists() && !directory.isDirectory())
-      throw new NoSuchDirectoryException("file '" + directory + "' exists but is not a directory");
-
-    setLockFactory(lockFactory);
+    directory = path.toRealPath();
   }
 
   /** Creates an FSDirectory instance, trying to pick the
    *  best implementation given the current environment.
    *  The directory returned uses the {@link NativeFSLockFactory}.
+   *  The directory is created at the named location if it does not yet exist.
+   * 
+   * <p>{@code FSDirectory} resolves the given Path when calling this method to a canonical /
+   * real path to ensure it can correctly lock the index directory and no other process
+   * can interfere with changing possible symlinks to the index directory inbetween.
+   * If you want to use symlinks and change them dynamically, close all
+   * {@code IndexWriters} and create a new {@code FSDirecory} instance.
    *
-   *  <p>Currently this returns {@link MMapDirectory} for most Solaris
+   *  <p>Currently this returns {@link MMapDirectory} for Linux, MacOSX, Solaris,
    *  and Windows 64-bit JREs, {@link NIOFSDirectory} for other
    *  non-Windows JREs, and {@link SimpleFSDirectory} for other
    *  JREs on Windows. It is highly recommended that you consult the
@@ -168,15 +186,14 @@ public abstract class FSDirectory extends Directory {
    * {@link MMapDirectory} on 64 bit JVMs.
    *
    * <p>See <a href="#subclasses">above</a> */
-  public static FSDirectory open(File path) throws IOException {
-    return open(path, null);
+  public static FSDirectory open(Path path) throws IOException {
+    return open(path, FSLockFactory.getDefault());
   }
 
-  /** Just like {@link #open(File)}, but allows you to
+  /** Just like {@link #open(Path)}, but allows you to
    *  also specify a custom {@link LockFactory}. */
-  public static FSDirectory open(File path, LockFactory lockFactory) throws IOException {
-    if ((Constants.WINDOWS || Constants.SUN_OS || Constants.LINUX)
-          && Constants.JRE_IS_64BIT && MMapDirectory.UNMAP_SUPPORTED) {
+  public static FSDirectory open(Path path, LockFactory lockFactory) throws IOException {
+    if (Constants.JRE_IS_64BIT && MMapDirectory.UNMAP_SUPPORTED) {
       return new MMapDirectory(path, lockFactory);
     } else if (Constants.WINDOWS) {
       return new SimpleFSDirectory(path, lockFactory);
@@ -185,341 +202,226 @@ public abstract class FSDirectory extends Directory {
     }
   }
 
-  @Override
-  public void setLockFactory(LockFactory lockFactory) throws IOException {
-    super.setLockFactory(lockFactory);
+  /** Lists all files (including subdirectories) in the directory.
+   *
+   *  @throws IOException if there was an I/O error during listing */
+  public static String[] listAll(Path dir) throws IOException {
+    return listAll(dir, null);
+  }
 
-    // for filesystem based LockFactory, delete the lockPrefix, if the locks are placed
-    // in index dir. If no index dir is given, set ourselves
-    if (lockFactory instanceof FSLockFactory) {
-      final FSLockFactory lf = (FSLockFactory) lockFactory;
-      final File dir = lf.getLockDir();
-      // if the lock factory has no lockDir set, use the this directory as lockDir
-      if (dir == null) {
-        lf.setLockDir(directory);
-        lf.setLockPrefix(null);
-      } else if (dir.getCanonicalPath().equals(directory.getCanonicalPath())) {
-        lf.setLockPrefix(null);
+  private static String[] listAll(Path dir, Set<String> skipNames) throws IOException {
+    List<String> entries = new ArrayList<>();
+    
+    try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
+      for (Path path : stream) {
+        String name = path.getFileName().toString();
+        if (skipNames != null && skipNames.contains(name) == false) {
+          entries.add(name);
+        }
       }
     }
-
-  }
-  
-  /** Lists all files (not subdirectories) in the
-   *  directory.  This method never returns null (throws
-   *  {@link IOException} instead).
-   *
-   *  @throws NoSuchDirectoryException if the directory
-   *   does not exist, or does exist but is not a
-   *   directory.
-   *  @throws IOException if list() returns null */
-  public static String[] listAll(File dir) throws IOException {
-    if (!dir.exists())
-      throw new NoSuchDirectoryException("directory '" + dir + "' does not exist");
-    else if (!dir.isDirectory())
-      throw new NoSuchDirectoryException("file '" + dir + "' exists but is not a directory");
-
-    // Exclude subdirs
-    String[] result = dir.list(new FilenameFilter() {
-        public boolean accept(File dir, String file) {
-          return !new File(dir, file).isDirectory();
-        }
-      });
-
-    if (result == null)
-      throw new IOException("directory '" + dir + "' exists and is a directory, but cannot be listed: list() returned null");
-
-    return result;
+    
+    String[] array = entries.toArray(new String[entries.size()]);
+    // Directory.listAll javadocs state that we sort the results here, so we don't let filesystem
+    // specifics leak out of this abstraction:
+    Arrays.sort(array);
+    return array;
   }
 
-  /** Lists all files (not subdirectories) in the
-   * directory.
-   * @see #listAll(File) */
   @Override
   public String[] listAll() throws IOException {
     ensureOpen();
-    return listAll(directory);
+    return listAll(directory, pendingDeletes);
   }
 
-  /** Returns true iff a file with the given name exists. */
-  @Override
-  public boolean fileExists(String name) {
-    ensureOpen();
-    File file = new File(directory, name);
-    return file.exists();
-  }
-
-  /** Returns the time the named file was last modified. */
-  @Override
-  public long fileModified(String name) {
-    ensureOpen();
-    File file = new File(directory, name);
-    return file.lastModified();
-  }
-
-  /** Returns the time the named file was last modified. */
-  public static long fileModified(File directory, String name) {
-    File file = new File(directory, name);
-    return file.lastModified();
-  }
-
-  /** Set the modified time of an existing file to now.
-   *  @deprecated Lucene never uses this API; it will be
-   *  removed in 4.0. */
-  @Override
-  @Deprecated
-  public void touchFile(String name) {
-    ensureOpen();
-    File file = new File(directory, name);
-    file.setLastModified(System.currentTimeMillis());
-  }
-
-  /** Returns the length in bytes of a file in the directory. */
   @Override
   public long fileLength(String name) throws IOException {
     ensureOpen();
-    File file = new File(directory, name);
-    final long len = file.length();
-    if (len == 0 && !file.exists()) {
-      throw new FileNotFoundException(name);
-    } else {
-      return len;
+    if (pendingDeletes.contains(name)) {
+      throw new NoSuchFileException("file \"" + name + "\" is pending delete");
+    }
+    return Files.size(directory.resolve(name));
+  }
+
+  @Override
+  public IndexOutput createOutput(String name, IOContext context) throws IOException {
+    ensureOpen();
+
+    // If this file was pending delete, we are now bringing it back to life:
+    pendingDeletes.remove(name);
+    maybeDeletePendingFiles();
+    return new FSIndexOutput(name);
+  }
+
+  @Override
+  public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
+    ensureOpen();
+    maybeDeletePendingFiles();
+    while (true) {
+      try {
+        String name = IndexFileNames.segmentFileName(prefix, suffix + "_" + Long.toString(nextTempFileCounter.getAndIncrement(), Character.MAX_RADIX), "tmp");
+        if (pendingDeletes.contains(name)) {
+          continue;
+        }
+        return new FSIndexOutput(name,
+                                 StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW);
+      } catch (FileAlreadyExistsException faee) {
+        // Retry with next incremented name
+      }
     }
   }
 
-  /** Removes an existing file in the directory. */
-  @Override
-  public void deleteFile(String name) throws IOException {
-    ensureOpen();
-    File file = new File(directory, name);
-    if (!file.delete())
-      throw new IOException("Cannot delete " + file);
-    staleFiles.remove(name);
-  }
-
-  /** Creates an IndexOutput for the file with the given name. */
-  @Override
-  public IndexOutput createOutput(String name) throws IOException {
-    ensureOpen();
-
-    ensureCanWrite(name);
-    return new FSIndexOutput(this, name);
-  }
-
-  protected void ensureCanWrite(String name) throws IOException {
-    if (!directory.exists())
-      if (!directory.mkdirs())
-        throw new IOException("Cannot create directory: " + directory);
-
-    File file = new File(directory, name);
-    if (file.exists() && !file.delete())          // delete existing, if any
-      throw new IOException("Cannot overwrite: " + file);
-  }
-
-  protected void onIndexOutputClosed(FSIndexOutput io) {
-    staleFiles.add(io.name);
-  }
-
-  @Deprecated
-  @Override
-  public void sync(String name) throws IOException {
-    sync(Collections.singleton(name));
+  protected void ensureCanRead(String name) throws IOException {
+    if (pendingDeletes.contains(name)) {
+      throw new NoSuchFileException("file \"" + name + "\" is pending delete and cannot be opened for read");
+    }
   }
 
   @Override
   public void sync(Collection<String> names) throws IOException {
     ensureOpen();
-    Set<String> toSync = new HashSet<String>(names);
-    toSync.retainAll(staleFiles);
 
-    for (String name : toSync)
+    for (String name : names) {
       fsync(name);
-
-    staleFiles.removeAll(toSync);
-  }
-
-  // Inherit javadoc
-  @Override
-  public IndexInput openInput(String name) throws IOException {
-    ensureOpen();
-    return openInput(name, BufferedIndexInput.BUFFER_SIZE);
-  }
-
-  @Override
-  public String getLockID() {
-    ensureOpen();
-    String dirName;                               // name to be hashed
-    try {
-      dirName = directory.getCanonicalPath();
-    } catch (IOException e) {
-      throw new RuntimeException(e.toString(), e);
     }
-
-    int digest = 0;
-    for(int charIDX=0;charIDX<dirName.length();charIDX++) {
-      final char ch = dirName.charAt(charIDX);
-      digest = 31 * digest + ch;
-    }
-    return "lucene-" + Integer.toHexString(digest);
+    maybeDeletePendingFiles();
   }
 
-  /** Closes the store to future operations. */
   @Override
-  public synchronized void close() {
+  public void rename(String source, String dest) throws IOException {
+    ensureOpen();
+    if (pendingDeletes.contains(source)) {
+      throw new NoSuchFileException("file \"" + source + "\" is pending delete and cannot be moved");
+    }
+    pendingDeletes.remove(dest);
+    Files.move(directory.resolve(source), directory.resolve(dest), StandardCopyOption.ATOMIC_MOVE);
+    maybeDeletePendingFiles();
+  }
+
+  @Override
+  public void syncMetaData() throws IOException {
+    // TODO: to improve listCommits(), IndexFileDeleter could call this after deleting segments_Ns
+    ensureOpen();
+    IOUtils.fsync(directory, true);
+    maybeDeletePendingFiles();
+  }
+
+  @Override
+  public synchronized void close() throws IOException {
     isOpen = false;
-  }
-
-  /** @deprecated Use {@link #getDirectory} instead. */
-  @Deprecated
-  public File getFile() {
-    return getDirectory();
+    deletePendingFiles();
   }
 
   /** @return the underlying filesystem directory */
-  public File getDirectory() {
+  public Path getDirectory() {
     ensureOpen();
     return directory;
   }
 
-  /** For debug output. */
   @Override
   public String toString() {
-    return this.getClass().getName() + "@" + directory + " lockFactory=" + getLockFactory();
-  }
-
-  /**
-   * Sets the maximum number of bytes read at once from the
-   * underlying file during {@link IndexInput#readBytes}.
-   * The default value is {@link #DEFAULT_READ_CHUNK_SIZE};
-   *
-   * <p> This was introduced due to <a
-   * href="http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6478546">Sun
-   * JVM Bug 6478546</a>, which throws an incorrect
-   * OutOfMemoryError when attempting to read too many bytes
-   * at once.  It only happens on 32bit JVMs with a large
-   * maximum heap size.</p>
-   *
-   * <p>Changes to this value will not impact any
-   * already-opened {@link IndexInput}s.  You should call
-   * this before attempting to open an index on the
-   * directory.</p>
-   *
-   * <p> <b>NOTE</b>: This value should be as large as
-   * possible to reduce any possible performance impact.  If
-   * you still encounter an incorrect OutOfMemoryError,
-   * trying lowering the chunk size.</p>
-   */
-  public final void setReadChunkSize(int chunkSize) {
-    // LUCENE-1566
-    if (chunkSize <= 0) {
-      throw new IllegalArgumentException("chunkSize must be positive");
-    }
-    if (!Constants.JRE_IS_64BIT) {
-      this.chunkSize = chunkSize;
-    }
-  }
-
-  /**
-   * The maximum number of bytes to read at once from the
-   * underlying file during {@link IndexInput#readBytes}.
-   * @see #setReadChunkSize
-   */
-  public final int getReadChunkSize() {
-    // LUCENE-1566
-    return chunkSize;
-  }
-
-  protected static class FSIndexOutput extends BufferedIndexOutput {
-    private final FSDirectory parent;
-    private final String name;
-    private final RandomAccessFile file;
-    private volatile boolean isOpen; // remember if the file is open, so that we don't try to close it more than once
-
-    public FSIndexOutput(FSDirectory parent, String name) throws IOException {
-      this.parent = parent;
-      this.name = name;
-      file = new RandomAccessFile(new File(parent.directory, name), "rw");
-      isOpen = true;
-    }
-
-    /** output methods: */
-    @Override
-    public void flushBuffer(byte[] b, int offset, int size) throws IOException {
-      file.write(b, offset, size);
-    }
-    
-    @Override
-    public void close() throws IOException {
-      parent.onIndexOutputClosed(this);
-      // only close the file if it has not been closed yet
-      if (isOpen) {
-        boolean success = false;
-        try {
-          super.close();
-          success = true;
-        } finally {
-          isOpen = false;
-          if (!success) {
-            try {
-              file.close();
-            } catch (Throwable t) {
-              // Suppress so we don't mask original exception
-            }
-          } else {
-            file.close();
-          }
-        }
-      }
-    }
-
-    /** Random-access methods */
-    @Override
-    public void seek(long pos) throws IOException {
-      super.seek(pos);
-      file.seek(pos);
-    }
-
-    @Override
-    public long length() throws IOException {
-      return file.length();
-    }
-
-    @Override
-    public void setLength(long length) throws IOException {
-      file.setLength(length);
-    }
+    return this.getClass().getSimpleName() + "@" + directory + " lockFactory=" + lockFactory;
   }
 
   protected void fsync(String name) throws IOException {
-    File fullFile = new File(directory, name);
-    boolean success = false;
-    int retryCount = 0;
-    IOException exc = null;
-    while (!success && retryCount < 5) {
-      retryCount++;
-      RandomAccessFile file = null;
-      try {
-        try {
-          file = new RandomAccessFile(fullFile, "rw");
-          file.getFD().sync();
-          success = true;
-        } finally {
-          if (file != null)
-            file.close();
-        }
-      } catch (IOException ioe) {
-        if (exc == null)
-          exc = ioe;
-        try {
-          // Pause 5 msec
-          Thread.sleep(5);
-        } catch (InterruptedException ie) {
-          throw new ThreadInterruptedException(ie);
-        }
+    IOUtils.fsync(directory.resolve(name), false);
+  }
+
+  @Override
+  public void deleteFile(String name) throws IOException {  
+    if (pendingDeletes.contains(name)) {
+      throw new NoSuchFileException("file \"" + name + "\" is already pending delete");
+    }
+    privateDeleteFile(name, false);
+    maybeDeletePendingFiles();
+  }
+
+  /** Tries to delete any pending deleted files, and returns true if
+   *  there are still files that could not be deleted. */
+  public boolean checkPendingDeletions() throws IOException {
+    deletePendingFiles();
+    return pendingDeletes.isEmpty() == false;
+  }
+
+  /** Try to delete any pending files that we had previously tried to delete but failed
+   *  because we are on Windows and the files were still held open. */
+  public synchronized void deletePendingFiles() throws IOException {
+    if (pendingDeletes.isEmpty() == false) {
+
+      // TODO: we could fix IndexInputs from FSDirectory subclasses to call this when they are closed?
+
+      // Clone the set since we mutate it in privateDeleteFile:
+      for(String name : new HashSet<>(pendingDeletes)) {
+        privateDeleteFile(name, true);
       }
     }
-    if (!success)
-      // Throw original exception
-      throw exc;
+  }
+
+  private void maybeDeletePendingFiles() throws IOException {
+    if (pendingDeletes.isEmpty() == false) {
+      // This is a silly heuristic to try to avoid O(N^2), where N = number of files pending deletion, behaviour on Windows:
+      int count = opsSinceLastDelete.incrementAndGet();
+      if (count >= pendingDeletes.size()) {
+        opsSinceLastDelete.addAndGet(-count);
+        deletePendingFiles();
+      }
+    }
+  }
+
+  private void privateDeleteFile(String name, boolean isPendingDelete) throws IOException {
+    try {
+      Files.delete(directory.resolve(name));
+      pendingDeletes.remove(name);
+    } catch (NoSuchFileException | FileNotFoundException e) {
+      // We were asked to delete a non-existent file:
+      pendingDeletes.remove(name);
+      if (isPendingDelete && Constants.WINDOWS) {
+        // TODO: can we remove this OS-specific hacky logic?  If windows deleteFile is buggy, we should instead contain this workaround in
+        // a WindowsFSDirectory ...
+        // LUCENE-6684: we suppress this check for Windows, since a file could be in a confusing "pending delete" state, failing the first
+        // delete attempt with access denied and then apparently falsely failing here when we try ot delete it again, with NSFE/FNFE
+      } else {
+        throw e;
+      }
+    } catch (IOException ioe) {
+      // On windows, a file delete can fail because there's still an open
+      // file handle against it.  We record this in pendingDeletes and
+      // try again later.
+
+      // TODO: this is hacky/lenient (we don't know which IOException this is), and
+      // it should only happen on filesystems that can do this, so really we should
+      // move this logic to WindowsDirectory or something
+
+      // TODO: can/should we do if (Constants.WINDOWS) here, else throw the exc?
+      // but what about a Linux box with a CIFS mount?
+      pendingDeletes.add(name);
+    }
+  }
+
+  final class FSIndexOutput extends OutputStreamIndexOutput {
+    /**
+     * The maximum chunk size is 8192 bytes, because file channel mallocs
+     * a native buffer outside of stack if the write buffer size is larger.
+     */
+    static final int CHUNK_SIZE = 8192;
+    
+    public FSIndexOutput(String name) throws IOException {
+      this(name, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW);
+    }
+
+    FSIndexOutput(String name, OpenOption... options) throws IOException {
+      super("FSIndexOutput(path=\"" + directory.resolve(name) + "\")", name, new FilterOutputStream(Files.newOutputStream(directory.resolve(name), options)) {
+        // This implementation ensures, that we never write more than CHUNK_SIZE bytes:
+        @Override
+        public void write(byte[] b, int offset, int length) throws IOException {
+          while (length > 0) {
+            final int chunk = Math.min(length, CHUNK_SIZE);
+            out.write(b, offset, chunk);
+            length -= chunk;
+            offset += chunk;
+          }
+        }
+      }, CHUNK_SIZE);
+    }
   }
 }

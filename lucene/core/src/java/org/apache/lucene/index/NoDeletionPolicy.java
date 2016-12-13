@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,8 +14,9 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.io.IOException;
+
 import java.util.List;
 
 /**
@@ -25,7 +24,7 @@ import java.util.List;
  * deleting them. This class is a singleton and can be accessed by referencing
  * {@link #INSTANCE}.
  */
-public final class NoDeletionPolicy implements IndexDeletionPolicy {
+public final class NoDeletionPolicy extends IndexDeletionPolicy {
 
   /** The single instance of this class. */
   public static final IndexDeletionPolicy INSTANCE = new NoDeletionPolicy();
@@ -34,8 +33,15 @@ public final class NoDeletionPolicy implements IndexDeletionPolicy {
     // keep private to avoid instantiation
   }
   
-  public void onCommit(List<? extends IndexCommit> commits) throws IOException {}
+  @Override
+  public void onCommit(List<? extends IndexCommit> commits) {}
 
-  public void onInit(List<? extends IndexCommit> commits) throws IOException {}
-  
+  @Override
+  public void onInit(List<? extends IndexCommit> commits) {}
+
+  @Override
+  public IndexDeletionPolicy clone() {
+    return this;
+  }
+
 }

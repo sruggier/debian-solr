@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,21 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.servlet.cache;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.Collections;
-import java.util.Map;
-import java.util.WeakHashMap;
 import java.util.List;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.lucene.index.IndexReader;
-
+import org.apache.lucene.util.WeakIdentityMap;
+import org.apache.solr.common.util.SuppressForbidden;
+import org.apache.solr.core.IndexDeletionPolicyWrapper;
 import org.apache.solr.core.SolrCore;
 import org.apache.solr.core.SolrConfig;
 import org.apache.solr.core.SolrConfig.HttpCachingConfig.LastModFrom;
@@ -42,13 +40,11 @@ import org.apache.commons.codec.binary.Base64;
 
 public final class HttpCacheHeaderUtil {
   
-  public static void sendNotModified(HttpServletResponse res)
-    throws IOException {
+  public static void sendNotModified(HttpServletResponse res) {
     res.setStatus(HttpServletResponse.SC_NOT_MODIFIED);
   }
 
-  public static void sendPreconditionFailed(HttpServletResponse res)
-    throws IOException {
+  public static void sendPreconditionFailed(HttpServletResponse res) {
     res.setStatus(HttpServletResponse.SC_PRECONDITION_FAILED);
   }
   
@@ -58,8 +54,7 @@ public final class HttpCacheHeaderUtil {
    *
    * @see #calcEtag
    */
-  private static Map<SolrCore, EtagCacheVal> etagCoreCache
-    = new WeakHashMap<SolrCore, EtagCacheVal>();
+  private static WeakIdentityMap<SolrCore, EtagCacheVal> etagCoreCache = WeakIdentityMap.newConcurrentHashMap();
 
   /** @see #etagCoreCache */
   private static class EtagCacheVal {
@@ -80,7 +75,7 @@ public final class HttpCacheHeaderUtil {
           etagCache = "\""
            + new String(Base64.encodeBase64((Long.toHexString
                                              (Long.reverse(indexVersionCache))
-                                             + etagSeed).getBytes()), "US-ASCII")
+                                             + etagSeed).getBytes("US-ASCII")), "US-ASCII")
            + "\"";
         } catch (UnsupportedEncodingException e) {
           throw new RuntimeException(e); // may not happen
@@ -94,13 +89,12 @@ public final class HttpCacheHeaderUtil {
   /**
    * Calculates a tag for the ETag header.
    *
-   * @param solrReq
    * @return a tag
    */
   public static String calcEtag(final SolrQueryRequest solrReq) {
     final SolrCore core = solrReq.getCore();
     final long currentIndexVersion
-      = solrReq.getSearcher().getReader().getVersion();
+      = solrReq.getSearcher().getIndexReader().getVersion();
 
     EtagCacheVal etagCache = etagCoreCache.get(core);
     if (null == etagCache) {
@@ -142,7 +136,6 @@ public final class HttpCacheHeaderUtil {
   /**
    * Calculate the appropriate last-modified time for Solr relative the current request.
    * 
-   * @param solrReq
    * @return the timestamp to use as a last modified time.
    */
   public static long calcLastModified(final SolrQueryRequest solrReq) {
@@ -157,8 +150,8 @@ public final class HttpCacheHeaderUtil {
       // assume default, change if needed (getOpenTime() should be fast)
       lastMod =
         LastModFrom.DIRLASTMOD == lastModFrom
-        ? IndexReader.lastModified(searcher.getReader().directory())
-        : searcher.getOpenTime();
+        ? IndexDeletionPolicyWrapper.getCommitTimestamp(searcher.getIndexReader().getIndexCommit())
+        : searcher.getOpenTimeStamp().getTime();
     } catch (IOException e) {
       // we're pretty freaking screwed if this happens
       throw new SolrException(ErrorCode.SERVER_ERROR, e);
@@ -167,6 +160,11 @@ public final class HttpCacheHeaderUtil {
     // We get rid of the milliseconds because the HTTP header has only
     // second granularity
     return lastMod - (lastMod % 1000L);
+  }
+
+  @SuppressForbidden(reason = "Need currentTimeMillis to send out cache control headers externally")
+  private static long timeNowForHeader() {
+    return System.currentTimeMillis();
   }
 
   /**
@@ -188,8 +186,7 @@ public final class HttpCacheHeaderUtil {
     }
     Long maxAge = conf.getHttpCachingConfig().getMaxAge();
     if (null != maxAge) {
-      resp.setDateHeader("Expires", System.currentTimeMillis()
-                         + (maxAge * 1000L));
+      resp.setDateHeader("Expires", timeNowForHeader() + (maxAge * 1000L));
     }
 
     return;
@@ -214,8 +211,7 @@ public final class HttpCacheHeaderUtil {
   public static boolean doCacheHeaderValidation(final SolrQueryRequest solrReq,
                                                 final HttpServletRequest req,
                                                 final Method reqMethod,
-                                                final HttpServletResponse resp)
-    throws IOException {
+                                                final HttpServletResponse resp) {
     
     if (Method.POST==reqMethod || Method.OTHER==reqMethod) {
       return false;
@@ -243,14 +239,12 @@ public final class HttpCacheHeaderUtil {
    * Check for etag related conditional headers and set status 
    * 
    * @return true if no request processing is necessary and HTTP response status has been set, false otherwise.
-   * @throws IOException
    */
   @SuppressWarnings("unchecked")
   public static boolean checkETagValidators(final HttpServletRequest req,
                                             final HttpServletResponse resp,
                                             final Method reqMethod,
-                                            final String etag)
-    throws IOException {
+                                            final String etag) {
     
     // First check If-None-Match because this is the common used header
     // element by HTTP clients
@@ -280,12 +274,10 @@ public final class HttpCacheHeaderUtil {
    * Check for modify time related conditional headers and set status 
    * 
    * @return true if no request processing is necessary and HTTP response status has been set, false otherwise.
-   * @throws IOException
    */
   public static boolean checkLastModValidators(final HttpServletRequest req,
                                                final HttpServletResponse resp,
-                                               final long lastMod)
-    throws IOException {
+                                               final long lastMod) {
 
     try {
       // First check for If-Modified-Since because this is the common
@@ -340,11 +332,12 @@ public final class HttpCacheHeaderUtil {
     // As long as no time machines get invented this is safe
     resp.setHeader("Expires", "Sat, 01 Jan 2000 01:00:00 GMT");
 
+    long timeNowForHeader = timeNowForHeader();
     // We signal "just modified" just in case some broken
     // proxy cache does not follow the above headers
-    resp.setDateHeader("Last-Modified", System.currentTimeMillis());
+    resp.setDateHeader("Last-Modified", timeNowForHeader);
     
     // We override the ETag with something different
-    resp.setHeader("ETag", '"'+Long.toHexString(System.currentTimeMillis())+'"');
+    resp.setHeader("ETag", '"'+Long.toHexString(timeNowForHeader)+'"');
   } 
 }

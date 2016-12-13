@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -25,7 +24,6 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionLengthAttribute;
-import org.apache.lucene.util.Attribute;
 
 // TODO: rename to OffsetsXXXTF?  ie we only validate
 // offsets (now anyway...)
@@ -44,25 +42,16 @@ public final class ValidatingTokenFilter extends TokenFilter {
   private int lastStartOffset;
 
   // Maps position to the start/end offset:
-  private final Map<Integer,Integer> posToStartOffset = new HashMap<Integer,Integer>();
-  private final Map<Integer,Integer> posToEndOffset = new HashMap<Integer,Integer>();
+  private final Map<Integer,Integer> posToStartOffset = new HashMap<>();
+  private final Map<Integer,Integer> posToEndOffset = new HashMap<>();
 
-  private final PositionIncrementAttribute posIncAtt = getAttrIfExists(PositionIncrementAttribute.class);
-  private final PositionLengthAttribute posLenAtt = getAttrIfExists(PositionLengthAttribute.class);
-  private final OffsetAttribute offsetAtt = getAttrIfExists(OffsetAttribute.class);
-  private final CharTermAttribute termAtt = getAttrIfExists(CharTermAttribute.class);
+  private final PositionIncrementAttribute posIncAtt = getAttribute(PositionIncrementAttribute.class);
+  private final PositionLengthAttribute posLenAtt = getAttribute(PositionLengthAttribute.class);
+  private final OffsetAttribute offsetAtt = getAttribute(OffsetAttribute.class);
+  private final CharTermAttribute termAtt = getAttribute(CharTermAttribute.class);
   private final boolean offsetsAreCorrect;
 
   private final String name;
-
-  // Returns null if the attr wasn't already added
-  private <A extends Attribute> A getAttrIfExists(Class<A> att) {
-    if (hasAttribute(att)) {
-      return getAttribute(att);
-    } else {
-      return null;
-    }
-  }
 
   /** The name arg is used to identify this stage when
    *  throwing exceptions (useful if you have more than one
@@ -96,15 +85,6 @@ public final class ValidatingTokenFilter extends TokenFilter {
       startOffset = offsetAtt.startOffset();
       endOffset = offsetAtt.endOffset();
 
-      if (startOffset < 0) {
-        throw new IllegalStateException(name + ": startOffset=" + startOffset + " is < 0");
-      }
-      if (endOffset < 0) {
-        throw new IllegalStateException(name + ": endOffset=" + endOffset + " is < 0");
-      }
-      if (endOffset < startOffset) {
-        throw new IllegalStateException(name + ": startOffset=" + startOffset + " is > endOffset=" + endOffset + " pos=" + pos + "; token=" + termAtt);
-      }
       if (offsetsAreCorrect && offsetAtt.startOffset() < lastStartOffset) {
         throw new IllegalStateException(name + ": offsets must not go backwards startOffset=" + startOffset + " is < lastStartOffset=" + lastStartOffset);
       }

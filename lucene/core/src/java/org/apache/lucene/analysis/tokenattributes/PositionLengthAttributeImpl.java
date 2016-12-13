@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,17 +14,20 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
 
-import org.apache.lucene.analysis.TokenStream;
+
 import org.apache.lucene.util.AttributeImpl;
+import org.apache.lucene.util.AttributeReflector;
 
-/** See {@link PositionLengthAttribute}. */
+/** Default implementation of {@link PositionLengthAttribute}. */
 public class PositionLengthAttributeImpl extends AttributeImpl implements PositionLengthAttribute, Cloneable {
   private int positionLength = 1;
   
-  /** @param positionLength how many positions this token
-   *  spans.  NOTE: this is optional, and most analyzers
-   *  don't change the default value (1). */
+  /** Initializes this attribute with position length of 1. */
+  public PositionLengthAttributeImpl() {}
+  
+  @Override
   public void setPositionLength(int positionLength) {
     if (positionLength < 1) {
       throw new IllegalArgumentException
@@ -35,9 +36,7 @@ public class PositionLengthAttributeImpl extends AttributeImpl implements Positi
     this.positionLength = positionLength;
   }
 
-  /** Returns the position length of this Token.
-   * @see #setPositionLength    
-   */
+  @Override
   public int getPositionLength() {
     return positionLength;
   }
@@ -71,4 +70,9 @@ public class PositionLengthAttributeImpl extends AttributeImpl implements Positi
     PositionLengthAttribute t = (PositionLengthAttribute) target;
     t.setPositionLength(positionLength);
   }  
+
+  @Override
+  public void reflectWith(AttributeReflector reflector) {
+    reflector.reflect(PositionLengthAttribute.class, "positionLength", positionLength);
+  }
 }

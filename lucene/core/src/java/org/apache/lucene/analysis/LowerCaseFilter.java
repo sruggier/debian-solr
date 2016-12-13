@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,55 +14,35 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
+
 
 import java.io.IOException;
 
+import org.apache.lucene.analysis.TokenFilter;
+import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.util.CharacterUtils;
-import org.apache.lucene.util.Version;
+import org.apache.lucene.analysis.CharacterUtils;
 
 /**
  * Normalizes token text to lower case.
- * <a name="version"/>
- * <p>You must specify the required {@link Version}
- * compatibility when creating LowerCaseFilter:
- * <ul>
- *   <li> As of 3.1, supplementary characters are properly lowercased.
- * </ul>
  */
-public final class LowerCaseFilter extends TokenFilter {
-  private final CharacterUtils charUtils;
+public class LowerCaseFilter extends TokenFilter {
   private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
   
   /**
    * Create a new LowerCaseFilter, that normalizes token text to lower case.
    * 
-   * @param matchVersion See <a href="#version">above</a>
    * @param in TokenStream to filter
    */
-  public LowerCaseFilter(Version matchVersion, TokenStream in) {
+  public LowerCaseFilter(TokenStream in) {
     super(in);
-    charUtils = CharacterUtils.getInstance(matchVersion);
   }
   
-  /**
-   * @deprecated Use {@link #LowerCaseFilter(Version, TokenStream)} instead.
-   */
-  @Deprecated
-  public LowerCaseFilter(TokenStream in) {
-    this(Version.LUCENE_30, in);
-  }
-
   @Override
   public final boolean incrementToken() throws IOException {
     if (input.incrementToken()) {
-      final char[] buffer = termAtt.buffer();
-      final int length = termAtt.length();
-      for (int i = 0; i < length;) {
-       i += Character.toChars(
-               Character.toLowerCase(
-                   charUtils.codePointAt(buffer, i)), buffer, i);
-      }
+      CharacterUtils.toLowerCase(termAtt.buffer(), 0, termAtt.length());
       return true;
     } else
       return false;

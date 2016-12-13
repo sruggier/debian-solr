@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,9 +14,10 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import java.io.IOException;
 
+import org.apache.lucene.document.Document;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
 import org.apache.lucene.index.Term;
@@ -34,19 +33,38 @@ public class TestPositiveScoresOnlyCollector extends LuceneTestCase {
       super(weight);
     }
     
-    @Override public float score() throws IOException {
+    @Override public float score() {
       return idx == scores.length ? Float.NaN : scores[idx];
+    }
+    
+    @Override public int freq() {
+      return 1;
     }
 
     @Override public int docID() { return idx; }
 
-    @Override public int nextDoc() throws IOException {
-      return ++idx != scores.length ? idx : NO_MORE_DOCS;
-    }
-    
-    @Override public int advance(int target) throws IOException {
-      idx = target;
-      return idx < scores.length ? idx : NO_MORE_DOCS;
+    @Override
+    public DocIdSetIterator iterator() {
+      return new DocIdSetIterator() {
+        @Override
+        public int docID() {
+          return idx;
+        }
+
+        @Override public int nextDoc() {
+          return ++idx != scores.length ? idx : NO_MORE_DOCS;
+        }
+        
+        @Override public int advance(int target) {
+          idx = target;
+          return idx < scores.length ? idx : NO_MORE_DOCS;
+        }
+
+        @Override
+        public long cost() {
+          return scores.length;
+        } 
+      };
     }
   }
 
@@ -70,18 +88,20 @@ public class TestPositiveScoresOnlyCollector extends LuceneTestCase {
     }
     
     Directory directory = newDirectory();
-    RandomIndexWriter writer = new RandomIndexWriter(random, directory);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
+    writer.addDocument(new Document());
     writer.commit();
     IndexReader ir = writer.getReader();
     writer.close();
     IndexSearcher searcher = newSearcher(ir);
-    Weight fake = new TermQuery(new Term("fake", "weight")).createWeight(searcher);
+    Weight fake = new TermQuery(new Term("fake", "weight")).createWeight(searcher, true);
     Scorer s = new SimpleScorer(fake);
-    TopDocsCollector<ScoreDoc> tdc = TopScoreDocCollector.create(scores.length, true);
+    TopDocsCollector<ScoreDoc> tdc = TopScoreDocCollector.create(scores.length);
     Collector c = new PositiveScoresOnlyCollector(tdc);
-    c.setScorer(s);
-    while (s.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
-      c.collect(0);
+    LeafCollector ac = c.getLeafCollector(ir.leaves().get(0));
+    ac.setScorer(s);
+    while (s.iterator().nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+      ac.collect(0);
     }
     TopDocs td = tdc.topDocs();
     ScoreDoc[] sd = td.scoreDocs;
@@ -89,7 +109,6 @@ public class TestPositiveScoresOnlyCollector extends LuceneTestCase {
     for (int i = 0; i < sd.length; i++) {
       assertTrue("only positive scores should return: " + sd[i].score, sd[i].score > 0);
     }
-    searcher.close();
     ir.close();
     directory.close();
   }

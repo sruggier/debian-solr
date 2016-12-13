@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,20 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.handler;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
-
-import org.apache.solr.common.params.CommonParams;
-import org.apache.solr.common.params.MoreLikeThisParams;
-import org.apache.solr.common.params.MultiMapSolrParams;
-
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.params.*;
-
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
 import org.apache.solr.core.SolrCore;
@@ -56,9 +47,8 @@ public class MoreLikeThisHandlerTest extends SolrTestCaseJ4 {
     SolrCore core = h.getCore();
     MoreLikeThisHandler mlt = new MoreLikeThisHandler();
     
-    Map<String,String[]> params = new HashMap<String,String[]>();
-    MultiMapSolrParams mmparams = new MultiMapSolrParams( params );
-    SolrQueryRequestBase req = new SolrQueryRequestBase( core, (SolrParams)mmparams ) {};
+    ModifiableSolrParams params = new ModifiableSolrParams();
+    SolrQueryRequestBase req = new SolrQueryRequestBase( core, params) {};
     
     // requires 'q' or single content stream
     try {
@@ -68,7 +58,7 @@ public class MoreLikeThisHandlerTest extends SolrTestCaseJ4 {
 
     // requires 'q' or single content stream
     try {
-      ArrayList<ContentStream> streams = new ArrayList<ContentStream>( 2 );
+      ArrayList<ContentStream> streams = new ArrayList<>( 2 );
       streams.add( new ContentStreamBase.StringStream( "hello" ) );
       streams.add( new ContentStreamBase.StringStream( "there" ) );
       req.setContentStreams( streams );
@@ -86,25 +76,33 @@ public class MoreLikeThisHandlerTest extends SolrTestCaseJ4 {
     assertU(adoc("id","46","name","Nicole Kidman","subword","Batman","subword","Days of Thunder","subword","Eyes Wide Shut","subword","Far and Away"));
     assertU(commit());
 
-    params.put(CommonParams.Q, new String[]{"id:42"});
-    params.put(MoreLikeThisParams.MLT, new String[]{"true"});
-    params.put(MoreLikeThisParams.SIMILARITY_FIELDS, new String[]{"name,subword"});
-    params.put(MoreLikeThisParams.INTERESTING_TERMS,new String[]{"details"});
-    params.put(MoreLikeThisParams.MIN_TERM_FREQ,new String[]{"1"});
-    params.put(MoreLikeThisParams.MIN_DOC_FREQ,new String[]{"1"});
-    params.put("indent",new String[]{"true"});
+    params.set(CommonParams.Q, "id:42");
+    params.set(MoreLikeThisParams.MLT, "true");
+    params.set(MoreLikeThisParams.SIMILARITY_FIELDS, "name,subword");
+    params.set(MoreLikeThisParams.INTERESTING_TERMS, "details");
+    params.set(MoreLikeThisParams.MIN_TERM_FREQ,"1");
+    params.set(MoreLikeThisParams.MIN_DOC_FREQ,"1");
+    params.set("indent","true");
 
-    SolrQueryRequest mltreq = new LocalSolrQueryRequest( core, (SolrParams)mmparams);
+    SolrQueryRequest mltreq = new LocalSolrQueryRequest( core, params);
+    assertQ("morelikethis - tom cruise",mltreq
+        ,"//result/doc[1]/int[@name='id'][.='46']"
+        ,"//result/doc[2]/int[@name='id'][.='43']");
+
+    params.set(MoreLikeThisParams.BOOST, "true");
+    mltreq.close(); mltreq = new LocalSolrQueryRequest( core, params);
     assertQ("morelikethis - tom cruise",mltreq
         ,"//result/doc[1]/int[@name='id'][.='46']"
         ,"//result/doc[2]/int[@name='id'][.='43']");
     
-    params.put(CommonParams.Q, new String[]{"id:44"});
+    params.set(CommonParams.Q, "id:44");
+    mltreq.close(); mltreq = new LocalSolrQueryRequest(h.getCore(), params);
     assertQ("morelike this - harrison ford",mltreq
         ,"//result/doc[1]/int[@name='id'][.='45']");
 
     // test MoreLikeThis debug
-    params.put(CommonParams.DEBUG_QUERY, new String[]{"true"});
+    params.set(CommonParams.DEBUG_QUERY, "true");
+    mltreq.close(); mltreq = new LocalSolrQueryRequest(h.getCore(), params);
     assertQ("morelike this - harrison ford",mltreq
         ,"//lst[@name='debug']/lst[@name='moreLikeThis']/lst[@name='44']/str[@name='rawMLTQuery']"
         ,"//lst[@name='debug']/lst[@name='moreLikeThis']/lst[@name='44']/str[@name='boostedMLTQuery']"
@@ -114,19 +112,39 @@ public class MoreLikeThisHandlerTest extends SolrTestCaseJ4 {
 
     // test that qparser plugins work
     params.remove(CommonParams.DEBUG_QUERY);
-    params.put(CommonParams.Q, new String[]{"{!field f=id}44"});
+    params.set(CommonParams.Q, "{!field f=id}44");
+    mltreq.close(); mltreq = new LocalSolrQueryRequest(h.getCore(), params);
     assertQ(mltreq
         ,"//result/doc[1]/int[@name='id'][.='45']");
 
-    params.put(CommonParams.Q, new String[]{"id:42"});
-    params.put(MoreLikeThisParams.QF,new String[]{"name^5.0 subword^0.1"});
+    params.set(CommonParams.Q, "id:42");
+    params.set(MoreLikeThisParams.QF,"name^5.0 subword^0.1");
+    mltreq.close(); mltreq = new LocalSolrQueryRequest(h.getCore(), params);
     assertQ("morelikethis with weights",mltreq
         ,"//result/doc[1]/int[@name='id'][.='43']"
         ,"//result/doc[2]/int[@name='id'][.='46']");
+
+
+    // test that qparser plugins work w/ the MoreLikeThisHandler
+    params.set(CommonParams.QT, "/mlt");
+    params.set(CommonParams.Q, "{!field f=id}44");
+    mltreq.close(); mltreq = new LocalSolrQueryRequest(h.getCore(), params);
+    assertQ(mltreq
+        ,"//result/doc[1]/int[@name='id'][.='45']");
+
+    // test that debugging works (test for MoreLikeThis*Handler*)
+    params.set(CommonParams.QT, "/mlt");
+    params.set(CommonParams.DEBUG_QUERY, "true");
+    mltreq.close(); mltreq = new LocalSolrQueryRequest(h.getCore(), params);
+    assertQ(mltreq
+        ,"//result/doc[1]/int[@name='id'][.='45']"
+        ,"//lst[@name='debug']/lst[@name='explain']"
+    );
 
     // params.put(MoreLikeThisParams.QF,new String[]{"foo_ti"});
     // String response = h.query(mltreq);
     // System.out.println(response);
 
+    mltreq.close();
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,10 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.servlet;
 
-import java.io.File;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,17 +27,12 @@ import org.apache.solr.common.params.MapSolrParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.common.util.ContentStreamBase;
-import org.apache.solr.core.CoreContainer;
-import org.apache.solr.core.CoreDescriptor;
-import org.apache.solr.core.SolrConfig;
 import org.apache.solr.core.SolrCore;
-import org.apache.solr.core.SolrResourceLoader;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.request.SolrRequestHandler;
 import org.apache.solr.request.SolrRequestInfo;
 import org.apache.solr.response.QueryResponseWriter;
 import org.apache.solr.response.SolrQueryResponse;
-import org.apache.solr.schema.IndexSchema;
 
 /**
  * DirectSolrConnection provides an interface to Solr that is similar to
@@ -48,23 +41,13 @@ import org.apache.solr.schema.IndexSchema;
  * This class is designed to be as simple as possible and allow for more flexibility
  * in how you interface to Solr.
  * 
- * @version $Id$
+ *
  * @since solr 1.2
  */
 public class DirectSolrConnection 
 {
-  final SolrCore core;
-  final SolrRequestParsers parser;
-  
-  /**
-   * Initialize using the static singleton SolrCore.getSolrCore().
-   * @deprecated use {@link #DirectSolrConnection(SolrCore)}
-   */
-  @Deprecated
-  public DirectSolrConnection()
-  {
-    this( SolrCore.getSolrCore() );
-  }
+  protected final SolrCore core;
+  protected final SolrRequestParsers parser;
 
   /**
    * Initialize using an explicit SolrCore
@@ -74,61 +57,13 @@ public class DirectSolrConnection
     core = c;
     parser = new SolrRequestParsers( c.getSolrConfig() );
   }
-
-  /**
-   * This constructor is designed to make it easy for JNI embedded applications 
-   * to setup the entire solr environment with a simple interface.  It takes three parameters:
-   * 
-   * <code>instanceDir:</code> The solr instance directory.  If null, it will check the standard 
-   * places first (JNDI,properties,"solr" directory)
-   * 
-   * <code>dataDir:</code> where the index is stored. 
-   * 
-   * <code>loggingPath:</code> Path to a java.util.logging.config.file.  If the path represents
-   * an absolute path or is relative to the CWD, it will use that.  Next it will try a path 
-   * relative to the instanceDir.  If none of these files exist, it will error.
-   */
-  public DirectSolrConnection( String instanceDir, String dataDir, String loggingPath )
-  {
-    // If a loggingPath is specified, try using that (this needs to happen first)
-    if( loggingPath != null ) {
-      File loggingConfig = new File( loggingPath );
-      if( !loggingConfig.exists() && instanceDir != null ) {
-        loggingConfig = new File( new File(instanceDir), loggingPath  );
-      }
-      if( loggingConfig.exists() ) {
-        System.setProperty("java.util.logging.config.file", loggingConfig.getAbsolutePath() ); 
-      }
-      else {
-        throw new SolrException( SolrException.ErrorCode.SERVER_ERROR, "can not find logging file: "+loggingConfig );
-      }
-    }
-    
-    if( instanceDir == null ) {
-      instanceDir = SolrResourceLoader.locateInstanceDir();
-    }
-    
-    // Initialize 
-    try {
-      CoreContainer cores = new CoreContainer(new SolrResourceLoader(instanceDir));
-      SolrConfig solrConfig = new SolrConfig(instanceDir, SolrConfig.DEFAULT_CONF_FILE, null);
-      CoreDescriptor dcore = new CoreDescriptor(cores, "", solrConfig.getResourceLoader().getInstanceDir());
-      IndexSchema indexSchema = new IndexSchema(solrConfig, instanceDir+"/conf/schema.xml", null);
-      core = new SolrCore( null, dataDir, solrConfig, indexSchema, dcore);
-      cores.register("", core, false);
-      parser = new SolrRequestParsers( solrConfig );
-    } 
-    catch (Exception ee) {
-      throw new RuntimeException(ee);
-    }
-  }
   
 
   /**
    * For example:
    * 
-   * String json = solr.request( "/select?qt=dismax&wt=json&q=...", null );
-   * String xml = solr.request( "/update", "&lt;add><doc><field ..." );
+   * String json = solr.request( "/select?qt=dismax&amp;wt=json&amp;q=...", null );
+   * String xml = solr.request( "/update", "&lt;add&gt;&lt;doc&gt;&lt;field ..." );
    */
   public String request( String pathAndParams, String body ) throws Exception
   {
@@ -143,11 +78,19 @@ public class DirectSolrConnection
       path= pathAndParams;
       params = new MapSolrParams( new HashMap<String, String>() );
     }
-    
+
+    return request(path, params, body);
+  }
+
+
+  public String request(String path, SolrParams params, String body) throws Exception
+  {
     // Extract the handler from the path or params
     SolrRequestHandler handler = core.getRequestHandler( path );
     if( handler == null ) {
       if( "/select".equals( path ) || "/select/".equalsIgnoreCase( path) ) {
+        if (params == null)
+          params = new MapSolrParams( new HashMap<String, String>() );        
         String qt = params.get( CommonParams.QT );
         handler = core.getRequestHandler( qt );
         if( handler == null ) {
@@ -155,7 +98,6 @@ public class DirectSolrConnection
         }
       }
     }
-
     if( handler == null ) {
       throw new SolrException( SolrException.ErrorCode.BAD_REQUEST, "unknown handler: "+path );
     }
@@ -163,13 +105,13 @@ public class DirectSolrConnection
     return request(handler, params, body);
   }
 
-  public String request(SolrRequestHandler handler, SolrParams params, String body ) throws Exception {
-
+  public String request(SolrRequestHandler handler, SolrParams params, String body) throws Exception
+  {
     if (params == null)
       params = new MapSolrParams( new HashMap<String, String>() );
 
     // Make a stream for the 'body' content
-    List<ContentStream> streams = new ArrayList<ContentStream>( 1 );
+    List<ContentStream> streams = new ArrayList<>( 1 );
     if( body != null && body.length() > 0 ) {
       streams.add( new ContentStreamBase.StringStream( body ) );
     }
@@ -178,7 +120,7 @@ public class DirectSolrConnection
     try {
       req = parser.buildRequestFrom( core, params, streams );
       SolrQueryResponse rsp = new SolrQueryResponse();
-      SolrRequestInfo.setRequestInfo(new SolrRequestInfo(req, rsp));     
+      SolrRequestInfo.setRequestInfo(new SolrRequestInfo(req, rsp));      
       core.execute( handler, req, rsp );
       if( rsp.getException() != null ) {
         throw rsp.getException();
@@ -193,10 +135,12 @@ public class DirectSolrConnection
       if (req != null) {
         req.close();
       }
-      SolrRequestInfo.clearRequestInfo(); 
+      SolrRequestInfo.clearRequestInfo();            
     }
   }
-  
+
+
+
   /**
    * Use this method to close the underlying SolrCore.
    * 

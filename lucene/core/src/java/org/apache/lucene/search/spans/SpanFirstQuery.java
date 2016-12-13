@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,18 +14,19 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
 
-import org.apache.lucene.util.ToStringUtils;
+
+import org.apache.lucene.search.spans.FilterSpans.AcceptStatus;
 
 import java.io.IOException;
 
-/** Matches spans near the beginning of a field.
- * <p/> 
+/**
+ * Matches spans near the beginning of a field.
+ * <p>
  * This class is a simple extension of {@link SpanPositionRangeQuery} in that it assumes the
  * start to be zero and only checks the end boundary.
- *
- *
- *  */
+ */
 public class SpanFirstQuery extends SpanPositionRangeQuery {
 
   /** Construct a SpanFirstQuery matching spans in <code>match</code> whose end
@@ -36,17 +35,15 @@ public class SpanFirstQuery extends SpanPositionRangeQuery {
     super(match, 0, end);
   }
 
-  @Override
   protected AcceptStatus acceptPosition(Spans spans) throws IOException {
-    assert spans.start() != spans.end();
-    if (spans.start() >= end)
-      return AcceptStatus.NO_AND_ADVANCE;
-    else if (spans.end() <= end)
+    assert spans.startPosition() != spans.endPosition() : "start equals end: " + spans.startPosition();
+    if (spans.startPosition() >= end)
+      return AcceptStatus.NO_MORE_IN_CURRENT_DOC;
+    else if (spans.endPosition() <= end)
       return AcceptStatus.YES;
     else
       return AcceptStatus.NO;
   }
-
 
   @Override
   public String toString(String field) {
@@ -56,35 +53,7 @@ public class SpanFirstQuery extends SpanPositionRangeQuery {
     buffer.append(", ");
     buffer.append(end);
     buffer.append(")");
-    buffer.append(ToStringUtils.boost(getBoost()));
     return buffer.toString();
   }
-
-  @Override
-  public Object clone() {
-    SpanFirstQuery spanFirstQuery = new SpanFirstQuery((SpanQuery) match.clone(), end);
-    spanFirstQuery.setBoost(getBoost());
-    return spanFirstQuery;
-  }
-
-  @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof SpanFirstQuery)) return false;
-
-    SpanFirstQuery other = (SpanFirstQuery)o;
-    return this.end == other.end
-         && this.match.equals(other.match)
-         && this.getBoost() == other.getBoost();
-  }
-
-  @Override
-  public int hashCode() {
-    int h = match.hashCode();
-    h ^= (h << 8) | (h >>> 25);  // reversible
-    h ^= Float.floatToRawIntBits(getBoost()) ^ end;
-    return h;
-  }
-
 
 }

@@ -1,6 +1,4 @@
-package org.apache.lucene.util;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,19 +14,20 @@ package org.apache.lucene.util;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.util;
 
-import java.lang.ref.WeakReference;
+
 import java.util.Collections;
-import java.util.NoSuchElementException;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.NoSuchElementException;
+import java.util.Objects;
+import java.util.Set;
 
 import org.apache.lucene.analysis.TokenStream; // for javadocs
-import org.apache.lucene.analysis.tokenattributes.TermAttribute;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttributeImpl;
 
 /**
  * An AttributeSource contains a list of different {@link AttributeImpl}s,
@@ -40,65 +39,7 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttributeImpl;
  * it creates a new instance and returns it.
  */
 public class AttributeSource {
-  /**
-   * An AttributeFactory creates instances of {@link AttributeImpl}s.
-   */
-  public static abstract class AttributeFactory {
-    /**
-     * returns an {@link AttributeImpl} for the supplied {@link Attribute} interface class.
-     */
-    public abstract AttributeImpl createAttributeInstance(Class<? extends Attribute> attClass);
-    
-    /**
-     * This is the default factory that creates {@link AttributeImpl}s using the
-     * class name of the supplied {@link Attribute} interface class by appending <code>Impl</code> to it.
-     */
-    public static final AttributeFactory DEFAULT_ATTRIBUTE_FACTORY = new DefaultAttributeFactory();
-    
-    private static final class DefaultAttributeFactory extends AttributeFactory {
-      private static final WeakIdentityMap<Class<? extends Attribute>, WeakReference<Class<? extends AttributeImpl>>> attClassImplMap =
-        WeakIdentityMap.newConcurrentHashMap();
-      
-      private DefaultAttributeFactory() {}
-    
-      @Override
-      public AttributeImpl createAttributeInstance(Class<? extends Attribute> attClass) {
-        try {
-          return getClassForInterface(attClass).newInstance();
-        } catch (InstantiationException e) {
-          throw new IllegalArgumentException("Could not instantiate implementing class for " + attClass.getName());
-        } catch (IllegalAccessException e) {
-          throw new IllegalArgumentException("Could not instantiate implementing class for " + attClass.getName());
-        }
-      }
-      
-      private static Class<? extends AttributeImpl> getClassForInterface(Class<? extends Attribute> attClass) {
-        final WeakReference<Class<? extends AttributeImpl>> ref = attClassImplMap.get(attClass);
-        Class<? extends AttributeImpl> clazz = (ref == null) ? null : ref.get();
-        if (clazz == null) {
-          // we have the slight chance that another thread may do the same, but who cares?
-          try {
-            // TODO: Remove when TermAttribute is removed!
-            // This is a "sophisticated backwards compatibility hack"
-            // (enforce new impl for this deprecated att):
-            if (TermAttribute.class.equals(attClass)) {
-              clazz = CharTermAttributeImpl.class;
-            } else {
-              clazz = Class.forName(attClass.getName() + "Impl", true, attClass.getClassLoader())
-                .asSubclass(AttributeImpl.class);
-            }
-            attClassImplMap.put(attClass,
-              new WeakReference<Class<? extends AttributeImpl>>(clazz)
-            );
-          } catch (ClassNotFoundException e) {
-            throw new IllegalArgumentException("Could not find implementing class for " + attClass.getName());
-          }
-        }
-        return clazz;
-      }
-    }
-  }
-      
+  
   /**
    * This class holds the state of an AttributeSource.
    * @see #captureState
@@ -109,12 +50,12 @@ public class AttributeSource {
     State next;
     
     @Override
-    public Object clone() {
+    public State clone() {
       State clone = new State();
-      clone.attribute = (AttributeImpl) attribute.clone();
+      clone.attribute = attribute.clone();
       
       if (next != null) {
-        clone.next = (State) next.clone();
+        clone.next = next.clone();
       }
       
       return clone;
@@ -130,7 +71,7 @@ public class AttributeSource {
   private final AttributeFactory factory;
   
   /**
-   * An AttributeSource using the default attribute factory {@link AttributeSource.AttributeFactory#DEFAULT_ATTRIBUTE_FACTORY}.
+   * An AttributeSource using the default attribute factory {@link AttributeFactory#DEFAULT_ATTRIBUTE_FACTORY}.
    */
   public AttributeSource() {
     this(AttributeFactory.DEFAULT_ATTRIBUTE_FACTORY);
@@ -140,9 +81,7 @@ public class AttributeSource {
    * An AttributeSource that uses the same attributes as the supplied one.
    */
   public AttributeSource(AttributeSource input) {
-    if (input == null) {
-      throw new IllegalArgumentException("input AttributeSource must not be null");
-    }
+    Objects.requireNonNull(input, "input AttributeSource must not be null");
     this.attributes = input.attributes;
     this.attributeImpls = input.attributeImpls;
     this.currentState = input.currentState;
@@ -153,23 +92,23 @@ public class AttributeSource {
    * An AttributeSource using the supplied {@link AttributeFactory} for creating new {@link Attribute} instances.
    */
   public AttributeSource(AttributeFactory factory) {
-    this.attributes = new LinkedHashMap<Class<? extends Attribute>, AttributeImpl>();
-    this.attributeImpls = new LinkedHashMap<Class<? extends AttributeImpl>, AttributeImpl>();
+    this.attributes = new LinkedHashMap<>();
+    this.attributeImpls = new LinkedHashMap<>();
     this.currentState = new State[1];
-    this.factory = factory;
+    this.factory = Objects.requireNonNull(factory, "AttributeFactory must not be null");
   }
   
   /**
    * returns the used AttributeFactory.
    */
-  public AttributeFactory getAttributeFactory() {
+  public final AttributeFactory getAttributeFactory() {
     return this.factory;
   }
   
   /** Returns a new iterator that iterates the attribute classes
    * in the same order they were added in.
    */
-  public Iterator<Class<? extends Attribute>> getAttributeClassesIterator() {
+  public final Iterator<Class<? extends Attribute>> getAttributeClassesIterator() {
     return Collections.unmodifiableSet(attributes.keySet()).iterator();
   }
   
@@ -177,16 +116,18 @@ public class AttributeSource {
    * This iterator may contain less entries that {@link #getAttributeClassesIterator},
    * if one instance implements more than one Attribute interface.
    */
-  public Iterator<AttributeImpl> getAttributeImplsIterator() {
+  public final Iterator<AttributeImpl> getAttributeImplsIterator() {
     final State initState = getCurrentState();
     if (initState != null) {
       return new Iterator<AttributeImpl>() {
         private State state = initState;
       
+        @Override
         public void remove() {
           throw new UnsupportedOperationException();
         }
         
+        @Override
         public AttributeImpl next() {
           if (state == null)
             throw new NoSuchElementException();
@@ -195,6 +136,7 @@ public class AttributeSource {
           return att;
         }
         
+        @Override
         public boolean hasNext() {
           return state != null;
         }
@@ -205,49 +147,44 @@ public class AttributeSource {
   }
   
   /** a cache that stores all interfaces for known implementation classes for performance (slow reflection) */
-  private static final WeakIdentityMap<Class<? extends AttributeImpl>,LinkedList<WeakReference<Class<? extends Attribute>>>> knownImplClasses =
-    WeakIdentityMap.newConcurrentHashMap();
-  
-  static LinkedList<WeakReference<Class<? extends Attribute>>> getAttributeInterfaces(final Class<? extends AttributeImpl> clazz) {
-    LinkedList<WeakReference<Class<? extends Attribute>>> foundInterfaces = knownImplClasses.get(clazz);
-    if (foundInterfaces == null) {
-      // we have the slight chance that another thread may do the same, but who cares?
-      foundInterfaces = new LinkedList<WeakReference<Class<? extends Attribute>>>();
+  private static final ClassValue<Class<? extends Attribute>[]> implInterfaces = new ClassValue<Class<? extends Attribute>[]>() {
+    @Override
+    protected Class<? extends Attribute>[] computeValue(Class<?> clazz) {
+      final Set<Class<? extends Attribute>> intfSet = new LinkedHashSet<>();
       // find all interfaces that this attribute instance implements
       // and that extend the Attribute interface
-      Class<?> actClazz = clazz;
       do {
-        for (Class<?> curInterface : actClazz.getInterfaces()) {
+        for (Class<?> curInterface : clazz.getInterfaces()) {
           if (curInterface != Attribute.class && Attribute.class.isAssignableFrom(curInterface)) {
-            foundInterfaces.add(new WeakReference<Class<? extends Attribute>>(curInterface.asSubclass(Attribute.class)));
+            intfSet.add(curInterface.asSubclass(Attribute.class));
           }
         }
-        actClazz = actClazz.getSuperclass();
-      } while (actClazz != null);
-      knownImplClasses.put(clazz, foundInterfaces);
+        clazz = clazz.getSuperclass();
+      } while (clazz != null);
+      @SuppressWarnings({"unchecked", "rawtypes"}) final Class<? extends Attribute>[] a =
+          intfSet.toArray(new Class[intfSet.size()]);
+      return a;
     }
-    return foundInterfaces;
+  };
+  
+  static Class<? extends Attribute>[] getAttributeInterfaces(final Class<? extends AttributeImpl> clazz) {
+    return implInterfaces.get(clazz);
   }
   
   /** <b>Expert:</b> Adds a custom AttributeImpl instance with one or more Attribute interfaces.
-   * <p><font color="red"><b>Please note:</b> It is not guaranteed, that <code>att</code> is added to
+   * <p><b>NOTE:</b> It is not guaranteed, that <code>att</code> is added to
    * the <code>AttributeSource</code>, because the provided attributes may already exist.
    * You should always retrieve the wanted attributes using {@link #getAttribute} after adding
    * with this method and cast to your class.
    * The recommended way to use custom implementations is using an {@link AttributeFactory}.
-   * </font></p>
+   * </p>
    */
-  public void addAttributeImpl(final AttributeImpl att) {
+  public final void addAttributeImpl(final AttributeImpl att) {
     final Class<? extends AttributeImpl> clazz = att.getClass();
     if (attributeImpls.containsKey(clazz)) return;
-    final LinkedList<WeakReference<Class<? extends Attribute>>> foundInterfaces =
-      getAttributeInterfaces(clazz);
     
     // add all interfaces of this AttributeImpl to the maps
-    for (WeakReference<Class<? extends Attribute>> curInterfaceRef : foundInterfaces) {
-      final Class<? extends Attribute> curInterface = curInterfaceRef.get();
-      assert (curInterface != null) :
-        "We have a strong reference on the class holding the interfaces, so they should never get evicted";
+    for (final Class<? extends Attribute> curInterface : getAttributeInterfaces(clazz)) {
       // Attribute is a superclass of this interface
       if (!attributes.containsKey(curInterface)) {
         // invalidate state to force recomputation in captureState()
@@ -264,7 +201,7 @@ public class AttributeSource {
    * already in this AttributeSource and returns it. Otherwise a
    * new instance is created, added to this AttributeSource and returned. 
    */
-  public <A extends Attribute> A addAttribute(Class<A> attClass) {
+  public final <T extends Attribute> T addAttribute(Class<T> attClass) {
     AttributeImpl attImpl = attributes.get(attClass);
     if (attImpl == null) {
       if (!(attClass.isInterface() && Attribute.class.isAssignableFrom(attClass))) {
@@ -279,7 +216,7 @@ public class AttributeSource {
   }
   
   /** Returns true, iff this AttributeSource has any attributes */
-  public boolean hasAttributes() {
+  public final boolean hasAttributes() {
     return !this.attributes.isEmpty();
   }
 
@@ -287,27 +224,25 @@ public class AttributeSource {
    * The caller must pass in a Class&lt;? extends Attribute&gt; value. 
    * Returns true, iff this AttributeSource contains the passed-in Attribute.
    */
-  public boolean hasAttribute(Class<? extends Attribute> attClass) {
+  public final boolean hasAttribute(Class<? extends Attribute> attClass) {
     return this.attributes.containsKey(attClass);
   }
 
   /**
-   * The caller must pass in a Class&lt;? extends Attribute&gt; value. 
    * Returns the instance of the passed in Attribute contained in this AttributeSource
+   * <p>
+   * The caller must pass in a Class&lt;? extends Attribute&gt; value. 
    * 
-   * @throws IllegalArgumentException if this AttributeSource does not contain the
-   *         Attribute. It is recommended to always use {@link #addAttribute} even in consumers
-   *         of TokenStreams, because you cannot know if a specific TokenStream really uses
-   *         a specific Attribute. {@link #addAttribute} will automatically make the attribute
-   *         available. If you want to only use the attribute, if it is available (to optimize
+   * @return instance of the passed in Attribute, or {@code null} if this AttributeSource 
+   *         does not contain the Attribute. It is recommended to always use 
+   *         {@link #addAttribute} even in consumers  of TokenStreams, because you cannot 
+   *         know if a specific TokenStream really uses a specific Attribute. 
+   *         {@link #addAttribute} will automatically make the attribute available. 
+   *         If you want to only use the attribute, if it is available (to optimize
    *         consuming), use {@link #hasAttribute}.
    */
-  public <A extends Attribute> A getAttribute(Class<A> attClass) {
-    AttributeImpl attImpl = attributes.get(attClass);
-    if (attImpl == null) {
-      throw new IllegalArgumentException("This AttributeSource does not have the attribute '" + attClass.getName() + "'.");
-    }
-    return attClass.cast(attImpl);
+  public final <T extends Attribute> T getAttribute(Class<T> attClass) {
+    return attClass.cast(attributes.get(attClass));
   }
     
   private State getCurrentState() {
@@ -330,19 +265,37 @@ public class AttributeSource {
    * Resets all Attributes in this AttributeSource by calling
    * {@link AttributeImpl#clear()} on each Attribute implementation.
    */
-  public void clearAttributes() {
+  public final void clearAttributes() {
     for (State state = getCurrentState(); state != null; state = state.next) {
       state.attribute.clear();
     }
   }
   
   /**
+   * Resets all Attributes in this AttributeSource by calling
+   * {@link AttributeImpl#end()} on each Attribute implementation.
+   */
+  public final void endAttributes() {
+    for (State state = getCurrentState(); state != null; state = state.next) {
+      state.attribute.end();
+    }
+  }
+
+  /**
+   * Removes all attributes and their implementations from this AttributeSource.
+   */
+  public final void removeAllAttributes() {
+    attributes.clear();
+    attributeImpls.clear();
+  }
+
+  /**
    * Captures the state of all Attributes. The return value can be passed to
    * {@link #restoreState} to restore the state of this or another AttributeSource.
    */
-  public State captureState() {
+  public final State captureState() {
     final State state = this.getCurrentState();
-    return (state == null) ? null : (State) state.clone();
+    return (state == null) ? null : state.clone();
   }
   
   /**
@@ -360,7 +313,7 @@ public class AttributeSource {
    * reset its value to the default, in which case the caller should first
    * call {@link TokenStream#clearAttributes()} on the targetStream.   
    */
-  public void restoreState(State state) {
+  public final void restoreState(State state) {
     if (state == null)  return;
     
     do {
@@ -420,30 +373,6 @@ public class AttributeSource {
   }
   
   /**
-   * Returns a string representation of the object. In general, the {@code toString} method
-   * returns a string that &quot;textually represents&quot; this object.
-   *
-   * <p><b>WARNING:</b> For backwards compatibility this method is implemented as
-   * in Lucene 2.9/3.0. In Lucene 4.0 this default implementation
-   * will be removed.
-   *
-   * <p>It is recommeneded to use {@link #reflectAsString} or {@link #reflectWith}
-   * to get a well-defined output of AttributeSource's internals.
-   */
-  // TODO: @deprecated remove this method in 4.0
-  @Override
-  public String toString() {
-    final StringBuilder sb = new StringBuilder().append('(');
-    if (hasAttributes()) {
-      for (State state = getCurrentState(); state != null; state = state.next) {
-        if (sb.length() > 1) sb.append(',');
-        sb.append(state.attribute.toString());
-      }
-    }
-    return sb.append(')').toString();
-  }
-  
-  /**
    * This method returns the current attribute values as a string in the following format
    * by calling the {@link #reflectWith(AttributeReflector)} method:
    * 
@@ -457,6 +386,7 @@ public class AttributeSource {
   public final String reflectAsString(final boolean prependAttClass) {
     final StringBuilder buffer = new StringBuilder();
     reflectWith(new AttributeReflector() {
+      @Override
       public void reflect(Class<? extends Attribute> attClass, String key, Object value) {
         if (buffer.length() > 0) {
           buffer.append(',');
@@ -492,13 +422,13 @@ public class AttributeSource {
    * You can also use it as a (non-performant) replacement for {@link #captureState}, if you need to look
    * into / modify the captured state.
    */
-  public AttributeSource cloneAttributes() {
+  public final AttributeSource cloneAttributes() {
     final AttributeSource clone = new AttributeSource(this.factory);
     
     if (hasAttributes()) {
       // first clone the impls
       for (State state = getCurrentState(); state != null; state = state.next) {
-        clone.attributeImpls.put(state.attribute.getClass(), (AttributeImpl) state.attribute.clone());
+        clone.attributeImpls.put(state.attribute.getClass(), state.attribute.clone());
       }
       
       // now the interfaces
@@ -529,4 +459,13 @@ public class AttributeSource {
     }
   }
 
+  /**
+   * Returns a string consisting of the class's simple name, the hex representation of the identity hash code,
+   * and the current reflection of all attributes.
+   * @see #reflectAsString(boolean)
+   */
+  @Override
+  public String toString() {
+    return getClass().getSimpleName() + '@' + Integer.toHexString(System.identityHashCode(this)) + " " + reflectAsString(false);
+  }
 }

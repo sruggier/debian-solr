@@ -1,5 +1,4 @@
-package org.apache.solr.search;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,8 +14,7 @@ package org.apache.solr.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
+package org.apache.solr.search;
 import org.apache.solr.SolrTestCaseJ4;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -49,7 +47,6 @@ public class SpatialFilterTest extends SolrTestCaseJ4 {
     assertU(adoc("id", "13", fieldName, "-89.9,-130"));
     assertU(commit());
   }
-
   
   @Test
   public void testPoints() throws Exception {
@@ -120,19 +117,19 @@ public class SpatialFilterTest extends SolrTestCaseJ4 {
     checkHits(fieldName, false, "43.517030,-96.789603", 110, 1, 17);
     
     
-	// Tests SOLR-2829
-	String fieldNameHome = "home_ll";
-	String fieldNameWork = "work_ll";
+    // Tests SOLR-2829
+    String fieldNameHome = "home_ll";
+    String fieldNameWork = "work_ll";
 
-	clearIndex();
-	assertU(adoc("id", "1", fieldNameHome, "52.67,7.30", fieldNameWork,"48.60,11.61"));
-	assertU(commit());
+    clearIndex();
+    assertU(adoc("id", "1", fieldNameHome, "52.67,7.30", fieldNameWork,"48.60,11.61"));
+    assertU(commit());
 
-	checkHits(fieldNameHome, "52.67,7.30", 1, 1);
-	checkHits(fieldNameWork, "48.60,11.61", 1, 1);
-	checkHits(fieldNameWork, "52.67,7.30", 1, 0);
-	checkHits(fieldNameHome, "48.60,11.61", 1, 0); 
-	  
+    checkHits(fieldNameHome, "52.67,7.30", 1, 1);
+    checkHits(fieldNameWork, "48.60,11.61", 1, 1);
+    checkHits(fieldNameWork, "52.67,7.30", 1, 0);
+    checkHits(fieldNameHome, "48.60,11.61", 1, 0);
+
   }
 
   private void checkHits(String fieldName, String pt, double distance, int count, int ... docIds) {
@@ -150,10 +147,29 @@ public class SpatialFilterTest extends SolrTestCaseJ4 {
     }
 
     String method = exact ? "geofilt" : "bbox";
+    int postFilterCount = DelegatingCollector.setLastDelegateCount;
 
-    assertQ(req("fl", "id", "q","*:*", "rows", "1000", "fq", "{!"+method+" sfield=" +fieldName +"}",
+    // throw in a random into the main query to prevent most cache hits
+    assertQ(req("fl", "id", "q","*:* OR foo_i:" + random().nextInt(100), "rows", "1000", "fq", "{!"+method+" sfield=" +fieldName +"}",
               "pt", pt, "d", String.valueOf(distance)),
               tests);
+    assertEquals(postFilterCount, DelegatingCollector.setLastDelegateCount);    // post filtering shouldn't be used
+    
+    // try uncached
+    assertQ(req("fl", "id", "q","*:* OR foo_i:" + random().nextInt(100), "rows", "1000", "fq", "{!"+method+" sfield=" +fieldName + " cache=false" + "}",
+        "pt", pt, "d", String.valueOf(distance)),
+        tests);
+    assertEquals(postFilterCount, DelegatingCollector.setLastDelegateCount);      // post filtering shouldn't be used
+
+    // try post filtered for fields that support it
+    if (fieldName.endsWith("ll")) {
+
+    assertQ(req("fl", "id", "q","*:* OR foo_i:" + random().nextInt(100)+100, "rows", "1000", "fq", "{!"+method+" sfield=" +fieldName + " cache=false cost=150" + "}",
+        "pt", pt, "d", String.valueOf(distance)),
+        tests);
+    assertEquals(postFilterCount + 1, DelegatingCollector.setLastDelegateCount);      // post filtering *should* have been used
+
+    }
   }
 
 
@@ -185,7 +201,7 @@ public class SpatialFilterTest extends SolrTestCaseJ4 {
     query = parser.parse();
     assertNotNull("Query is null", query);
     assertTrue(query.getClass() + " is not an instanceof "
-            + NumericRangeQuery.class,
-            query instanceof NumericRangeQuery);
+            + LegacyNumericRangeQuery.class,
+            query instanceof LegacyNumericRangeQuery);
     req.close();
   }*/

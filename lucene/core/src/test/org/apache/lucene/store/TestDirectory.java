@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,169 +14,124 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
+
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.Arrays;
 
 public class TestDirectory extends LuceneTestCase {
-
-  public void testDetectClose() throws Throwable {
-    Directory[] dirs = new Directory[] { new RAMDirectory(), new SimpleFSDirectory(TEMP_DIR), new NIOFSDirectory(TEMP_DIR) };
-    for (Directory dir : dirs) {
-      dir.close();
-      try {
-        dir.createOutput("test");
-        fail("did not hit expected exception");
-      } catch (AlreadyClosedException ace) {
-      }
-    }
-  }
-
 
   // Test that different instances of FSDirectory can coexist on the same
   // path, can read, write, and lock files.
   public void testDirectInstantiation() throws Exception {
-    File path = _TestUtil.getTempDir("testDirectInstantiation");
+    final Path path = createTempDir("testDirectInstantiation");
+    
+    final byte[] largeBuffer = new byte[random().nextInt(256*1024)], largeReadBuffer = new byte[largeBuffer.length];
+    for (int i = 0; i < largeBuffer.length; i++) {
+      largeBuffer[i] = (byte) i; // automatically loops with modulo
+    }
 
-    int sz = 3;
-    Directory[] dirs = new Directory[sz];
+    final FSDirectory[] dirs = new FSDirectory[] {
+      new SimpleFSDirectory(path),
+      new NIOFSDirectory(path),
+      new MMapDirectory(path)
+    };
 
-    dirs[0] = new SimpleFSDirectory(path, null);
-    dirs[1] = new NIOFSDirectory(path, null);
-    dirs[2] = new MMapDirectory(path, null);
-
-    for (int i=0; i<sz; i++) {
-      Directory dir = dirs[i];
+    for (int i=0; i<dirs.length; i++) {
+      FSDirectory dir = dirs[i];
       dir.ensureOpen();
       String fname = "foo." + i;
       String lockname = "foo" + i + ".lck";
-      IndexOutput out = dir.createOutput(fname);
+      IndexOutput out = dir.createOutput(fname, newIOContext(random()));
       out.writeByte((byte)i);
+      out.writeBytes(largeBuffer, largeBuffer.length);
       out.close();
 
-      for (int j=0; j<sz; j++) {
-        Directory d2 = dirs[j];
+      for (int j=0; j<dirs.length; j++) {
+        FSDirectory d2 = dirs[j];
         d2.ensureOpen();
-        assertTrue(d2.fileExists(fname));
-        assertEquals(1, d2.fileLength(fname));
+        assertTrue(slowFileExists(d2, fname));
+        assertEquals(1 + largeBuffer.length, d2.fileLength(fname));
 
-        // don't test read on MMapDirectory, since it can't really be
-        // closed and will cause a failure to delete the file.
-        if (d2 instanceof MMapDirectory) continue;
+        // don't do read tests if unmapping is not supported!
+        if (d2 instanceof MMapDirectory && !((MMapDirectory) d2).getUseUnmap())
+          continue;
         
-        IndexInput input = d2.openInput(fname);
+        IndexInput input = d2.openInput(fname, newIOContext(random()));
         assertEquals((byte)i, input.readByte());
+        // read array with buffering enabled
+        Arrays.fill(largeReadBuffer, (byte)0);
+        input.readBytes(largeReadBuffer, 0, largeReadBuffer.length, true);
+        assertArrayEquals(largeBuffer, largeReadBuffer);
+        // read again without using buffer
+        input.seek(1L);
+        Arrays.fill(largeReadBuffer, (byte)0);
+        input.readBytes(largeReadBuffer, 0, largeReadBuffer.length, false);
+        assertArrayEquals(largeBuffer, largeReadBuffer);        
         input.close();
       }
 
       // delete with a different dir
-      dirs[(i+1)%sz].deleteFile(fname);
+      dirs[(i+1)%dirs.length].deleteFile(fname);
 
-      for (int j=0; j<sz; j++) {
-        Directory d2 = dirs[j];
-        assertFalse(d2.fileExists(fname));
+      for (int j=0; j<dirs.length; j++) {
+        FSDirectory d2 = dirs[j];
+        assertFalse(slowFileExists(d2, fname));
       }
 
-      Lock lock = dir.makeLock(lockname);
-      assertTrue(lock.obtain());
+      Lock lock = dir.obtainLock(lockname);
 
-      for (int j=0; j<sz; j++) {
-        Directory d2 = dirs[j];
-        Lock lock2 = d2.makeLock(lockname);
-        try {
-          assertFalse(lock2.obtain(1));
-        } catch (LockObtainFailedException e) {
-          // OK
-        }
+      for (Directory other : dirs) {
+        expectThrows(LockObtainFailedException.class, () -> {
+          other.obtainLock(lockname);
+        });
       }
 
-      lock.release();
+      lock.close();
       
       // now lock with different dir
-      lock = dirs[(i+1)%sz].makeLock(lockname);
-      assertTrue(lock.obtain());
-      lock.release();
+      lock = dirs[(i+1)%dirs.length].obtainLock(lockname);
+      lock.close();
     }
 
-    for (int i=0; i<sz; i++) {
-      Directory dir = dirs[i];
+    for (int i=0; i<dirs.length; i++) {
+      FSDirectory dir = dirs[i];
       dir.ensureOpen();
       dir.close();
       assertFalse(dir.isOpen);
     }
-    
-    _TestUtil.rmDir(path);
-  }
-
-  // LUCENE-1464
-  public void testDontCreate() throws Throwable {
-    File path = new File(TEMP_DIR, "doesnotexist");
-    try {
-      assertTrue(!path.exists());
-      Directory dir = new SimpleFSDirectory(path, null);
-      assertTrue(!path.exists());
-      dir.close();
-    } finally {
-      _TestUtil.rmDir(path);
-    }
   }
 
   // LUCENE-1468
-  public void testRAMDirectoryFilter() throws IOException {
-    checkDirectoryFilter(new RAMDirectory());
-  }
-
-  // LUCENE-1468
-  public void testFSDirectoryFilter() throws IOException {
-    checkDirectoryFilter(newFSDirectory(_TestUtil.getTempDir("test")));
-  }
-
-  // LUCENE-1468
-  private void checkDirectoryFilter(Directory dir) throws IOException {
-    String name = "file";
-    try {
-      dir.createOutput(name).close();
-      assertTrue(dir.fileExists(name));
-      assertTrue(Arrays.asList(dir.listAll()).contains(name));
-    } finally {
-      dir.close();
-    }
-  }
-
-  // LUCENE-1468
+  @SuppressWarnings("resource")
   public void testCopySubdir() throws Throwable {
-    File path = _TestUtil.getTempDir("testsubdir");
-    try {
-      path.mkdirs();
-      new File(path, "subdir").mkdirs();
-      Directory fsDir = new SimpleFSDirectory(path, null);
-      assertEquals(0, new RAMDirectory(fsDir).listAll().length);
-    } finally {
-      _TestUtil.rmDir(path);
-    }
+    Path path = createTempDir("testsubdir");
+    Files.createDirectory(path.resolve("subdir"));
+    FSDirectory fsDir = new SimpleFSDirectory(path);
+    RAMDirectory ramDir = new RAMDirectory(fsDir, newIOContext(random()));
+    List<String> files = Arrays.asList(ramDir.listAll());
+    assertFalse(files.contains("subdir"));
   }
 
   // LUCENE-1468
   public void testNotDirectory() throws Throwable {
-    File path = _TestUtil.getTempDir("testnotdir");
-    Directory fsDir = new SimpleFSDirectory(path, null);
+    Path path = createTempDir("testnotdir");
+    Directory fsDir = new SimpleFSDirectory(path);
     try {
-      IndexOutput out = fsDir.createOutput("afile");
+      IndexOutput out = fsDir.createOutput("afile", newIOContext(random()));
       out.close();
-      assertTrue(fsDir.fileExists("afile"));
-      try {
-        new SimpleFSDirectory(new File(path, "afile"), null);
-        fail("did not hit expected exception");
-      } catch (NoSuchDirectoryException nsde) {
-        // Expected
-      }
+      assertTrue(slowFileExists(fsDir, "afile"));
+      expectThrows(IOException.class, () -> {
+        new SimpleFSDirectory(path.resolve("afile"));
+      });
     } finally {
       fsDir.close();
-      _TestUtil.rmDir(path);
     }
   }
 }

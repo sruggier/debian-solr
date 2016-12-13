@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,24 +14,29 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
 
-import java.io.IOException;
+
 import java.io.FileNotFoundException;
-import java.io.Serializable;
+import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.lucene.index.IndexFileNameFilter;
-import org.apache.lucene.util.ThreadInterruptedException;
+import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 
 /**
  * A memory-resident {@link Directory} implementation.  Locking
- * implementation is by default the {@link SingleInstanceLockFactory}
- * but can be changed with {@link #setLockFactory}.
+ * implementation is by default the {@link SingleInstanceLockFactory}.
  * 
  * <p><b>Warning:</b> This class is not intended to work with huge
  * indexes. Everything beyond several hundred megabytes will waste
@@ -47,24 +50,21 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * implementation working directly on the file system cache of the
  * operating system, so copying data to Java heap space is not useful.
  */
-public class RAMDirectory extends Directory implements Serializable {
-
-  private static final long serialVersionUID = 1l;
-
-  protected final Map<String,RAMFile> fileMap = new ConcurrentHashMap<String,RAMFile>();
+public class RAMDirectory extends BaseDirectory implements Accountable {
+  protected final Map<String,RAMFile> fileMap = new ConcurrentHashMap<>();
   protected final AtomicLong sizeInBytes = new AtomicLong();
   
-  // *****
-  // Lock acquisition sequence:  RAMDirectory, then RAMFile
-  // *****
+  /** Used to generate temp file names in {@link #createTempOutput}. */
+  private final AtomicLong nextTempFileCounter = new AtomicLong();
 
   /** Constructs an empty {@link Directory}. */
   public RAMDirectory() {
-    try {
-      setLockFactory(new SingleInstanceLockFactory());
-    } catch (IOException e) {
-      // Cannot happen
-    }
+    this(new SingleInstanceLockFactory());
+  }
+
+  /** Constructs an empty {@link Directory} with the given {@link LockFactory}. */
+  public RAMDirectory(LockFactory lockFactory) {
+    super(lockFactory);
   }
 
   /**
@@ -93,17 +93,15 @@ public class RAMDirectory extends Directory implements Serializable {
    * @param dir a <code>Directory</code> value
    * @exception IOException if an error occurs
    */
-  public RAMDirectory(Directory dir) throws IOException {
-    this(dir, false);
+  public RAMDirectory(FSDirectory dir, IOContext context) throws IOException {
+    this(dir, false, context);
   }
   
-  private RAMDirectory(Directory dir, boolean closeDir) throws IOException {
+  private RAMDirectory(FSDirectory dir, boolean closeDir, IOContext context) throws IOException {
     this();
-
-    IndexFileNameFilter filter = IndexFileNameFilter.getFilter();
     for (String file : dir.listAll()) {
-      if (filter.accept(null, file)) {
-        dir.copy(this, file, file);
+      if (!Files.isDirectory(dir.getDirectory().resolve(file))) {
+        copyFrom(dir, file, file, context);
       }
     }
     if (closeDir) {
@@ -114,58 +112,26 @@ public class RAMDirectory extends Directory implements Serializable {
   @Override
   public final String[] listAll() {
     ensureOpen();
+    // NOTE: this returns a "weakly consistent view". Unless we change Dir API, keep this,
+    // and do not synchronize or anything stronger. it's great for testing!
     // NOTE: fileMap.keySet().toArray(new String[0]) is broken in non Sun JDKs,
     // and the code below is resilient to map changes during the array population.
+    // NOTE: don't replace this with return names.toArray(new String[names.size()]);
+    // or some files could be null at the end of the array if files are being deleted
+    // concurrently
     Set<String> fileNames = fileMap.keySet();
-    List<String> names = new ArrayList<String>(fileNames.size());
-    for (String name : fileNames) names.add(name);
-    return names.toArray(new String[names.size()]);
+    List<String> names = new ArrayList<>(fileNames.size());
+    for (String name : fileNames) {
+      names.add(name);
+    }
+    String[] namesArray = names.toArray(new String[names.size()]);
+    Arrays.sort(namesArray);
+    return namesArray;
   }
 
-  /** Returns true iff the named file exists in this directory. */
-  @Override
-  public final boolean fileExists(String name) {
+  public final boolean fileNameExists(String name) {
     ensureOpen();
     return fileMap.containsKey(name);
-  }
-
-  /** Returns the time the named file was last modified.
-   * @throws IOException if the file does not exist
-   */
-  @Override
-  public final long fileModified(String name) throws IOException {
-    ensureOpen();
-    RAMFile file = fileMap.get(name);
-    if (file == null) {
-      throw new FileNotFoundException(name);
-    }
-    return file.getLastModified();
-  }
-
-  /** Set the modified time of an existing file to now.
-   * @throws IOException if the file does not exist
-   *  @deprecated Lucene never uses this API; it will be
-   *  removed in 4.0. */
-  @Override
-  @Deprecated
-  public void touchFile(String name) throws IOException {
-    ensureOpen();
-    RAMFile file = fileMap.get(name);
-    if (file == null) {
-      throw new FileNotFoundException(name);
-    }
-    
-    long ts2, ts1 = System.currentTimeMillis();
-    do {
-      try {
-        Thread.sleep(0, 1);
-      } catch (InterruptedException ie) {
-        throw new ThreadInterruptedException(ie);
-      }
-      ts2 = System.currentTimeMillis();
-    } while(ts1 == ts2);
-    
-    file.setLastModified(ts2);
   }
 
   /** Returns the length in bytes of a file in the directory.
@@ -185,14 +151,17 @@ public class RAMDirectory extends Directory implements Serializable {
    * Return total size in bytes of all files in this directory. This is
    * currently quantized to RAMOutputStream.BUFFER_SIZE.
    */
-  public final long sizeInBytes() {
+  @Override
+  public final long ramBytesUsed() {
     ensureOpen();
     return sizeInBytes.get();
   }
   
-  /** Removes an existing file in the directory.
-   * @throws IOException if the file does not exist
-   */
+  @Override
+  public Collection<Accountable> getChildResources() {
+    return Accountables.namedAccountables("file", fileMap);
+  }
+  
   @Override
   public void deleteFile(String name) throws IOException {
     ensureOpen();
@@ -205,18 +174,30 @@ public class RAMDirectory extends Directory implements Serializable {
     }
   }
 
-  /** Creates a new, empty file in the directory with the given name. Returns a stream writing this file. */
   @Override
-  public IndexOutput createOutput(String name) throws IOException {
+  public IndexOutput createOutput(String name, IOContext context) throws IOException {
     ensureOpen();
     RAMFile file = newRAMFile();
-    RAMFile existing = fileMap.remove(name);
-    if (existing != null) {
-      sizeInBytes.addAndGet(-existing.sizeInBytes);
-      existing.directory = null;
+    if (fileMap.putIfAbsent(name, file) != null) {
+      throw new FileAlreadyExistsException(name);
     }
-    fileMap.put(name, file);
-    return new RAMOutputStream(file);
+    return new RAMOutputStream(name, file, true);
+  }
+
+  @Override
+  public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
+    ensureOpen();
+
+    // Make the file first...
+    RAMFile file = newRAMFile();
+
+    // ... then try to find a unique name for it:
+    while (true) {
+      String name = IndexFileNames.segmentFileName(prefix, suffix + "_" + Long.toString(nextTempFileCounter.getAndIncrement(), Character.MAX_RADIX), "tmp");
+      if (fileMap.putIfAbsent(name, file) == null) {
+        return new RAMOutputStream(name, file, true);
+      }
+    }
   }
 
   /**
@@ -228,9 +209,34 @@ public class RAMDirectory extends Directory implements Serializable {
     return new RAMFile(this);
   }
 
+  @Override
+  public void sync(Collection<String> names) throws IOException {
+  }
+
+  @Override
+  public void rename(String source, String dest) throws IOException {
+    ensureOpen();
+    RAMFile file = fileMap.get(source);
+    if (file == null) {
+      throw new FileNotFoundException(source);
+    }
+    if (fileMap.putIfAbsent(dest, file) != null) {
+      throw new FileAlreadyExistsException(dest);
+    }
+    if (!fileMap.remove(source, file)) {
+      throw new IllegalStateException("file was unexpectedly replaced: " + source);
+    }
+    fileMap.remove(source);
+  }
+
+  @Override
+  public void syncMetaData() throws IOException {
+    // we are by definition not durable!
+  }
+  
   /** Returns a stream reading an existing file. */
   @Override
-  public IndexInput openInput(String name) throws IOException {
+  public IndexInput openInput(String name, IOContext context) throws IOException {
     ensureOpen();
     RAMFile file = fileMap.get(name);
     if (file == null) {

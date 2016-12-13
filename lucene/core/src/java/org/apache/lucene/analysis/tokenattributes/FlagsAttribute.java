@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis.tokenattributes;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,28 +14,31 @@ package org.apache.lucene.analysis.tokenattributes;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis.tokenattributes;
+
 
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.util.Attribute;
 
 /**
  * This attribute can be used to pass different flags down the {@link Tokenizer} chain,
- * eg from one TokenFilter to another one. 
+ * e.g. from one TokenFilter to another one. 
+ * <p>
+ * This is completely distinct from {@link TypeAttribute}, although they do share similar purposes.
+ * The flags can be used to encode information about the token for use by other 
+ * {@link org.apache.lucene.analysis.TokenFilter}s.
  * @lucene.experimental While we think this is here to stay, we may want to change it to be a long.
  */
 public interface FlagsAttribute extends Attribute {
   /**
-   * <p/>
-   *
-   * Get the bitset for any bits that have been set.  This is completely distinct from {@link TypeAttribute#type()}, although they do share similar purposes.
-   * The flags can be used to encode information about the token for use by other {@link org.apache.lucene.analysis.TokenFilter}s.
-   *
-   *
+   * Get the bitset for any bits that have been set.  
    * @return The bits
+   * @see #getFlags()
    */
   public int getFlags();
 
   /**
+   * Set the flags to a new bitset.
    * @see #getFlags()
    */
   public void setFlags(int flags);  

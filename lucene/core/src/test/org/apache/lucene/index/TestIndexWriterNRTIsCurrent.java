@@ -1,21 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.lucene.index;
 
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements. See the NOTICE file distributed with this
- * work for additional information regarding copyright ownership. The ASF
- * licenses this file to You under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- * 
- * http://www.apache.org/licenses/LICENSE-2.0
- * 
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- * License for the specific language governing permissions and limitations under
- * the License.
- */
 import java.io.IOException;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
@@ -23,31 +23,28 @@ import java.util.concurrent.CountDownLatch;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.TextField;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.LockObtainFailedException;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
 
 public class TestIndexWriterNRTIsCurrent extends LuceneTestCase {
 
   public static class ReaderHolder {
-    volatile IndexReader reader;
+    volatile DirectoryReader reader;
     volatile boolean stop = false;
   }
 
-  public void testIsCurrentWithThreads() throws CorruptIndexException,
-      LockObtainFailedException, IOException, InterruptedException {
+  public void testIsCurrentWithThreads() throws
+      IOException, InterruptedException {
     Directory dir = newDirectory();
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT,
-        new MockAnalyzer(random));
+    IndexWriterConfig conf = newIndexWriterConfig(new MockAnalyzer(random()));
     IndexWriter writer = new IndexWriter(dir, conf);
-    if (VERBOSE) {
-      writer.setInfoStream(System.out);
-    }
     ReaderHolder holder = new ReaderHolder();
     ReaderThread[] threads = new ReaderThread[atLeast(3)];
     final CountDownLatch latch = new CountDownLatch(1);
     WriterThread writerThread = new WriterThread(holder, writer,
-        atLeast(500), random, latch);
+        atLeast(500), random(), latch);
     for (int i = 0; i < threads.length; i++) {
       threads[i] = new ReaderThread(holder, latch);
       threads[i].start();
@@ -75,7 +72,6 @@ public class TestIndexWriterNRTIsCurrent extends LuceneTestCase {
     private final ReaderHolder holder;
     private final IndexWriter writer;
     private final int numOps;
-    private final Random random;
     private boolean countdown = true;
     private final CountDownLatch latch;
     Throwable failed;
@@ -86,27 +82,28 @@ public class TestIndexWriterNRTIsCurrent extends LuceneTestCase {
       this.holder = holder;
       this.writer = writer;
       this.numOps = numOps;
-      this.random = random;
       this.latch = latch;
     }
 
+    @Override
     public void run() {
-      IndexReader currentReader = null;
+      DirectoryReader currentReader = null;
+      Random random = LuceneTestCase.random();
       try {
         Document doc = new Document();
-        doc.add(new Field("id", "1", Field.Store.NO, Field.Index.ANALYZED));
+        doc.add(new TextField("id", "1", Field.Store.NO));
         writer.addDocument(doc);
-        holder.reader = currentReader = writer.getReader(true);
+        holder.reader = currentReader = writer.getReader();
         Term term = new Term("id");
         for (int i = 0; i < numOps && !holder.stop; i++) {
           float nextOp = random.nextFloat();
           if (nextOp < 0.3) {
-            term.set("id", "1");
+            term.set("id", new BytesRef("1"));
             writer.updateDocument(term, doc);
           } else if (nextOp < 0.5) {
             writer.addDocument(doc);
           } else {
-            term.set("id", "1");
+            term.set("id", new BytesRef("1"));
             writer.deleteDocuments(term);
           }
           if (holder.reader != currentReader) {
@@ -118,7 +115,7 @@ public class TestIndexWriterNRTIsCurrent extends LuceneTestCase {
           }
           if (random.nextBoolean()) {
             writer.commit();
-            final IndexReader newReader = IndexReader
+            final DirectoryReader newReader = DirectoryReader
                 .openIfChanged(currentReader);
             if (newReader != null) { 
               currentReader.decRef();
@@ -161,6 +158,7 @@ public class TestIndexWriterNRTIsCurrent extends LuceneTestCase {
       this.latch = latch;
     }
 
+    @Override
     public void run() {
       try {
         latch.await();
@@ -168,7 +166,7 @@ public class TestIndexWriterNRTIsCurrent extends LuceneTestCase {
         failed = e;
         return;
       }
-      IndexReader reader;
+      DirectoryReader reader;
       while ((reader = holder.reader) != null) {
         if (reader.tryIncRef()) {
           try {
@@ -192,7 +190,6 @@ public class TestIndexWriterNRTIsCurrent extends LuceneTestCase {
               if (failed == null) {
                 failed = e;
               }
-              return;
             }
           }
         }

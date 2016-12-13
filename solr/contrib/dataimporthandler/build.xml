@@ -18,14 +18,15 @@
  -->
 
 <project name="solr-dataimporthandler" default="default">
-	
+  
   <description>
     Data Import Handler
   </description>
 
-  <!-- the tests have some parallel problems: writability to single copy of dataimport.properties -->
-  <property name="tests.threadspercpu" value="0"/>
-
   <import file="../contrib-build.xml"/>
 
+  <path id="test.classpath">
+    <path refid="solr.test.base.classpath"/>
+    <fileset dir="${test.lib.dir}" includes="*.jar"/>
+  </path>
 </project>

@@ -1,5 +1,4 @@
-package org.apache.solr.common.luke;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,23 +14,25 @@ package org.apache.solr.common.luke;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
+package org.apache.solr.common.luke;
 /**
- * @version $Id: AdminHandlers.java 608150 2008-01-02 17:15:30Z ryan $
+ *
  * @since solr 1.3
  */
 public enum FieldFlag {
   INDEXED('I', "Indexed"), 
   TOKENIZED('T', "Tokenized"), 
   STORED('S', "Stored"), 
+  DOC_VALUES('D', "DocValues"),
   MULTI_VALUED('M', "Multivalued"),
   TERM_VECTOR_STORED('V', "TermVector Stored"), 
   TERM_VECTOR_OFFSET('o', "Store Offset With TermVector"),
   TERM_VECTOR_POSITION('p', "Store Position With TermVector"),
+  TERM_VECTOR_PAYLOADS('y', "Store Payloads With TermVector"),
   OMIT_NORMS('O', "Omit Norms"), 
   OMIT_TF('F', "Omit Term Frequencies & Positions"), 
   OMIT_POSITIONS('P', "Omit Positions"),
+  STORE_OFFSETS_WITH_POSITIONS('H', "Store Offsets with Positions"),
   LAZY('L', "Lazy"), 
   BINARY('B', "Binary"), 
   SORT_MISSING_FIRST('f', "Sort Missing First"), 

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,18 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.request;
 
+import org.apache.solr.common.util.SuppressForbidden;
 import org.apache.solr.search.SolrIndexSearcher;
+import org.apache.solr.util.RTimerTree;
 import org.apache.solr.util.RefCounted;
 import org.apache.solr.schema.IndexSchema;
-import org.apache.solr.common.SolrException;
-import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.ContentStream;
 import org.apache.solr.core.SolrCore;
 
+import java.io.Closeable;
+import java.security.Principal;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -40,167 +41,72 @@ import java.util.HashMap;
  * </p>
  *
  *
- * @version $Id$
+ *
  */
-public abstract class SolrQueryRequestBase implements SolrQueryRequest {
-  /**
-   * @deprecated Use org.apache.solr.common.params.CommonParams
-   */
-  @Deprecated
-  public static final String QUERY_NAME="q";
-  /**
-   * @deprecated Use org.apache.solr.common.params.CommonParams
-   */
-  @Deprecated
-  public static final String START_NAME="start";
-  /**
-   * @deprecated Use org.apache.solr.common.params.CommonParams
-   */
-  @Deprecated
-  public static final String ROWS_NAME="rows";
-  /**
-   * @deprecated Use org.apache.solr.common.params.CommonParams
-   */
-  @Deprecated
-  public static final String XSL_NAME="xsl";
-  /**
-   * @deprecated Use org.apache.solr.common.params.CommonParams
-   */
-  @Deprecated
-  public static final String QUERYTYPE_NAME="qt";
-
+public abstract class SolrQueryRequestBase implements SolrQueryRequest, Closeable {
   protected final SolrCore core;
   protected final SolrParams origParams;
+  protected volatile IndexSchema schema;
   protected SolrParams params;
   protected Map<Object,Object> context;
   protected Iterable<ContentStream> streams;
+  protected Map<String,Object> json;
 
-  public SolrQueryRequestBase(SolrCore core, SolrParams params) {
+  private final RTimerTree requestTimer;
+  protected final long startTime;
+
+  @SuppressForbidden(reason = "Need currentTimeMillis to get start time for request (to be used for stats/debugging)")
+  public SolrQueryRequestBase(SolrCore core, SolrParams params, RTimerTree requestTimer) {
     this.core = core;
+    this.schema = null == core ? null : core.getLatestSchema();
     this.params = this.origParams = params;
+    this.requestTimer = requestTimer;
+    this.startTime = System.currentTimeMillis();
   }
 
+  public SolrQueryRequestBase(SolrCore core, SolrParams params) {
+    this(core, params, new RTimerTree());
+  }
+
+  @Override
   public Map<Object,Object> getContext() {
     // SolrQueryRequest as a whole isn't thread safe, and this isn't either.
-    if (context==null) context = new HashMap<Object,Object>();
+    if (context==null) context = new HashMap<>();
     return context;
   }
 
+  @Override
   public SolrParams getParams() {
     return params;
   }
 
+  @Override
   public SolrParams getOriginalParams() {
     return origParams;
   }
 
+  @Override
   public void setParams(SolrParams params) {
     this.params = params;
   }
 
-  /**
-   * @deprecated Use {@link #getParams()} instead.
-   */
-  @Deprecated
-  public String getParam(String name) {
-    return params.get(name);
-  }
 
-  /**
-   * @deprecated Use {@link #getParams()} instead.
-   */
-  @Deprecated
-  public String[] getParams(String name) {
-    return params.getParams(name);
-  }
-
-  /**
-   * @deprecated use getParams().required().getInt( name ) instead
-   */
-  @Deprecated
-  public int getIntParam(String name) {
-    String s = getParam(name);
-    if (s==null) {
-      throw new SolrException( SolrException.ErrorCode.SERVER_ERROR,"Missing required parameter '"+name+"' from " + this);
-    }
-    return Integer.parseInt(s);
-  }
-
-  /**
-   * @deprecated use getParams().required().getInt( name ) instead
-   */
-  @Deprecated
-  public int getIntParam(String name, int defval) {
-    String s = getParam(name);
-    return s==null ? defval : Integer.parseInt(s);
-  }
-
-  /**
-   * @deprecated use getParams().required().getParam( name ) instead
-   */
-  @Deprecated
-  public String getStrParam(String name) {
-    String s = getParam(name);
-    if (s==null) {
-      throw new SolrException( SolrException.ErrorCode.SERVER_ERROR,"Missing required parameter '"+name+"' from " + this);
-    }
-    return s;
-  }
-
-  /**
-   * @deprecated use getParams().required().getParam( name ) instead
-   */
-  @Deprecated
-  public String getStrParam(String name, String defval) {
-    String s = getParam(name);
-    return s==null ? defval : s;
-  }
-
-  /**
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#Q} instead.
-   */
-  @Deprecated
-  public String getQueryString() {
-    return params.get(CommonParams.Q);
-  }
-
-  /**
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#QT} instead.
-   */
-  @Deprecated
-  public String getQueryType() {
-    return params.get(CommonParams.QT);
-  }
-
-  /**
-   * starting position in matches to return to client
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#START} instead.
-   */
-  @Deprecated
-  public int getStart() {
-    return params.getInt(CommonParams.START, 0);
-  }
-
-  /**
-   * number of matching documents to return
-   * @deprecated Use {@link #getParams()} and {@link CommonParams#ROWS} instead.
-   */
-  @Deprecated
-  public int getLimit() {
-    return params.getInt(CommonParams.ROWS, 10);
-  }
-
-
-  protected final long startTime=System.currentTimeMillis();
   // Get the start time of this request in milliseconds
+  @Override
   public long getStartTime() {
     return startTime;
   }
 
+  @Override
+  public RTimerTree getRequestTimer () {
+    return requestTimer;
+  }
+
   // The index searcher associated with this request
   protected RefCounted<SolrIndexSearcher> searcherHolder;
+  @Override
   public SolrIndexSearcher getSearcher() {
-    if(core == null) return null;//a request for a core admin will no have a core
+    if(core == null) return null;//a request for a core admin will not have a core
     // should this reach out and get a searcher from the core singleton, or
     // should the core populate one in a factory method to create requests?
     // or there could be a setSearcher() method that Solr calls
@@ -213,20 +119,28 @@ public abstract class SolrQueryRequestBase implements SolrQueryRequest {
   }
 
   // The solr core (coordinator, etc) associated with this request
+  @Override
   public SolrCore getCore() {
     return core;
   }
 
   // The index schema associated with this request
+  @Override
   public IndexSchema getSchema() {
     //a request for a core admin will no have a core
-    return core == null? null: core.getSchema();
+    return schema;
+  }
+
+  @Override
+  public void updateSchemaToLatest() {
+    schema = core.getLatestSchema();
   }
 
   /**
    * Frees resources associated with this request, this method <b>must</b>
    * be called when the object is no longer in use.
    */
+  @Override
   public void close() {
     if (searcherHolder!=null) {
       searcherHolder.decref();
@@ -236,6 +150,7 @@ public abstract class SolrQueryRequestBase implements SolrQueryRequest {
 
   /** A Collection of ContentStreams passed to the request
    */
+  @Override
   public Iterable<ContentStream> getContentStreams() {
     return streams; 
   }
@@ -244,6 +159,7 @@ public abstract class SolrQueryRequestBase implements SolrQueryRequest {
     streams = s; 
   }
 
+  @Override
   public String getParamString() {
     return origParams.toString();
   }
@@ -253,4 +169,18 @@ public abstract class SolrQueryRequestBase implements SolrQueryRequest {
     return this.getClass().getSimpleName() + '{' + params + '}';
   }
 
+  @Override
+  public Map<String, Object> getJSON() {
+    return json;
+  }
+
+  @Override
+  public void setJSON(Map<String, Object> json) {
+    this.json = json;
+  }
+
+  @Override
+  public Principal getUserPrincipal() {
+    return null;
+  }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,12 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.highlight;
 
 import java.util.HashMap;
 
 import org.apache.solr.SolrTestCaseJ4;
+import org.apache.solr.handler.component.HighlightComponent;
 import org.apache.solr.util.TestHarness;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -33,7 +33,7 @@ public class FastVectorHighlighterTest extends SolrTestCaseJ4 {
   
   @Test
   public void testConfig(){
-    SolrHighlighter highlighter = h.getCore().getHighlighter();
+    DefaultSolrHighlighter highlighter = (DefaultSolrHighlighter) HighlightComponent.getHighlighter(h.getCore());
 
     // Make sure we loaded one fragListBuilder
     SolrFragListBuilder solrFlbNull = highlighter.fragListBuilders.get( null );
@@ -66,7 +66,7 @@ public class FastVectorHighlighterTest extends SolrTestCaseJ4 {
 
   @Test
   public void test() {
-    HashMap<String,String> args = new HashMap<String,String>();
+    HashMap<String,String> args = new HashMap<>();
     args.put("hl", "true");
     args.put("hl.fl", "tv_text");
     args.put("hl.snippets", "2");

@@ -1,6 +1,4 @@
-package org.apache.lucene.analysis;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,58 +14,156 @@ package org.apache.lucene.analysis;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.analysis;
 
-import org.apache.lucene.util.NumericUtils;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.LegacyNumericUtils;
+import org.apache.lucene.analysis.LegacyNumericTokenStream.LegacyNumericTermAttributeImpl;
+import org.apache.lucene.analysis.tokenattributes.TermToBytesRefAttribute;
+import org.apache.lucene.analysis.tokenattributes.TestCharTermAttributeImpl;
 import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttributeImpl;
 
+@Deprecated
 public class TestNumericTokenStream extends BaseTokenStreamTestCase {
 
-  static final long lvalue = 4573245871874382L;
-  static final int ivalue = 123456;
+  final long lvalue = random().nextLong();
+  final int ivalue = random().nextInt();
 
   public void testLongStream() throws Exception {
-    final NumericTokenStream stream=new NumericTokenStream().setLongValue(lvalue);
-    // use getAttribute to test if attributes really exist, if not an IAE will be throwed
-    final CharTermAttribute termAtt = stream.getAttribute(CharTermAttribute.class);
+    @SuppressWarnings("resource")
+    final LegacyNumericTokenStream stream=new LegacyNumericTokenStream().setLongValue(lvalue);
+    final TermToBytesRefAttribute bytesAtt = stream.getAttribute(TermToBytesRefAttribute.class);
+    assertNotNull(bytesAtt);
     final TypeAttribute typeAtt = stream.getAttribute(TypeAttribute.class);
-    for (int shift=0; shift<64; shift+=NumericUtils.PRECISION_STEP_DEFAULT) {
+    assertNotNull(typeAtt);
+    final LegacyNumericTokenStream.LegacyNumericTermAttribute numericAtt = stream.getAttribute(LegacyNumericTokenStream.LegacyNumericTermAttribute.class);
+    assertNotNull(numericAtt);
+    stream.reset();
+    assertEquals(64, numericAtt.getValueSize());
+    for (int shift=0; shift<64; shift+= LegacyNumericUtils.PRECISION_STEP_DEFAULT) {
       assertTrue("New token is available", stream.incrementToken());
-      assertEquals("Term is correctly encoded", NumericUtils.longToPrefixCoded(lvalue, shift), termAtt.toString());
-      assertEquals("Type correct", (shift == 0) ? NumericTokenStream.TOKEN_TYPE_FULL_PREC : NumericTokenStream.TOKEN_TYPE_LOWER_PREC, typeAtt.type());
+      assertEquals("Shift value wrong", shift, numericAtt.getShift());
+      assertEquals("Term is incorrectly encoded", lvalue & ~((1L << shift) - 1L), LegacyNumericUtils.prefixCodedToLong(bytesAtt.getBytesRef()));
+      assertEquals("Term raw value is incorrectly encoded", lvalue & ~((1L << shift) - 1L), numericAtt.getRawValue());
+      assertEquals("Type incorrect", (shift == 0) ? LegacyNumericTokenStream.TOKEN_TYPE_FULL_PREC : LegacyNumericTokenStream.TOKEN_TYPE_LOWER_PREC, typeAtt.type());
     }
-    assertFalse("No more tokens available", stream.incrementToken());
+    assertFalse("More tokens available", stream.incrementToken());
+    stream.end();
+    stream.close();
   }
 
   public void testIntStream() throws Exception {
-    final NumericTokenStream stream=new NumericTokenStream().setIntValue(ivalue);
-    // use getAttribute to test if attributes really exist, if not an IAE will be throwed
-    final CharTermAttribute termAtt = stream.getAttribute(CharTermAttribute.class);
+    @SuppressWarnings("resource")
+    final LegacyNumericTokenStream stream=new LegacyNumericTokenStream().setIntValue(ivalue);
+    final TermToBytesRefAttribute bytesAtt = stream.getAttribute(TermToBytesRefAttribute.class);
+    assertNotNull(bytesAtt);
     final TypeAttribute typeAtt = stream.getAttribute(TypeAttribute.class);
-    for (int shift=0; shift<32; shift+=NumericUtils.PRECISION_STEP_DEFAULT) {
+    assertNotNull(typeAtt);
+    final LegacyNumericTokenStream.LegacyNumericTermAttribute numericAtt = stream.getAttribute(LegacyNumericTokenStream.LegacyNumericTermAttribute.class);
+    assertNotNull(numericAtt);
+    stream.reset();
+    assertEquals(32, numericAtt.getValueSize());
+    for (int shift=0; shift<32; shift+= LegacyNumericUtils.PRECISION_STEP_DEFAULT) {
       assertTrue("New token is available", stream.incrementToken());
-      assertEquals("Term is correctly encoded", NumericUtils.intToPrefixCoded(ivalue, shift), termAtt.toString());
-      assertEquals("Type correct", (shift == 0) ? NumericTokenStream.TOKEN_TYPE_FULL_PREC : NumericTokenStream.TOKEN_TYPE_LOWER_PREC, typeAtt.type());
+      assertEquals("Shift value wrong", shift, numericAtt.getShift());
+      assertEquals("Term is incorrectly encoded", ivalue & ~((1 << shift) - 1), LegacyNumericUtils.prefixCodedToInt(bytesAtt.getBytesRef()));
+      assertEquals("Term raw value is incorrectly encoded", ((long) ivalue) & ~((1L << shift) - 1L), numericAtt.getRawValue());
+      assertEquals("Type incorrect", (shift == 0) ? LegacyNumericTokenStream.TOKEN_TYPE_FULL_PREC : LegacyNumericTokenStream.TOKEN_TYPE_LOWER_PREC, typeAtt.type());
     }
-    assertFalse("No more tokens available", stream.incrementToken());
+    assertFalse("More tokens available", stream.incrementToken());
+    stream.end();
+    stream.close();
   }
   
   public void testNotInitialized() throws Exception {
-    final NumericTokenStream stream=new NumericTokenStream();
+    final LegacyNumericTokenStream stream=new LegacyNumericTokenStream();
     
-    try {
+    expectThrows(IllegalStateException.class, () -> {
       stream.reset();
-      fail("reset() should not succeed.");
-    } catch (IllegalStateException e) {
-      // pass
-    }
+    });
 
-    try {
+    expectThrows(IllegalStateException.class, () -> {
       stream.incrementToken();
-      fail("incrementToken() should not succeed.");
-    } catch (IllegalStateException e) {
-      // pass
+    });
+    
+    stream.close();
+  }
+  
+  public static interface TestAttribute extends CharTermAttribute {}
+  public static class TestAttributeImpl extends CharTermAttributeImpl implements TestAttribute {}
+  
+  public void testCTA() throws Exception {
+    final LegacyNumericTokenStream stream=new LegacyNumericTokenStream();
+    IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> {
+      stream.addAttribute(CharTermAttribute.class);
+    });
+    assertTrue(e.getMessage().startsWith("LegacyNumericTokenStream does not support"));
+
+    e = expectThrows(IllegalArgumentException.class, () -> {
+      stream.addAttribute(TestAttribute.class);
+    });
+    assertTrue(e.getMessage().startsWith("LegacyNumericTokenStream does not support"));
+    stream.close();
+  }
+  
+  /** LUCENE-7027 */
+  public void testCaptureStateAfterExhausted() throws Exception {
+    // default precstep
+    try (LegacyNumericTokenStream stream=new LegacyNumericTokenStream()) {
+      // int
+      stream.setIntValue(ivalue);
+      stream.reset();
+      while (stream.incrementToken());
+      stream.captureState();
+      stream.end();
+      stream.captureState();
+      // long
+      stream.setLongValue(lvalue);
+      stream.reset();
+      while (stream.incrementToken());
+      stream.captureState();
+      stream.end();
+      stream.captureState();
     }
+    // huge precstep
+    try (LegacyNumericTokenStream stream=new LegacyNumericTokenStream(Integer.MAX_VALUE)) {
+      // int
+      stream.setIntValue(ivalue);
+      stream.reset();
+      while (stream.incrementToken());
+      stream.captureState();
+      stream.end();
+      stream.captureState();
+      // long
+      stream.setLongValue(lvalue);
+      stream.reset();
+      while (stream.incrementToken());
+      stream.captureState();
+      stream.end();
+      stream.captureState();
+    }
+  }
+  
+  public void testAttributeClone() throws Exception {
+    LegacyNumericTermAttributeImpl att = new LegacyNumericTermAttributeImpl();
+    att.init(lvalue, 64, 8, 0); // set some value, to make getBytesRef() work
+    LegacyNumericTermAttributeImpl copy = TestCharTermAttributeImpl.assertCloneIsEqual(att);
+    assertNotSame(att.getBytesRef(), copy.getBytesRef());
+    LegacyNumericTermAttributeImpl copy2 = TestCharTermAttributeImpl.assertCopyIsEqual(att);
+    assertNotSame(att.getBytesRef(), copy2.getBytesRef());
+    
+    // LUCENE-7027 test
+    att.init(lvalue, 64, 8, 64); // Exhausted TokenStream -> should return empty BytesRef
+    assertEquals(new BytesRef(), att.getBytesRef());
+    copy = TestCharTermAttributeImpl.assertCloneIsEqual(att);
+    assertEquals(new BytesRef(), copy.getBytesRef());
+    assertNotSame(att.getBytesRef(), copy.getBytesRef());
+    copy2 = TestCharTermAttributeImpl.assertCopyIsEqual(att);
+    assertEquals(new BytesRef(), copy2.getBytesRef());
+    assertNotSame(att.getBytesRef(), copy2.getBytesRef());
   }
   
 }

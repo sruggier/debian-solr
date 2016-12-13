@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
@@ -36,13 +37,13 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 public class TestStressNRT extends LuceneTestCase {
-  volatile IndexReader reader;
+  volatile DirectoryReader reader;
 
-  final ConcurrentHashMap<Integer,Long> model = new ConcurrentHashMap<Integer,Long>();
-  Map<Integer,Long> committedModel = new HashMap<Integer,Long>();
+  final ConcurrentHashMap<Integer,Long> model = new ConcurrentHashMap<>();
+  Map<Integer,Long> committedModel = new HashMap<>();
   long snapshotCount;
   long committedModelClock;
   volatile int lastId;
@@ -65,22 +66,24 @@ public class TestStressNRT extends LuceneTestCase {
 
   public void test() throws Exception {
     // update variables
-    final int commitPercent = random.nextInt(20);
-    final int softCommitPercent = random.nextInt(100); // what percent of the commits are soft
-    final int deletePercent = random.nextInt(50);
-    final int deleteByQueryPercent = random.nextInt(25);
+    final int commitPercent = random().nextInt(20);
+    final int softCommitPercent = random().nextInt(100); // what percent of the commits are soft
+    final int deletePercent = random().nextInt(50);
+    final int deleteByQueryPercent = random().nextInt(25);
     final int ndocs = atLeast(50);
-    final int nWriteThreads = _TestUtil.nextInt(random, 1, TEST_NIGHTLY ? 10 : 5);
-    final int maxConcurrentCommits = _TestUtil.nextInt(random, 1, TEST_NIGHTLY ? 10 : 5);   // number of committers at a time... needed if we want to avoid commit errors due to exceeding the max
+    final int nWriteThreads = TestUtil.nextInt(random(), 1, TEST_NIGHTLY ? 10 : 5);
+    final int maxConcurrentCommits = TestUtil.nextInt(random(), 1, TEST_NIGHTLY ? 10 : 5);   // number of committers at a time... needed if we want to avoid commit errors due to exceeding the max
     
-    final boolean tombstones = random.nextBoolean();
-    
+    final boolean tombstones = random().nextBoolean();
 
     // query variables
     final AtomicLong operations = new AtomicLong(atLeast(10000));  // number of query operations to perform in total
 
-    final int nReadThreads = _TestUtil.nextInt(random, 1, TEST_NIGHTLY ? 10 : 5);
+    final int nReadThreads = TestUtil.nextInt(random(), 1, TEST_NIGHTLY ? 10 : 5);
     initModel(ndocs);
+
+    final FieldType storedOnlyType = new FieldType();
+    storedOnlyType.setStored(true);
 
     if (VERBOSE) {
       System.out.println("\n");
@@ -99,19 +102,18 @@ public class TestStressNRT extends LuceneTestCase {
 
     final AtomicInteger numCommitting = new AtomicInteger();
 
-    List<Thread> threads = new ArrayList<Thread>();
+    List<Thread> threads = new ArrayList<>();
 
-    Directory dir = newDirectory();
+    Directory dir = newMaybeVirusCheckingDirectory();
 
-    final RandomIndexWriter writer = new RandomIndexWriter(random, dir, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+    final RandomIndexWriter writer = new RandomIndexWriter(random(), dir, newIndexWriterConfig(new MockAnalyzer(random())));
     writer.setDoRandomForceMergeAssert(false);
-    writer.w.setInfoStream(VERBOSE ? System.out : null);
     writer.commit();
-    reader = IndexReader.open(dir);
+    reader = DirectoryReader.open(dir);
 
     for (int i=0; i<nWriteThreads; i++) {
       Thread thread = new Thread("WRITER"+i) {
-        Random rand = new Random(random.nextInt());
+        Random rand = new Random(random().nextInt());
 
         @Override
         public void run() {
@@ -123,28 +125,28 @@ public class TestStressNRT extends LuceneTestCase {
                 if (numCommitting.incrementAndGet() <= maxConcurrentCommits) {
                   Map<Integer,Long> newCommittedModel;
                   long version;
-                  IndexReader oldReader;
+                  DirectoryReader oldReader;
 
                   synchronized(TestStressNRT.this) {
-                    newCommittedModel = new HashMap<Integer,Long>(model);  // take a snapshot
+                    newCommittedModel = new HashMap<>(model);  // take a snapshot
                     version = snapshotCount++;
                     oldReader = reader;
                     oldReader.incRef();  // increment the reference since we will use this for reopening
                   }
 
-                  IndexReader newReader;
+                  DirectoryReader newReader;
                   if (rand.nextInt(100) < softCommitPercent) {
                     // assertU(h.commit("softCommit","true"));
-                    if (random.nextBoolean()) {
+                    if (random().nextBoolean()) {
                       if (VERBOSE) {
                         System.out.println("TEST: " + Thread.currentThread().getName() + ": call writer.getReader");
                       }
-                      newReader = writer.getReader(true);
+                      newReader = writer.getReader();
                     } else {
                       if (VERBOSE) {
                         System.out.println("TEST: " + Thread.currentThread().getName() + ": reopen reader=" + oldReader + " version=" + version);
                       }
-                      newReader = IndexReader.openIfChanged(oldReader, writer.w, true);
+                      newReader = DirectoryReader.openIfChanged(oldReader, writer.w);
                     }
                   } else {
                     // assertU(commit());
@@ -155,7 +157,7 @@ public class TestStressNRT extends LuceneTestCase {
                     if (VERBOSE) {
                       System.out.println("TEST: " + Thread.currentThread().getName() + ": now reopen after commit");
                     }
-                    newReader = IndexReader.openIfChanged(oldReader);
+                    newReader = DirectoryReader.openIfChanged(oldReader);
                   }
 
                   // Code below assumes newReader comes w/
@@ -213,7 +215,7 @@ public class TestStressNRT extends LuceneTestCase {
 
                 // set the lastId before we actually change it sometimes to try and
                 // uncover more race conditions between writing and reading
-                boolean before = random.nextBoolean();
+                boolean before = random().nextBoolean();
                 if (before) {
                   lastId = id;
                 }
@@ -230,8 +232,8 @@ public class TestStressNRT extends LuceneTestCase {
                     // add tombstone first
                     if (tombstones) {
                       Document d = new Document();
-                      d.add(new Field("id","-"+Integer.toString(id), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
-                      d.add(new Field(field, Long.toString(nextVal), Field.Store.YES, Field.Index.NO));
+                      d.add(newStringField("id", "-"+Integer.toString(id), Field.Store.YES));
+                      d.add(newField(field, Long.toString(nextVal), storedOnlyType));
                       writer.updateDocument(new Term("id", "-"+Integer.toString(id)), d);
                     }
 
@@ -246,8 +248,8 @@ public class TestStressNRT extends LuceneTestCase {
                     // add tombstone first
                     if (tombstones) {
                       Document d = new Document();
-                      d.add(new Field("id","-"+Integer.toString(id), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
-                      d.add(new Field(field, Long.toString(nextVal), Field.Store.YES, Field.Index.NO));
+                      d.add(newStringField("id", "-"+Integer.toString(id), Field.Store.YES));
+                      d.add(newField(field, Long.toString(nextVal), storedOnlyType));
                       writer.updateDocument(new Term("id", "-"+Integer.toString(id)), d);
                     }
 
@@ -259,8 +261,8 @@ public class TestStressNRT extends LuceneTestCase {
                   } else {
                     // assertU(adoc("id",Integer.toString(id), field, Long.toString(nextVal)));
                     Document d = new Document();
-                    d.add(newField("id",Integer.toString(id), Field.Store.YES, Field.Index.NOT_ANALYZED_NO_NORMS));
-                    d.add(newField(field, Long.toString(nextVal), Field.Store.YES, Field.Index.NO));
+                    d.add(newStringField("id", Integer.toString(id), Field.Store.YES));
+                    d.add(newField(field, Long.toString(nextVal), storedOnlyType));
                     if (VERBOSE) {
                       System.out.println("TEST: " + Thread.currentThread().getName() + ": u id:" + id + " val=" + nextVal);
                     }
@@ -291,11 +293,14 @@ public class TestStressNRT extends LuceneTestCase {
 
     for (int i=0; i<nReadThreads; i++) {
       Thread thread = new Thread("READER"+i) {
-        Random rand = new Random(random.nextInt());
+        Random rand = new Random(random().nextInt());
 
         @Override
         public void run() {
           try {
+            IndexReader lastReader = null;
+            IndexSearcher lastSearcher = null;
+
             while (operations.decrementAndGet() >= 0) {
               // bias toward a recently changed doc
               int id = rand.nextInt(100) < 25 ? lastId : rand.nextInt(ndocs);
@@ -304,7 +309,7 @@ public class TestStressNRT extends LuceneTestCase {
               // so when querying, we should first check the model, and then the index
 
               long val;
-              IndexReader r;
+              DirectoryReader r;
               synchronized(TestStressNRT.this) {
                 val = committedModel.get(id);
                 r = reader;
@@ -316,7 +321,17 @@ public class TestStressNRT extends LuceneTestCase {
               }
 
               //  sreq = req("wt","json", "q","id:"+Integer.toString(id), "omitHeader","true");
-              IndexSearcher searcher = new IndexSearcher(r);
+              IndexSearcher searcher;
+              if (r == lastReader) {
+                // Just re-use lastSearcher, else
+                // newSearcher may create too many thread
+                // pools (ExecutorService):
+                searcher = lastSearcher;
+              } else {
+                searcher = newSearcher(r);
+                lastReader = r;
+                lastSearcher = searcher;
+              }
               Query q = new TermQuery(new Term("id",Integer.toString(id)));
               TopDocs results = searcher.search(q, 10);
 

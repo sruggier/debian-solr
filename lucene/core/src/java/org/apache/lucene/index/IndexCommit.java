@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,7 +13,8 @@ package org.apache.lucene.index;
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
-*/
+ */
+package org.apache.lucene.index;
 
 import java.util.Collection;
 import java.util.Map;
@@ -41,6 +40,8 @@ import org.apache.lucene.store.Directory;
  * @lucene.experimental
 */
 
+// TODO: this is now a poor name, because this class also represents a
+// point-in-time view from an NRT reader
 public abstract class IndexCommit implements Comparable<IndexCommit> {
 
   /**
@@ -73,17 +74,25 @@ public abstract class IndexCommit implements Comparable<IndexCommit> {
   */
   public abstract void delete();
 
+  /** Returns true if this commit should be deleted; this is
+   *  only used by {@link IndexWriter} after invoking the
+   *  {@link IndexDeletionPolicy}. */
   public abstract boolean isDeleted();
 
   /** Returns number of segments referenced by this commit. */
   public abstract int getSegmentCount();
+
+  /** Sole constructor. (For invocation by subclass 
+   *  constructors, typically implicit.) */
+  protected IndexCommit() {
+  }
 
   /** Two IndexCommits are equal if both their Directory and versions are equal. */
   @Override
   public boolean equals(Object other) {
     if (other instanceof IndexCommit) {
       IndexCommit otherCommit = (IndexCommit) other;
-      return otherCommit.getDirectory().equals(getDirectory()) && otherCommit.getVersion() == getVersion();
+      return otherCommit.getDirectory() == getDirectory() && otherCommit.getGeneration() == getGeneration();
     } else {
       return false;
     }
@@ -91,38 +100,19 @@ public abstract class IndexCommit implements Comparable<IndexCommit> {
 
   @Override
   public int hashCode() {
-    return (int) (getDirectory().hashCode() + getVersion());
+    return getDirectory().hashCode() + Long.valueOf(getGeneration()).hashCode();
   }
-
-  /** Returns the version for this IndexCommit.  This is the
-   *  same value that {@link IndexReader#getVersion} would
-   *  return if it were opened on this commit.
-   * @deprecated use {@link #getGeneration} instead */
-  @Deprecated
-  public abstract long getVersion();
 
   /** Returns the generation (the _N in segments_N) for this
    *  IndexCommit */
   public abstract long getGeneration();
 
-  /** Convenience method that returns the last modified time
-   *  of the segments_N file corresponding to this index
-   *  commit, equivalent to
-   *  getDirectory().fileModified(getSegmentsFileName()).
-   * @deprecated If you need to track commit time of
-   * an index, you can store it in the commit data (see
-   * {@link IndexWriter#commit(Map)}
-   */
-  @Deprecated
-  public long getTimestamp() throws IOException {
-    return getDirectory().fileModified(getSegmentsFileName());
-  }
-
   /** Returns userData, previously passed to {@link
-   *  IndexWriter#commit(Map)} for this commit.  Map is
-   *  String -> String. */
+   *  IndexWriter#setLiveCommitData(Iterable)} for this commit.  Map is
+   *  {@code String -> String}. */
   public abstract Map<String,String> getUserData() throws IOException;
   
+  @Override
   public int compareTo(IndexCommit commit) {
     if (getDirectory() != commit.getDirectory()) {
       throw new UnsupportedOperationException("cannot compare IndexCommits from different Directory instances");
@@ -130,12 +120,11 @@ public abstract class IndexCommit implements Comparable<IndexCommit> {
 
     long gen = getGeneration();
     long comgen = commit.getGeneration();
-    if (gen < comgen) {
-      return -1;
-    } else if (gen > comgen) {
-      return 1;
-    } else {
-      return 0;
-    }
+    return Long.compare(gen, comgen);
+  }
+
+  /** Package-private API for IndexWriter to init from a commit-point pulled from an NRT or non-NRT reader. */
+  StandardDirectoryReader getReader() {
+    return null;
   }
 }

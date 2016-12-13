@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 import java.util.BitSet;
@@ -23,14 +23,17 @@ import java.util.BitSet;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.RandomIndexWriter;
-import org.apache.lucene.queryParser.QueryParser;
+import org.apache.lucene.index.Term;
 import org.apache.lucene.search.TimeLimitingCollector.TimeExceededException;
 import org.apache.lucene.search.TimeLimitingCollector.TimerThread;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Counter;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.LuceneTestCase.SuppressSysoutChecks;
+import org.apache.lucene.util.TestUtil;
 import org.apache.lucene.util.ThreadInterruptedException;
 
 /**
@@ -38,6 +41,7 @@ import org.apache.lucene.util.ThreadInterruptedException;
  * correctness (regardless of timeout), (2) expected timeout behavior,
  * and (3) a sanity test with multiple searching threads.
  */
+@SuppressSysoutChecks(bugUrl = "http://test.is.timing.sensitive.so.it.prints.instead.of.failing")
 public class TestTimeLimitingCollector extends LuceneTestCase {
   private static final int SLOW_DOWN = 3;
   private static final long TIME_ALLOWED = 17 * SLOW_DOWN; // so searches can find about 17 docs.
@@ -50,7 +54,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
   private static final int N_DOCS = 3000;
   private static final int N_THREADS = 50;
 
-  private Searcher searcher;
+  private IndexSearcher searcher;
   private Directory directory;
   private IndexReader reader;
 
@@ -79,7 +83,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
         "blueberry pizza",
     };
     directory = newDirectory();
-    RandomIndexWriter iw = new RandomIndexWriter(random, directory, newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).setMergePolicy(newLogMergePolicy()));
+    RandomIndexWriter iw = new RandomIndexWriter(random(), directory, newIndexWriterConfig(new MockAnalyzer(random())).setMergePolicy(newLogMergePolicy()));
     
     for (int i=0; i<N_DOCS; i++) {
       add(docText[i%docText.length], iw);
@@ -88,21 +92,24 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
     iw.close();
     searcher = newSearcher(reader);
 
-    String qtxt = "one";
+    BooleanQuery.Builder booleanQuery = new BooleanQuery.Builder();
+    booleanQuery.add(new TermQuery(new Term(FIELD_NAME, "one")), BooleanClause.Occur.SHOULD);
     // start from 1, so that the 0th doc never matches
     for (int i = 1; i < docText.length; i++) {
-      qtxt += ' ' + docText[i]; // large query so that search will be longer
+      String[] docTextParts = docText[i].split("\\s+");
+      for (String docTextPart : docTextParts) { // large query so that search will be longer
+        booleanQuery.add(new TermQuery(new Term(FIELD_NAME, docTextPart)), BooleanClause.Occur.SHOULD);
+      }
     }
-    QueryParser queryParser = new QueryParser(TEST_VERSION_CURRENT, FIELD_NAME, new MockAnalyzer(random));
-    query = queryParser.parse(qtxt);
+
+    query = booleanQuery.build();
     
     // warm the searcher
-    searcher.search(query, null, 1000);
+    searcher.search(query, 1000);
   }
 
   @Override
   public void tearDown() throws Exception {
-    searcher.close();
     reader.close();
     directory.close();
     counterThread.stopTimer();
@@ -112,7 +119,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
 
   private void add(String value, RandomIndexWriter iw) throws IOException {
     Document d = new Document();
-    d.add(newField(FIELD_NAME, value, Field.Store.NO, Field.Index.ANALYZED));
+    d.add(newTextField(FIELD_NAME, value, Field.Store.NO));
     iw.addDocument(d);
   }
 
@@ -137,14 +144,15 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
       
       myHc = new MyHitCollector();
       long oneHour = 3600000;
-      Collector tlCollector = createTimedCollector(myHc, oneHour, false);
+      long duration = TestUtil.nextLong(random(), oneHour, Long.MAX_VALUE); 
+      Collector tlCollector = createTimedCollector(myHc, duration, false);
       search(tlCollector);
       totalTLCResults = myHc.hitCount();
     } catch (Exception e) {
       e.printStackTrace();
       assertTrue("Unexpected exception: "+e, false); //==fail
     }
-    assertEquals( "Wrong number of results!", totalResults, totalTLCResults );
+    assertEquals("Wrong number of results!", totalResults, totalTLCResults);
   }
 
   private Collector createTimedCollector(MyHitCollector hc, long timeAllowed, boolean greedy) {
@@ -173,44 +181,40 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
     myHc.setSlowDown(SLOW_DOWN);
     Collector tlCollector = createTimedCollector(myHc, TIME_ALLOWED, greedy);
 
-    // search
-    TimeExceededException timoutException = null;
-    try {
+    // search: must get exception
+    TimeExceededException timeoutException = expectThrows(TimeExceededException.class, () -> {
       search(tlCollector);
-    } catch (TimeExceededException x) {
-      timoutException = x;
-    } catch (Exception e) {
-      assertTrue("Unexpected exception: "+e, false); //==fail
-    }
-    
-    // must get exception
-    assertNotNull( "Timeout expected!", timoutException );
+    });
 
     // greediness affect last doc collected
-    int exceptionDoc = timoutException.getLastDocCollected();
+    int exceptionDoc = timeoutException.getLastDocCollected();
     int lastCollected = myHc.getLastDocCollected(); 
-    assertTrue( "doc collected at timeout must be > 0!", exceptionDoc > 0 );
-    if (greedy) {
-      assertTrue("greedy="+greedy+" exceptionDoc="+exceptionDoc+" != lastCollected="+lastCollected, exceptionDoc==lastCollected);
-      assertTrue("greedy, but no hits found!", myHc.hitCount() > 0 );
-    } else {
-      assertTrue("greedy="+greedy+" exceptionDoc="+exceptionDoc+" not > lastCollected="+lastCollected, exceptionDoc>lastCollected);
+
+    // exceptionDoc == -1 means we hit the timeout in getLeafCollector:
+    if (exceptionDoc != -1) {
+      assertTrue( "doc collected at timeout must be > 0! or == -1 but was: " + exceptionDoc, exceptionDoc > 0);
+      if (greedy) {
+        assertTrue("greedy="+greedy+" exceptionDoc="+exceptionDoc+" != lastCollected="+lastCollected, exceptionDoc==lastCollected);
+        assertTrue("greedy, but no hits found!", myHc.hitCount() > 0 );
+      } else {
+        assertTrue("greedy="+greedy+" exceptionDoc="+exceptionDoc+" not > lastCollected="+lastCollected, exceptionDoc>lastCollected);
+      }
     }
 
     // verify that elapsed time at exception is within valid limits
-    assertEquals( timoutException.getTimeAllowed(), TIME_ALLOWED);
+    assertEquals( timeoutException.getTimeAllowed(), TIME_ALLOWED);
     // a) Not too early
-    assertTrue ( "elapsed="+timoutException.getTimeElapsed()+" <= (allowed-resolution)="+(TIME_ALLOWED-counterThread.getResolution()),
-        timoutException.getTimeElapsed() > TIME_ALLOWED-counterThread.getResolution());
+    assertTrue ( "elapsed="+timeoutException.getTimeElapsed()+" <= (allowed-resolution)="+(TIME_ALLOWED-counterThread.getResolution()),
+        timeoutException.getTimeElapsed() > TIME_ALLOWED-counterThread.getResolution());
     // b) Not too late.
     //    This part is problematic in a busy test system, so we just print a warning.
     //    We already verified that a timeout occurred, we just can't be picky about how long it took.
-    if (timoutException.getTimeElapsed() > maxTime(multiThreaded)) {
+    if (timeoutException.getTimeElapsed() > maxTime(multiThreaded)) {
       System.out.println("Informative: timeout exceeded (no action required: most probably just " +
         " because the test machine is slower than usual):  " +
         "lastDoc="+exceptionDoc+
-        " ,&& allowed="+timoutException.getTimeAllowed() +
-        " ,&& elapsed="+timoutException.getTimeElapsed() +
+        " ,&& allowed="+timeoutException.getTimeAllowed() +
+        " ,&& elapsed="+timeoutException.getTimeElapsed() +
         " >= " + maxTimeStr(multiThreaded));
     }
   }
@@ -259,6 +263,19 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
       counterThread.setResolution(TimerThread.DEFAULT_RESOLUTION);
     }
   }
+
+  public void testNoHits() throws IOException {
+    MyHitCollector myHc = new MyHitCollector();
+    Collector collector = createTimedCollector(myHc, -1, random().nextBoolean());
+    // search: must get exception
+    expectThrows(TimeExceededException.class, () -> {
+      BooleanQuery.Builder booleanQuery = new BooleanQuery.Builder(); // won't match - we only test if we check timeout when collectors are pulled
+      booleanQuery.add(new TermQuery(new Term(FIELD_NAME, "one")), BooleanClause.Occur.MUST);
+      booleanQuery.add(new TermQuery(new Term(FIELD_NAME, "blueberry")), BooleanClause.Occur.MUST);
+      searcher.search(booleanQuery.build(), collector);
+    });
+    assertEquals(-1, myHc.getLastDocCollected());
+  }
   
   /** 
    * Test correctness with multiple searching threads.
@@ -303,7 +320,7 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
   }
   
   // counting collector that can slow down at collect().
-  private class MyHitCollector extends Collector {
+  private class MyHitCollector extends SimpleCollector {
     private final BitSet bits = new BitSet();
     private int slowdown = 0;
     private int lastDocCollected = -1;
@@ -345,12 +362,12 @@ public class TestTimeLimitingCollector extends LuceneTestCase {
     }
     
     @Override
-    public void setNextReader(IndexReader reader, int base) {
-      docBase = base;
+    protected void doSetNextReader(LeafReaderContext context) throws IOException {
+      docBase = context.docBase;
     }
     
     @Override
-    public boolean acceptsDocsOutOfOrder() {
+    public boolean needsScores() {
       return false;
     }
 

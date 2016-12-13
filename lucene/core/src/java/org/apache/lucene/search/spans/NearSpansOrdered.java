@@ -1,6 +1,4 @@
-package org.apache.lucene.search.spans;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,20 +14,14 @@ package org.apache.lucene.search.spans;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search.spans;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.util.ArrayUtil;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
-import java.util.Collection;
-import java.util.Set;
 
-/** A Spans that is formed from the ordered subspans of a SpanNearQuery
+/**
+ * A Spans that is formed from the ordered subspans of a SpanNearQuery
  * where the subspans do not overlap and have a maximum slop between them.
  * <p>
  * The formed spans only contains minimum slop matches.<br>
@@ -47,297 +39,116 @@ import java.util.Set;
  * <pre>t1 t2 .. t3      </pre>
  * <pre>      t1 .. t2 t3</pre>
  *
- *
  * Expert:
  * Only public for subclassing.  Most implementations should not need this class
  */
-public class NearSpansOrdered extends Spans {
+public class NearSpansOrdered extends ConjunctionSpans {
+
+  protected int matchStart = -1;
+  protected int matchEnd = -1;
+  protected int matchWidth = -1;
+
   private final int allowedSlop;
-  private boolean firstTime = true;
-  private boolean more = false;
 
-  /** The spans in the same order as the SpanNearQuery */
-  private final Spans[] subSpans;
-
-  /** Indicates that all subSpans have same doc() */
-  private boolean inSameDoc = false;
-
-  private int matchDoc = -1;
-  private int matchStart = -1;
-  private int matchEnd = -1;
-  private List<byte[]> matchPayload;
-
-  private final Spans[] subSpansByDoc;
-  private final Comparator<Spans> spanDocComparator = new Comparator<Spans>() {
-    public int compare(Spans o1, Spans o2) {
-      return o1.doc() - o2.doc();
-    }
-  };
-  
-  private SpanNearQuery query;
-  private boolean collectPayloads = true;
-  
-  public NearSpansOrdered(SpanNearQuery spanNearQuery, IndexReader reader) throws IOException {
-    this(spanNearQuery, reader, true);
+  public NearSpansOrdered(int allowedSlop, List<Spans> subSpans) throws IOException {
+    super(subSpans);
+    this.atFirstInCurrentDoc = true; // -1 startPosition/endPosition also at doc -1
+    this.allowedSlop = allowedSlop;
   }
 
-  public NearSpansOrdered(SpanNearQuery spanNearQuery, IndexReader reader, boolean collectPayloads)
-  throws IOException {
-    if (spanNearQuery.getClauses().length < 2) {
-      throw new IllegalArgumentException("Less than 2 clauses: "
-                                         + spanNearQuery);
-    }
-    this.collectPayloads = collectPayloads;
-    allowedSlop = spanNearQuery.getSlop();
-    SpanQuery[] clauses = spanNearQuery.getClauses();
-    subSpans = new Spans[clauses.length];
-    matchPayload = new LinkedList<byte[]>();
-    subSpansByDoc = new Spans[clauses.length];
-    for (int i = 0; i < clauses.length; i++) {
-      subSpans[i] = clauses[i].getSpans(reader);
-      subSpansByDoc[i] = subSpans[i]; // used in toSameDoc()
-    }
-    query = spanNearQuery; // kept for toString() only.
-  }
-
-  // inherit javadocs
   @Override
-  public int doc() { return matchDoc; }
-
-  // inherit javadocs
-  @Override
-  public int start() { return matchStart; }
-
-  // inherit javadocs
-  @Override
-  public int end() { return matchEnd; }
-  
-  public Spans[] getSubSpans() {
-	  return subSpans;
-  }  
-
-  // TODO: Remove warning after API has been finalized
-  // TODO: Would be nice to be able to lazy load payloads
-  @Override
-  public Collection<byte[]> getPayload() throws IOException {
-    return matchPayload;
-  }
-
-  // TODO: Remove warning after API has been finalized
-  @Override
-  public boolean isPayloadAvailable() {
-    return matchPayload.isEmpty() == false;
-  }
-
-  // inherit javadocs
-  @Override
-  public boolean next() throws IOException {
-    if (firstTime) {
-      firstTime = false;
-      for (int i = 0; i < subSpans.length; i++) {
-        if (! subSpans[i].next()) {
-          more = false;
-          return false;
-        }
+  boolean twoPhaseCurrentDocMatches() throws IOException {
+    assert unpositioned();
+    oneExhaustedInCurrentDoc = false;
+    while (subSpans[0].nextStartPosition() != NO_MORE_POSITIONS && !oneExhaustedInCurrentDoc) {
+      if (stretchToOrder() && matchWidth <= allowedSlop) {
+        return atFirstInCurrentDoc = true;
       }
-      more = true;
     }
-    if(collectPayloads) {
-      matchPayload.clear();
-    }
-    return advanceAfterOrdered();
+    return false;
   }
 
-  // inherit javadocs
-  @Override
-  public boolean skipTo(int target) throws IOException {
-    if (firstTime) {
-      firstTime = false;
-      for (int i = 0; i < subSpans.length; i++) {
-        if (! subSpans[i].skipTo(target)) {
-          more = false;
-          return false;
-        }
-      }
-      more = true;
-    } else if (more && (subSpans[0].doc() < target)) {
-      if (subSpans[0].skipTo(target)) {
-        inSameDoc = false;
-      } else {
-        more = false;
+  private boolean unpositioned() {
+    for (Spans span : subSpans) {
+      if (span.startPosition() != -1)
         return false;
-      }
     }
-    if(collectPayloads) {
-      matchPayload.clear();
-    }
-    return advanceAfterOrdered();
-  }
-  
-  /** Advances the subSpans to just after an ordered match with a minimum slop
-   * that is smaller than the slop allowed by the SpanNearQuery.
-   * @return true iff there is such a match.
-   */
-  private boolean advanceAfterOrdered() throws IOException {
-    while (more && (inSameDoc || toSameDoc())) {
-      if (stretchToOrder() && shrinkToAfterShortestMatch()) {
-        return true;
-      }
-    }
-    return false; // no more matches
-  }
-
-
-  /** Advance the subSpans to the same document */
-  private boolean toSameDoc() throws IOException {
-    ArrayUtil.mergeSort(subSpansByDoc, spanDocComparator);
-    int firstIndex = 0;
-    int maxDoc = subSpansByDoc[subSpansByDoc.length - 1].doc();
-    while (subSpansByDoc[firstIndex].doc() != maxDoc) {
-      if (! subSpansByDoc[firstIndex].skipTo(maxDoc)) {
-        more = false;
-        inSameDoc = false;
-        return false;
-      }
-      maxDoc = subSpansByDoc[firstIndex].doc();
-      if (++firstIndex == subSpansByDoc.length) {
-        firstIndex = 0;
-      }
-    }
-    for (int i = 0; i < subSpansByDoc.length; i++) {
-      assert (subSpansByDoc[i].doc() == maxDoc)
-             : " NearSpansOrdered.toSameDoc() spans " + subSpansByDoc[0]
-                                 + "\n at doc " + subSpansByDoc[i].doc()
-                                 + ", but should be at " + maxDoc;
-    }
-    inSameDoc = true;
     return true;
   }
-  
-  /** Check whether two Spans in the same document are ordered.
-   * @param spans1 
-   * @param spans2 
-   * @return true iff spans1 starts before spans2
-   *              or the spans start at the same position,
-   *              and spans1 ends before spans2.
-   */
-  static final boolean docSpansOrdered(Spans spans1, Spans spans2) {
-    assert spans1.doc() == spans2.doc() : "doc1 " + spans1.doc() + " != doc2 " + spans2.doc();
-    int start1 = spans1.start();
-    int start2 = spans2.start();
-    /* Do not call docSpansOrdered(int,int,int,int) to avoid invoking .end() : */
-    return (start1 == start2) ? (spans1.end() < spans2.end()) : (start1 < start2);
+
+  @Override
+  public int nextStartPosition() throws IOException {
+    if (atFirstInCurrentDoc) {
+      atFirstInCurrentDoc = false;
+      return matchStart;
+    }
+    oneExhaustedInCurrentDoc = false;
+    while (subSpans[0].nextStartPosition() != NO_MORE_POSITIONS && !oneExhaustedInCurrentDoc) {
+      if (stretchToOrder() && matchWidth <= allowedSlop) {
+        return matchStart;
+      }
+    }
+    return matchStart = matchEnd = NO_MORE_POSITIONS;
   }
 
-  /** Like {@link #docSpansOrdered(Spans,Spans)}, but use the spans
-   * starts and ends as parameters.
-   */
-  private static final boolean docSpansOrdered(int start1, int end1, int start2, int end2) {
-    return (start1 == start2) ? (end1 < end2) : (start1 < start2);
-  }
-
-  /** Order the subSpans within the same document by advancing all later spans
-   * after the previous one.
+  /**
+   * Order the subSpans within the same document by using nextStartPosition on all subSpans
+   * after the first as little as necessary.
+   * Return true when the subSpans could be ordered in this way,
+   * otherwise at least one is exhausted in the current doc.
    */
   private boolean stretchToOrder() throws IOException {
-    matchDoc = subSpans[0].doc();
-    for (int i = 1; inSameDoc && (i < subSpans.length); i++) {
-      while (! docSpansOrdered(subSpans[i-1], subSpans[i])) {
-        if (! subSpans[i].next()) {
-          inSameDoc = false;
-          more = false;
-          break;
-        } else if (matchDoc != subSpans[i].doc()) {
-          inSameDoc = false;
-          break;
-        }
+    Spans prevSpans = subSpans[0];
+    matchStart = prevSpans.startPosition();
+    assert prevSpans.startPosition() != NO_MORE_POSITIONS : "prevSpans no start position "+prevSpans;
+    assert prevSpans.endPosition() != NO_MORE_POSITIONS;
+    matchWidth = 0;
+    for (int i = 1; i < subSpans.length; i++) {
+      Spans spans = subSpans[i];
+      assert spans.startPosition() != NO_MORE_POSITIONS;
+      assert spans.endPosition() != NO_MORE_POSITIONS;
+      if (advancePosition(spans, prevSpans.endPosition()) == NO_MORE_POSITIONS) {
+        oneExhaustedInCurrentDoc = true;
+        return false;
       }
+      matchWidth += (spans.startPosition() - prevSpans.endPosition());
+      prevSpans = spans;
     }
-    return inSameDoc;
+    matchEnd = subSpans[subSpans.length - 1].endPosition();
+    return true; // all subSpans ordered and non overlapping
   }
 
-  /** The subSpans are ordered in the same doc, so there is a possible match.
-   * Compute the slop while making the match as short as possible by advancing
-   * all subSpans except the last one in reverse order.
-   */
-  private boolean shrinkToAfterShortestMatch() throws IOException {
-    matchStart = subSpans[subSpans.length - 1].start();
-    matchEnd = subSpans[subSpans.length - 1].end();
-    Set<byte[]> possibleMatchPayloads = new HashSet<byte[]>();
-    if (subSpans[subSpans.length - 1].isPayloadAvailable()) {
-      possibleMatchPayloads.addAll(subSpans[subSpans.length - 1].getPayload());
+  private static int advancePosition(Spans spans, int position) throws IOException {
+    if (spans instanceof SpanNearQuery.GapSpans) {
+      return ((SpanNearQuery.GapSpans)spans).skipToPosition(position);
     }
-
-    Collection<byte[]> possiblePayload = null;
-    
-    int matchSlop = 0;
-    int lastStart = matchStart;
-    int lastEnd = matchEnd;
-    for (int i = subSpans.length - 2; i >= 0; i--) {
-      Spans prevSpans = subSpans[i];
-      if (collectPayloads && prevSpans.isPayloadAvailable()) {
-        Collection<byte[]> payload = prevSpans.getPayload();
-        possiblePayload = new ArrayList<byte[]>(payload.size());
-        possiblePayload.addAll(payload);
-      }
-      
-      int prevStart = prevSpans.start();
-      int prevEnd = prevSpans.end();
-      while (true) { // Advance prevSpans until after (lastStart, lastEnd)
-        if (! prevSpans.next()) {
-          inSameDoc = false;
-          more = false;
-          break; // Check remaining subSpans for final match.
-        } else if (matchDoc != prevSpans.doc()) {
-          inSameDoc = false; // The last subSpans is not advanced here.
-          break; // Check remaining subSpans for last match in this document.
-        } else {
-          int ppStart = prevSpans.start();
-          int ppEnd = prevSpans.end(); // Cannot avoid invoking .end()
-          if (! docSpansOrdered(ppStart, ppEnd, lastStart, lastEnd)) {
-            break; // Check remaining subSpans.
-          } else { // prevSpans still before (lastStart, lastEnd)
-            prevStart = ppStart;
-            prevEnd = ppEnd;
-            if (collectPayloads && prevSpans.isPayloadAvailable()) {
-              Collection<byte[]> payload = prevSpans.getPayload();
-              possiblePayload = new ArrayList<byte[]>(payload.size());
-              possiblePayload.addAll(payload);
-            }
-          }
-        }
-      }
-
-      if (collectPayloads && possiblePayload != null) {
-        possibleMatchPayloads.addAll(possiblePayload);
-      }
-      
-      assert prevStart <= matchStart;
-      if (matchStart > prevEnd) { // Only non overlapping spans add to slop.
-        matchSlop += (matchStart - prevEnd);
-      }
-
-      /* Do not break on (matchSlop > allowedSlop) here to make sure
-       * that subSpans[0] is advanced after the match, if any.
-       */
-      matchStart = prevStart;
-      lastStart = prevStart;
-      lastEnd = prevEnd;
+    while (spans.startPosition() < position) {
+      spans.nextStartPosition();
     }
-    
-    boolean match = matchSlop <= allowedSlop;
-    
-    if(collectPayloads && match && possibleMatchPayloads.size() > 0) {
-      matchPayload.addAll(possibleMatchPayloads);
-    }
-
-    return match; // ordered and allowed slop
+    return spans.startPosition();
   }
 
   @Override
-  public String toString() {
-    return getClass().getName() + "("+query.toString()+")@"+
-      (firstTime?"START":(more?(doc()+":"+start()+"-"+end()):"END"));
+  public int startPosition() {
+    return atFirstInCurrentDoc ? -1 : matchStart;
   }
+
+  @Override
+  public int endPosition() {
+    return atFirstInCurrentDoc ? -1 : matchEnd;
+  }
+
+  @Override
+  public int width() {
+    return matchWidth;
+  }
+
+  @Override
+  public void collect(SpanCollector collector) throws IOException {
+    for (Spans span : subSpans) {
+      span.collect(collector);
+    }
+  }
+
 }
 

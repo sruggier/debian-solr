@@ -1,6 +1,4 @@
-package org.apache.solr.handler.clustering.carrot2;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.handler.clustering.carrot2;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.clustering.carrot2;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -27,23 +26,23 @@ import org.carrot2.text.linguistic.ITokenizerFactory;
 import org.carrot2.text.util.MutableCharArray;
 
 public class DuplicatingTokenizerFactory implements ITokenizerFactory {
-  //@Override
+  @Override
   public ITokenizer getTokenizer(LanguageCode language) {
     return new ITokenizer() {
       private final ExtendedWhitespaceTokenizer delegate = new ExtendedWhitespaceTokenizer();
       
-      //@Override
+      @Override
       public void setTermBuffer(MutableCharArray buffer) {
         delegate.setTermBuffer(buffer);
         buffer.reset(buffer.toString() + buffer.toString());
       }
       
-      //@Override
-      public void reset(Reader input) throws IOException {
+      @Override
+      public void reset(Reader input) {
         delegate.reset(input);
       }
       
-      //@Override
+      @Override
       public short nextToken() throws IOException {
         return delegate.nextToken();
       }

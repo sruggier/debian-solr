@@ -1,6 +1,4 @@
-package org.apache.solr.spelling;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,9 +14,9 @@ package org.apache.solr.spelling;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.spelling;
 
 import java.io.IOException;
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -36,9 +34,9 @@ public class SuggestQueryConverter extends SpellingQueryConverter {
       return Collections.emptyList();
     }
 
-    Collection<Token> result = new ArrayList<Token>();
+    Collection<Token> result = new ArrayList<>();
     try {
-      analyze(result, new StringReader(original), 0);
+      analyze(result, original, 0, 0);
     } catch (IOException e) {
       throw new RuntimeException(e);
     }

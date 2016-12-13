@@ -1,15 +1,4 @@
-package org.apache.solr.search;
-
-import org.apache.lucene.search.*;
-import org.apache.lucene.index.IndexReader;
-import org.apache.solr.search.function.ValueSource;
-import org.apache.solr.common.SolrException;
-
-import java.io.IOException;
-import java.util.Set;
-import java.util.Map;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -25,6 +14,22 @@ import java.util.Map;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search;
+
+import java.io.IOException;
+import java.util.Map;
+import java.util.Objects;
+
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.search.ConstantScoreScorer;
+import org.apache.lucene.search.ConstantScoreWeight;
+import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.Weight;
 
 /**
  * A query that wraps a filter and simply returns a constant score equal to the
@@ -33,197 +38,96 @@ import java.util.Map;
  *
  * Experimental and subject to change.
  */
-public class SolrConstantScoreQuery extends ConstantScoreQuery implements ExtendedQuery {
+public class SolrConstantScoreQuery extends Query implements ExtendedQuery {
+  private final Filter filter;
   boolean cache = true;  // cache by default
   int cost;
 
   public SolrConstantScoreQuery(Filter filter) {
-    super(filter);
+    this.filter = filter;
   }
 
   /** Returns the encapsulated filter */
-  @Override
   public Filter getFilter() {
     return filter;
   }
 
+  @Override
   public void setCache(boolean cache) {
     this.cache = cache;
   }
 
+  @Override
   public boolean getCache() {
     return cache;
   }
 
+  @Override
   public void setCacheSep(boolean cacheSep) {
   }
 
+  @Override
   public boolean getCacheSep() {
     return false;
   }
 
+  @Override
   public void setCost(int cost) {
     this.cost = cost;
   }
 
+  @Override
   public int getCost() {
     return cost;
   }
 
-
-  @Override
-  public Query rewrite(IndexReader reader) throws IOException {
-    return this;
-  }
-
-  @Override
-  public void extractTerms(Set terms) {
-    // OK to not add any terms when used for MultiSearcher,
-    // but may not be OK for highlighting
-  }
-
-  protected class ConstantWeight extends Weight {
-    private Similarity similarity;
-    private float queryNorm;
-    private float queryWeight;
+  protected class ConstantWeight extends ConstantScoreWeight {
     private Map context;
 
-    public ConstantWeight(Searcher searcher) throws IOException {
-      this.similarity = getSimilarity(searcher);
-      this.context = ValueSource.newContext();
+    public ConstantWeight(IndexSearcher searcher) throws IOException {
+      super(SolrConstantScoreQuery.this);
+      this.context = ValueSource.newContext(searcher);
       if (filter instanceof SolrFilter)
         ((SolrFilter)filter).createWeight(context, searcher);
     }
 
     @Override
-    public Query getQuery() {
-      return SolrConstantScoreQuery.this;
-    }
-
-    @Override
-    public float getValue() {
-      return queryWeight;
-    }
-
-    @Override
-    public float sumOfSquaredWeights() throws IOException {
-      queryWeight = getBoost();
-      return queryWeight * queryWeight;
-    }
-
-    @Override
-    public void normalize(float norm) {
-      this.queryNorm = norm;
-      queryWeight *= this.queryNorm;
-    }
-
-    @Override
-    public Scorer scorer(IndexReader reader, boolean scoreDocsInOrder, boolean topScorer) throws IOException {
-      return new ConstantScorer(similarity, reader, this);
-    }
-
-    @Override
-    public Explanation explain(IndexReader reader, int doc) throws IOException {
-
-      ConstantScorer cs = new ConstantScorer(similarity, reader, this);
-      boolean exists = cs.docIdSetIterator.advance(doc) == doc;
-
-      ComplexExplanation result = new ComplexExplanation();
-
-      if (exists) {
-        result.setDescription("ConstantScoreQuery(" + filter
-        + "), product of:");
-        result.setValue(queryWeight);
-        result.setMatch(Boolean.TRUE);
-        result.addDetail(new Explanation(getBoost(), "boost"));
-        result.addDetail(new Explanation(queryNorm,"queryNorm"));
-      } else {
-        result.setDescription("ConstantScoreQuery(" + filter
-        + ") doesn't match id " + doc);
-        result.setValue(0);
-        result.setMatch(Boolean.FALSE);
-      }
-      return result;
-    }
-  }
-
-  protected class ConstantScorer extends Scorer {
-    final DocIdSetIterator docIdSetIterator;
-    final float theScore;
-    int doc = -1;
-
-    public ConstantScorer(Similarity similarity, IndexReader reader, ConstantWeight w) throws IOException {
-      super(similarity, w);
-      theScore = w.getValue();
-      DocIdSet docIdSet = filter instanceof SolrFilter ? ((SolrFilter)filter).getDocIdSet(w.context, reader) : filter.getDocIdSet(reader);
+    public Scorer scorer(LeafReaderContext context) throws IOException {
+      DocIdSet docIdSet = filter instanceof SolrFilter ? ((SolrFilter)filter).getDocIdSet(this.context, context, null) : filter.getDocIdSet(context, null);
       if (docIdSet == null) {
-        docIdSetIterator = DocIdSet.EMPTY_DOCIDSET.iterator();
-      } else {
-        DocIdSetIterator iter = docIdSet.iterator();
-        if (iter == null) {
-          docIdSetIterator = DocIdSet.EMPTY_DOCIDSET.iterator();
-        } else {
-          docIdSetIterator = iter;
-        }
+        return null;
       }
+      DocIdSetIterator iterator = docIdSet.iterator();
+      if (iterator == null) {
+        return null;
+      }
+      return new ConstantScoreScorer(this, score(), iterator);
     }
 
-    @Override
-    public int nextDoc() throws IOException {
-      return docIdSetIterator.nextDoc();
-    }
-
-    @Override
-    public int docID() {
-      return docIdSetIterator.docID();
-    }
-
-    @Override
-    public float score() throws IOException {
-      return theScore;
-    }
-
-    @Override
-    public int advance(int target) throws IOException {
-      return docIdSetIterator.advance(target);
-    }
-
-    public Explanation explain(int doc) throws IOException {
-      throw new UnsupportedOperationException();
-    }
   }
 
   @Override
-  public Weight createWeight(Searcher searcher) {
-    try {
-      return new SolrConstantScoreQuery.ConstantWeight(searcher);
-    } catch (IOException e) {
-      // TODO: remove this if ConstantScoreQuery.createWeight adds IOException
-      throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, e);
-    }
+  public Weight createWeight(IndexSearcher searcher, boolean needsScores) throws IOException {
+    return new SolrConstantScoreQuery.ConstantWeight(searcher);
   }
 
   /** Prints a user-readable version of this query. */
   @Override
   public String toString(String field) {
-    return "ConstantScore(" + filter.toString()
-      + (getBoost()==1.0 ? ")" : "^" + getBoost());
+    return ExtendedQueryBase.getOptionsString(this) + "ConstantScore(" + filter.toString() + ")";
   }
 
   /** Returns true if <code>o</code> is equal to this. */
   @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (!(o instanceof SolrConstantScoreQuery)) return false;
-    SolrConstantScoreQuery other = (SolrConstantScoreQuery)o;
-    return this.getBoost()==other.getBoost() && filter.equals(other.filter);
+  public boolean equals(Object other) {
+    return sameClassAs(other) &&
+           Objects.equals(filter, ((SolrConstantScoreQuery) other).filter);
   }
 
   /** Returns a hash code value for this object. */
   @Override
   public int hashCode() {
-    // Simple add is OK since no existing filter hashcode has a float component.
-    return filter.hashCode() + Float.floatToIntBits(getBoost());
+    return 31 * classHash() + filter.hashCode();
   }
 
 }

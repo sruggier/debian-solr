@@ -1,6 +1,4 @@
-package org.apache.solr.uima.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,31 +14,32 @@ package org.apache.solr.uima.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.uima.processor;
 
 import java.util.Map;
 
 /**
  * Configuration holding all the configurable parameters for calling UIMA inside Solr
  *
- * @version $Id$
+ *
  */
 public class SolrUIMAConfiguration {
 
-  private String[] fieldsToAnalyze;
+  private final String[] fieldsToAnalyze;
 
-  private boolean fieldsMerging;
+  private final boolean fieldsMerging;
 
-  private Map<String, Map<String, MapField>> typesFeaturesFieldsMapping;
+  private final Map<String, Map<String, MapField>> typesFeaturesFieldsMapping;
 
-  private String aePath;
+  private final String aePath;
 
-  private Map<String, Object> runtimeParameters;
+  private final Map<String, Object> runtimeParameters;
 
-  private boolean ignoreErrors;
+  private final boolean ignoreErrors;
   
-  private String logField;
+  private final String logField;
 
-  public SolrUIMAConfiguration(String aePath, String[] fieldsToAnalyze, boolean fieldsMerging,
+  SolrUIMAConfiguration(String aePath, String[] fieldsToAnalyze, boolean fieldsMerging,
           Map<String, Map<String, MapField>> typesFeaturesFieldsMapping,
           Map<String, Object> runtimeParameters, boolean ignoreErrors, String logField) {
     this.aePath = aePath;
@@ -80,9 +79,10 @@ public class SolrUIMAConfiguration {
     return logField;
   }
   
-  static final class MapField {
+  public static final class MapField {
     
-    private String fieldName, fieldNameFeature;
+    private String fieldName;
+    private final String fieldNameFeature;
     private boolean prefix; // valid if dynamicField == true
                             // false: *_s, true: s_*
     
@@ -103,11 +103,11 @@ public class SolrUIMAConfiguration {
       }
     }
     
-    String getFieldNameFeature(){
+    public String getFieldNameFeature(){
       return fieldNameFeature;
     }
     
-    String getFieldName(String featureValue){
+    public String getFieldName(String featureValue){
       if(fieldNameFeature != null){
         return prefix ? fieldName + featureValue : featureValue + fieldName;
       }

@@ -1,5 +1,3 @@
-package org.apache.solr.schema;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,11 +14,12 @@ package org.apache.solr.schema;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.schema;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.solr.search.function.DocValues;
-import org.apache.solr.search.function.FieldCacheSource;
-import org.apache.solr.search.function.StringIndexDocValues;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.queries.function.FunctionValues;
+import org.apache.lucene.queries.function.docvalues.DocTermsIndexDocValues;
+import org.apache.lucene.queries.function.valuesource.FieldCacheSource;
 
 import java.io.IOException;
 import java.util.Map;
@@ -37,38 +36,27 @@ public class StrFieldSource extends FieldCacheSource {
   }
 
   @Override
-  public DocValues getValues(Map context, IndexReader reader) throws IOException {
-    return new StringIndexDocValues(this, reader, field) {
+  public FunctionValues getValues(Map context, LeafReaderContext readerContext) throws IOException {
+    return new DocTermsIndexDocValues(this, readerContext, field) {
+
       @Override
       protected String toTerm(String readableValue) {
         return readableValue;
       }
 
       @Override
-      public float floatVal(int doc) {
-        return (float)intVal(doc);
+      public int ordVal(int doc) {
+        return termsIndex.getOrd(doc);
       }
 
       @Override
-      public int intVal(int doc) {
-        int ord=order[doc];
-        return ord;
+      public int numOrd() {
+        return termsIndex.getValueCount();
       }
 
       @Override
-      public long longVal(int doc) {
-        return (long)intVal(doc);
-      }
-
-      @Override
-      public double doubleVal(int doc) {
-        return (double)intVal(doc);
-      }
-
-      @Override
-      public String strVal(int doc) {
-        int ord=order[doc];
-        return lookup[ord];
+      public Object objectVal(int doc) {
+        return strVal(doc);
       }
 
       @Override
@@ -84,7 +72,7 @@ public class StrFieldSource extends FieldCacheSource {
             && super.equals(o);
   }
 
-  private static int hcode = SortableFloatFieldSource.class.hashCode();
+  private static int hcode = StrFieldSource.class.hashCode();
   @Override
   public int hashCode() {
     return hcode + super.hashCode();

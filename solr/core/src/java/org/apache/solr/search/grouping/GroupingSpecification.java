@@ -1,5 +1,3 @@
-package org.apache.solr.search.grouping;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.search.grouping;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.search.grouping;
 
 import org.apache.lucene.search.Sort;
 import org.apache.solr.search.Grouping;
@@ -29,6 +28,7 @@ public class GroupingSpecification {
 
   private String[] fields = new String[]{};
   private String[] queries = new String[]{};
+  private String[] functions = new String[]{};
   private int offset;
   private int limit;
   private int groupOffset;
@@ -63,6 +63,18 @@ public class GroupingSpecification {
     }
 
     this.queries = queries;
+  }
+
+  public String[] getFunctions() {
+    return functions;
+  }
+
+  public void setFunctions(String[] functions) {
+    if (functions == null) {
+      return;
+    }
+
+    this.functions = functions;
   }
 
   public int getGroupOffset() {

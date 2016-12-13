@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,17 +14,19 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import java.io.File;
+
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.store.MockDirectoryWrapper;
+import org.apache.lucene.store.BaseDirectoryWrapper;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
 // Make sure if you use NoDeletionPolicy that no file
 // referenced by a commit point is ever deleted
@@ -34,23 +34,17 @@ import org.apache.lucene.util._TestUtil;
 public class TestNeverDelete extends LuceneTestCase {
 
   public void testIndexing() throws Exception {
-    final File tmpDir = _TestUtil.getTempDir("TestNeverDelete");
-    final MockDirectoryWrapper d = newFSDirectory(tmpDir);
+    final Path tmpDir = createTempDir("TestNeverDelete");
+    final BaseDirectoryWrapper d = newFSDirectory(tmpDir);
 
-    // We want to "see" files removed if Lucene removed
-    // them.  This is still worth running on Windows since
-    // some files the IR opens and closes.
-    d.setNoDeleteOpenFile(false);
-    final RandomIndexWriter w = new RandomIndexWriter(random,
+    final RandomIndexWriter w = new RandomIndexWriter(random(),
                                                       d,
-                                                      newIndexWriterConfig(TEST_VERSION_CURRENT,
-                                                                           new MockAnalyzer(random))
-                                                      .setIndexDeletionPolicy(NoDeletionPolicy.INSTANCE));
-    w.w.getConfig().setMaxBufferedDocs(_TestUtil.nextInt(random, 5, 30));
+                                                      newIndexWriterConfig(new MockAnalyzer(random()))
+                                                        .setIndexDeletionPolicy(NoDeletionPolicy.INSTANCE));
+    w.w.getConfig().setMaxBufferedDocs(TestUtil.nextInt(random(), 5, 30));
 
-    w.w.setInfoStream(VERBOSE ? System.out : null);
     w.commit();
-    Thread[] indexThreads = new Thread[random.nextInt(4)];
+    Thread[] indexThreads = new Thread[random().nextInt(4)];
     final long stopTime = System.currentTimeMillis() + atLeast(1000);
     for (int x=0; x < indexThreads.length; x++) {
       indexThreads[x] = new Thread() {
@@ -60,8 +54,8 @@ public class TestNeverDelete extends LuceneTestCase {
               int docCount = 0;
               while (System.currentTimeMillis() < stopTime) {
                 final Document doc = new Document();
-                doc.add(newField("dc", ""+docCount, Field.Store.YES, Field.Index.NOT_ANALYZED));
-                doc.add(newField("field", "here is some text", Field.Store.YES, Field.Index.ANALYZED));
+                doc.add(newStringField("dc", ""+docCount, Field.Store.YES));
+                doc.add(newTextField("field", "here is some text", Field.Store.YES));
                 w.addDocument(doc);
 
                 if (docCount % 13 == 0) {
@@ -78,9 +72,9 @@ public class TestNeverDelete extends LuceneTestCase {
       indexThreads[x].start();
     }
 
-    final Set<String> allFiles = new HashSet<String>();
+    final Set<String> allFiles = new HashSet<>();
 
-    IndexReader r = IndexReader.open(d);
+    DirectoryReader r = DirectoryReader.open(d);
     while(System.currentTimeMillis() < stopTime) {
       final IndexCommit ic = r.getIndexCommit();
       if (VERBOSE) {
@@ -89,9 +83,9 @@ public class TestNeverDelete extends LuceneTestCase {
       allFiles.addAll(ic.getFileNames());
       // Make sure no old files were removed
       for(String fileName : allFiles) {
-        assertTrue("file " + fileName + " does not exist", d.fileExists(fileName));
+        assertTrue("file " + fileName + " does not exist", slowFileExists(d, fileName));
       }
-      IndexReader r2 = IndexReader.openIfChanged(r);
+      DirectoryReader r2 = DirectoryReader.openIfChanged(r);
       if (r2 != null) {
         r.close();
         r = r2;
@@ -105,7 +99,5 @@ public class TestNeverDelete extends LuceneTestCase {
     }
     w.close();
     d.close();
-
-    _TestUtil.rmDir(tmpDir);
   }
 }

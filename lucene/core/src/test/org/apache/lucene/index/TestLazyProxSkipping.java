@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,28 +14,32 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
 
 import java.io.IOException;
 
-import org.apache.lucene.analysis.MockAnalyzer;
-import org.apache.lucene.analysis.WhitespaceAnalyzer;
+import org.apache.lucene.analysis.*;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.Searcher;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.MockDirectoryWrapper;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.TestUtil;
 
 /**
  * Tests lazy skipping on the proximity file.
  *
  */
 public class TestLazyProxSkipping extends LuceneTestCase {
-    private Searcher searcher;
+    private IndexSearcher searcher;
     private int seeksCounter = 0;
     
     private String field = "tokens";
@@ -47,13 +49,13 @@ public class TestLazyProxSkipping extends LuceneTestCase {
 
     private class SeekCountingDirectory extends MockDirectoryWrapper {
       public SeekCountingDirectory(Directory delegate) {
-        super(random, delegate);
+        super(random(), delegate);
       }
 
       @Override
-      public IndexInput openInput(String name) throws IOException {
-        IndexInput ii = super.openInput(name);
-        if (name.endsWith(".prx")) {
+      public IndexInput openInput(String name, IOContext context) throws IOException {
+        IndexInput ii = super.openInput(name, context);
+        if (name.endsWith(".prx") || name.endsWith(".pos") ) {
           // we decorate the proxStream with a wrapper class that allows to count the number of calls of seek()
           ii = new SeeksCountingStream(ii);
         }
@@ -65,14 +67,21 @@ public class TestLazyProxSkipping extends LuceneTestCase {
     private void createIndex(int numHits) throws IOException {
         int numDocs = 500;
         
+        final Analyzer analyzer = new Analyzer() {
+          @Override
+          public TokenStreamComponents createComponents(String fieldName) {
+            return new TokenStreamComponents(new MockTokenizer(MockTokenizer.WHITESPACE, true));
+          }
+        };
         Directory directory = new SeekCountingDirectory(new RAMDirectory());
         // note: test explicitly disables payloads
         IndexWriter writer = new IndexWriter(
             directory,
-            newIndexWriterConfig(TEST_VERSION_CURRENT, new WhitespaceAnalyzer(TEST_VERSION_CURRENT)).
-                setMaxBufferedDocs(10).
-                setMergePolicy(newLogMergePolicy(false))
+            newIndexWriterConfig(analyzer)
+              .setMaxBufferedDocs(10)
+              .setMergePolicy(newLogMergePolicy(false))
         );
+        
         for (int i = 0; i < numDocs; i++) {
             Document doc = new Document();
             String content;
@@ -87,25 +96,23 @@ public class TestLazyProxSkipping extends LuceneTestCase {
                 content = this.term3 + " " + this.term2;
             }
 
-            doc.add(newField(this.field, content, Field.Store.YES, Field.Index.ANALYZED));
+            doc.add(newTextField(this.field, content, Field.Store.YES));
             writer.addDocument(doc);
         }
         
         // make sure the index has only a single segment
         writer.forceMerge(1);
         writer.close();
-        
-        SegmentReader reader = SegmentReader.getOnlySegmentReader(directory);
+
+      LeafReader reader = getOnlyLeafReader(DirectoryReader.open(directory));
 
       this.searcher = newSearcher(reader);
     }
     
     private ScoreDoc[] search() throws IOException {
         // create PhraseQuery "term1 term2" and search
-        PhraseQuery pq = new PhraseQuery();
-        pq.add(new Term(this.field, this.term1));
-        pq.add(new Term(this.field, this.term2));
-        return this.searcher.search(pq, null, 1000).scoreDocs;        
+        PhraseQuery pq = new PhraseQuery(field, term1, term2);
+        return this.searcher.search(pq, 1000).scoreDocs;        
     }
     
     private void performTest(int numHits) throws IOException {
@@ -117,40 +124,51 @@ public class TestLazyProxSkipping extends LuceneTestCase {
         
         // check if the number of calls of seek() does not exceed the number of hits
         assertTrue(this.seeksCounter > 0);
-        assertTrue(this.seeksCounter <= numHits + 1);
+        assertTrue("seeksCounter=" + this.seeksCounter + " numHits=" + numHits, this.seeksCounter <= numHits + 1);
+        searcher.getIndexReader().close();
     }
-    
+ 
     public void testLazySkipping() throws IOException {
+      final String fieldFormat = TestUtil.getPostingsFormat(this.field);
+      assumeFalse("This test cannot run with Memory postings format", fieldFormat.equals("Memory"));
+      assumeFalse("This test cannot run with Direct postings format", fieldFormat.equals("Direct"));
+      assumeFalse("This test cannot run with SimpleText postings format", fieldFormat.equals("SimpleText"));
+
         // test whether only the minimum amount of seeks()
         // are performed
         performTest(5);
-        searcher.close();
         performTest(10);
-        searcher.close();
     }
     
     public void testSeek() throws IOException {
         Directory directory = newDirectory();
-        IndexWriter writer = new IndexWriter(directory, newIndexWriterConfig( TEST_VERSION_CURRENT, new MockAnalyzer(random)));
+        IndexWriter writer = new IndexWriter(directory, newIndexWriterConfig(new MockAnalyzer(random())));
         for (int i = 0; i < 10; i++) {
             Document doc = new Document();
-            doc.add(newField(this.field, "a b", Field.Store.YES, Field.Index.ANALYZED));
+            doc.add(newTextField(this.field, "a b", Field.Store.YES));
             writer.addDocument(doc);
         }
         
         writer.close();
-        IndexReader reader = IndexReader.open(directory, true);
-        TermPositions tp = reader.termPositions();
-        tp.seek(new Term(this.field, "b"));
+        IndexReader reader = DirectoryReader.open(directory);
+
+        PostingsEnum tp = MultiFields.getTermPositionsEnum(reader,
+                                                                   this.field,
+                                                                   new BytesRef("b"));
+
         for (int i = 0; i < 10; i++) {
-            tp.next();
-            assertEquals(tp.doc(), i);
+            tp.nextDoc();
+            assertEquals(tp.docID(), i);
             assertEquals(tp.nextPosition(), 1);
         }
-        tp.seek(new Term(this.field, "a"));
+
+        tp = MultiFields.getTermPositionsEnum(reader,
+                                              this.field,
+                                              new BytesRef("a"));
+
         for (int i = 0; i < 10; i++) {
-            tp.next();
-            assertEquals(tp.doc(), i);
+            tp.nextDoc();
+            assertEquals(tp.docID(), i);
             assertEquals(tp.nextPosition(), 0);
         }
         reader.close();
@@ -202,9 +220,13 @@ public class TestLazyProxSkipping extends LuceneTestCase {
           }
           
           @Override
-          public Object clone() {
-              return new SeeksCountingStream((IndexInput) this.input.clone());
+          public SeeksCountingStream clone() {
+              return new SeeksCountingStream(this.input.clone());
           }
-      
+
+          @Override
+          public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+            return new SeeksCountingStream(this.input.slice(sliceDescription, offset, length));
+          }
     }
 }

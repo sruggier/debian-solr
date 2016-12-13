@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.response;
 
 import org.apache.solr.request.SolrQueryRequest;
@@ -25,13 +24,15 @@ import org.apache.commons.collections.ExtendedProperties;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
 public class SolrParamResourceLoader extends ResourceLoader {
-  private Map<String,String> templates = new HashMap<String,String>();
+  public static final String TEMPLATE_PARAM_PREFIX = VelocityResponseWriter.TEMPLATE + ".";
+
+  private Map<String,String> templates = new HashMap<>();
   public SolrParamResourceLoader(SolrQueryRequest request) {
     super();
 
@@ -44,8 +45,8 @@ public class SolrParamResourceLoader extends ResourceLoader {
     while (names.hasNext()) {
       String name = names.next();
       
-      if (name.startsWith("v.template.")) {
-        templates.put(name.substring(11) + ".vm",params.get(name));
+      if (name.startsWith(TEMPLATE_PARAM_PREFIX)) {
+        templates.put(name.substring(TEMPLATE_PARAM_PREFIX.length()) + VelocityResponseWriter.TEMPLATE_EXTENSION,params.get(name));
       }
     }
   }
@@ -57,11 +58,7 @@ public class SolrParamResourceLoader extends ResourceLoader {
   @Override
   public InputStream getResourceStream(String s) throws ResourceNotFoundException {
     String template = templates.get(s);
-    try {
-      return template == null ? null : new ByteArrayInputStream(template.getBytes("UTF-8"));
-    } catch (UnsupportedEncodingException e) {
-      throw new RuntimeException(e); // may not happen
-    }
+    return template == null ? null : new ByteArrayInputStream(template.getBytes(StandardCharsets.UTF_8));
   }
 
   @Override

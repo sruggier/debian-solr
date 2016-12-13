@@ -1,5 +1,3 @@
-package org.apache.solr.handler.dataimport;
-
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
@@ -16,6 +14,7 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.dataimport;
 
 import java.util.Iterator;
 import java.util.Map;
@@ -35,9 +34,8 @@ public interface DIHCache extends Iterable<Map<String,Object>> {
    * Opens the cache using the specified properties. The {@link Context}
    * includes any parameters needed by the cache impl. This must be called
    * before any read/write operations are permitted.
-   * <p>
    */
-  public void open(Context context);
+  void open(Context context);
   
   /**
    * <p>
@@ -45,14 +43,14 @@ public interface DIHCache extends Iterable<Map<String,Object>> {
    * but not destroyed.
    * </p>
    */
-  public void close();
+  void close();
   
   /**
    * <p>
    * Persists any pending data to the cache
    * </p>
    */
-  public void flush();
+  void flush();
   
   /**
    * <p>
@@ -68,10 +66,8 @@ public interface DIHCache extends Iterable<Map<String,Object>> {
    * documents will exist in the cache, as the cache allows duplicate keys. To
    * update a key's documents, first call delete(Object key).
    * </p>
-   * 
-   * @param rec
    */
-  public void add(Map<String,Object> rec);
+  void add(Map<String, Object> rec);
   
   /**
    * <p>
@@ -79,7 +75,8 @@ public interface DIHCache extends Iterable<Map<String,Object>> {
    * in key, then insertion, order.
    * </p>
    */
-  public Iterator<Map<String,Object>> iterator();
+  @Override
+  Iterator<Map<String,Object>> iterator();
   
   /**
    * <p>
@@ -87,22 +84,20 @@ public interface DIHCache extends Iterable<Map<String,Object>> {
    * match the given key in insertion order.
    * </p>
    */
-  public Iterator<Map<String,Object>> iterator(Object key);
+  Iterator<Map<String,Object>> iterator(Object key);
   
   /**
    * <p>
    * Delete all documents associated with the given key
    * </p>
-   * 
-   * @param key
    */
-  public void delete(Object key);
+  void delete(Object key);
   
   /**
    * <p>
    * Delete all data from the cache,leaving the empty cache intact.
    * </p>
    */
-  public void deleteAll();
+  void deleteAll();
   
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,15 +16,14 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.queryParser.ParseException;
+import org.apache.lucene.queries.function.ValueSource;
 import org.apache.lucene.search.Query;
 import org.apache.solr.common.params.SolrParams;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.request.SolrQueryRequest;
-import org.apache.solr.search.function.ValueSource;
 
 /**
- * Create a nested query, with the ability of that query to redefine it's type via
+ * Create a nested query, with the ability of that query to redefine its type via
  * local parameters.  This is useful in specifying defaults in configuration and
  * letting clients indirectly reference them.
  * <br>Example: <code>{!query defType=func v=$q1}</code>
@@ -33,10 +32,7 @@ import org.apache.solr.search.function.ValueSource;
  *     created from the lucene syntax string that matches documents with inStock=true.
  */
 public class NestedQParserPlugin extends QParserPlugin {
-  public static String NAME = "query";
-
-  public void init(NamedList args) {
-  }
+  public static final String NAME = "query";
 
   @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
@@ -46,7 +42,7 @@ public class NestedQParserPlugin extends QParserPlugin {
       String b;
 
       @Override
-      public Query parse() throws ParseException {
+      public Query parse() throws SyntaxError {
         baseParser = subQuery(localParams.get(QueryParsing.V), null);
         return baseParser.getQuery();
       }
@@ -57,7 +53,7 @@ public class NestedQParserPlugin extends QParserPlugin {
       }
 
       @Override
-      public Query getHighlightQuery() throws ParseException {
+      public Query getHighlightQuery() throws SyntaxError {
         return baseParser.getHighlightQuery();
       }
 

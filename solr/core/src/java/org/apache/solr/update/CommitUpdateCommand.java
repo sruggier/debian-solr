@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,34 +14,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.update;
+
+import org.apache.solr.request.SolrQueryRequest;
+
 /**
- * @version $Id$
+ *
  */
 public class CommitUpdateCommand extends UpdateCommand {
   public boolean optimize;
-  public boolean waitFlush;
+  public boolean openSearcher=true;     // open a new searcher as part of a hard commit
   public boolean waitSearcher=true;
   public boolean expungeDeletes = false;
+  public boolean softCommit = false;
+  public boolean prepareCommit = false;
 
   /**
-   * During optimize, optimize down to <= this many segments.  Must be >= 1
+   * During optimize, optimize down to &lt;= this many segments.  Must be &gt;= 1
    *
-   * @see org.apache.lucene.index.IndexWriter#optimize(int)
+   * @see org.apache.lucene.index.IndexWriter#forceMerge(int)
    */
   public int maxOptimizeSegments = 1;
 
-  public CommitUpdateCommand(boolean optimize) {
-    super("commit");
+  public CommitUpdateCommand(SolrQueryRequest req, boolean optimize) {
+    super(req);
     this.optimize=optimize;
   }
+
+  @Override
+  public String name() {
+    return "commit";
+  }
+
   @Override
   public String toString() {
-    return "commit(optimize="+optimize
-            +",waitFlush="+waitFlush
+    return super.toString() + ",optimize="+optimize
+            +",openSearcher="+openSearcher
             +",waitSearcher="+waitSearcher
             +",expungeDeletes="+expungeDeletes
-            +')';
+            +",softCommit="+softCommit
+            +",prepareCommit="+prepareCommit
+            +'}';
   }
 }

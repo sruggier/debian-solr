@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.highlight;
 
 import org.apache.lucene.search.vectorhighlight.FragListBuilder;
@@ -30,6 +29,7 @@ public interface SolrFragListBuilder extends SolrInfoMBean, NamedListInitialized
    * may be specified when declaring a request handler in
    * solrconfig.xml
    */
+  @Override
   public void init( NamedList args);
 
   /**

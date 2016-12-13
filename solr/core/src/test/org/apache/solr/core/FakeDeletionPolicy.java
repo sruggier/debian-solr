@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -24,14 +24,15 @@ import java.io.IOException;
 import java.util.List;
 
 /**
- * @version $Id$
+ *
  */
-public class FakeDeletionPolicy implements IndexDeletionPolicy, NamedListInitializedPlugin {
+public class FakeDeletionPolicy extends IndexDeletionPolicy implements NamedListInitializedPlugin {
 
   private String var1;
   private String var2;
 
   //@Override
+  @Override
   public void init(NamedList args) {
     var1 = (String) args.get("var1");
     var2 = (String) args.get("var2");
@@ -46,11 +47,13 @@ public class FakeDeletionPolicy implements IndexDeletionPolicy, NamedListInitial
   }
 
   //  @Override
+  @Override
   public void onCommit(List arg0) throws IOException {
     System.setProperty("onCommit", "test.org.apache.solr.core.FakeDeletionPolicy.onCommit");
   }
 
   //  @Override
+  @Override
   public void onInit(List arg0) throws IOException {
     System.setProperty("onInit", "test.org.apache.solr.core.FakeDeletionPolicy.onInit");
   }

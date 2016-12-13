@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,8 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService; // javadocs
@@ -23,10 +23,10 @@ import java.util.concurrent.ExecutorService; // javadocs
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter; // javadocs
 import org.apache.lucene.index.IndexWriterConfig; // javadocs
-import org.apache.lucene.search.Similarity; // javadocs
+import org.apache.lucene.search.similarities.Similarity; // javadocs
 
 /**
- * Factory class used by {@link SearcherManager} and {@link NRTManager} to
+ * Factory class used by {@link SearcherManager} to
  * create new IndexSearchers. The default implementation just creates 
  * an IndexSearcher with no custom behavior:
  * 
@@ -49,9 +49,15 @@ import org.apache.lucene.search.Similarity; // javadocs
  */
 public class SearcherFactory {
   /** 
-   * Returns a new IndexSearcher over the given reader. 
+   * Returns a new IndexSearcher over the given reader.
+   * @param reader the reader to create a new searcher for
+   * @param previousReader the reader previously used to create a new searcher.
+   *                       This can be <code>null</code> if unknown or if the given reader is the initially opened reader.
+   *                       If this reader is non-null it can be used to find newly opened segments compared to the new reader to warm
+   *                       the searcher up before returning.
    */
-  public IndexSearcher newSearcher(IndexReader reader) throws IOException {
+  public IndexSearcher newSearcher(IndexReader reader, IndexReader previousReader) throws IOException {
     return new IndexSearcher(reader);
   }
+
 }

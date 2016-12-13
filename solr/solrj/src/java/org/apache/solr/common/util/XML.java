@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.util;
 
 import java.io.Writer;
@@ -22,7 +21,7 @@ import java.io.IOException;
 import java.util.Map;
 
 /**
- * @version $Id$
+ *
  */
 public class XML {
 
@@ -71,9 +70,7 @@ public class XML {
 
 /*********
  *
- * @param str
- * @param out
- * @throws IOException
+ * @throws IOException If there is a low-level I/O error.
  */
   public static void escapeCharData(String str, Writer out) throws IOException {
     escape(str, out, chardata_escapes);

@@ -1,5 +1,4 @@
-package org.apache.solr.schema;
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -15,13 +14,13 @@ package org.apache.solr.schema;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+package org.apache.solr.schema;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.solr.common.ResourceLoader;
+import org.apache.lucene.analysis.util.ResourceLoader;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrException.ErrorCode;
 
@@ -29,7 +28,7 @@ import org.apache.solr.common.SolrException.ErrorCode;
  * Simple mock provider with fixed rates and some assertions
  */
 public class MockExchangeRateProvider implements ExchangeRateProvider {
-  private static Map<String,Double> map = new HashMap<String,Double>();
+  private static Map<String,Double> map = new HashMap<>();
   static {
     map.put("USD,EUR", 0.8);
     map.put("EUR,USD", 1.2);
@@ -42,6 +41,7 @@ public class MockExchangeRateProvider implements ExchangeRateProvider {
   private boolean gotArgs = false;
   private boolean gotLoader = false;
   
+  @Override
   public double getExchangeRate(String sourceCurrencyCode, String targetCurrencyCode) {
 //    System.out.println("***** getExchangeRate("+sourceCurrencyCode+targetCurrencyCode+")");
     if(sourceCurrencyCode.equals(targetCurrencyCode)) return 1.0;
@@ -53,11 +53,12 @@ public class MockExchangeRateProvider implements ExchangeRateProvider {
     return result;
   }
 
+  @Override
   public Set<String> listAvailableCurrencies() {
     Set<String> currenciesPairs = map.keySet();
     Set<String> returnSet;
     
-    returnSet = new HashSet<String>();
+    returnSet = new HashSet<>();
     for (String c : currenciesPairs) {
       String[] pairs = c.split(",");
       returnSet.add(pairs[0]);
@@ -66,18 +67,21 @@ public class MockExchangeRateProvider implements ExchangeRateProvider {
     return returnSet;
   }
 
+  @Override
   public boolean reload() throws SolrException {
     assert(gotArgs == true);
     assert(gotLoader == true);
     return true;
   }
 
+  @Override
   public void init(Map<String,String> args) {
     assert(args.get("foo").equals("bar"));
     gotArgs = true;
     args.remove("foo");
   }
 
+  @Override
   public void inform(ResourceLoader loader) throws SolrException {
     assert(loader != null);
     gotLoader = true;

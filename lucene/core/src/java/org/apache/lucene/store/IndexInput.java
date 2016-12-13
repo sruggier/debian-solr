@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,50 +14,34 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
 
-import java.io.IOException;
+
 import java.io.Closeable;
+import java.io.IOException;
 
-/** Abstract base class for input from a file in a {@link Directory}.  A
+/** 
+ * Abstract base class for input from a file in a {@link Directory}.  A
  * random-access input stream.  Used for all Lucene index input operations.
+ *
+ * <p>{@code IndexInput} may only be used from one thread, because it is not
+ * thread safe (it keeps internal state like file position). To allow
+ * multithreaded use, every {@code IndexInput} instance must be cloned before
+ * it is used in another thread. Subclasses must therefore implement {@link #clone()},
+ * returning a new {@code IndexInput} which operates on the same underlying
+ * resource, but positioned independently. 
+ * 
+ * <p><b>Warning:</b> Lucene never closes cloned
+ * {@code IndexInput}s, it will only call {@link #close()} on the original object.
+ * 
+ * <p>If you access the cloned IndexInput after closing the original object,
+ * any <code>readXXX</code> methods will throw {@link AlreadyClosedException}.
+ *
  * @see Directory
  */
 public abstract class IndexInput extends DataInput implements Cloneable,Closeable {
 
-  /**
-   * Expert
-   * 
-   * Similar to {@link #readChars(char[], int, int)} but does not do any conversion operations on the bytes it is reading in.  It still
-   * has to invoke {@link #readByte()} just as {@link #readChars(char[], int, int)} does, but it does not need a buffer to store anything
-   * and it does not have to do any of the bitwise operations, since we don't actually care what is in the byte except to determine
-   * how many more bytes to read
-   * @param length The number of chars to read
-   * @deprecated this method operates on old "modified utf8" encoded
-   *             strings
-   */
-  @Deprecated
-  public void skipChars(int length) throws IOException{
-    for (int i = 0; i < length; i++) {
-      byte b = readByte();
-      if ((b & 0x80) == 0){
-        //do nothing, we only need one byte
-      } else if ((b & 0xE0) != 0xE0) {
-        readByte();//read an additional byte
-      } else {      
-        //read two additional bytes.
-        readByte();
-        readByte();
-      }
-    }
-  }
-
   private final String resourceDescription;
-
-  /** @deprecated please pass resourceDescription */
-  @Deprecated
-  protected IndexInput() {
-    this("anonymous IndexInput");
-  }
 
   /** resourceDescription should be a non-null, opaque string
    *  describing this resource; it's returned from
@@ -72,6 +54,7 @@ public abstract class IndexInput extends DataInput implements Cloneable,Closeabl
   }
 
   /** Closes the stream to further operations. */
+  @Override
   public abstract void close() throws IOException;
 
   /** Returns the current position in this file, where the next read will
@@ -80,7 +63,10 @@ public abstract class IndexInput extends DataInput implements Cloneable,Closeabl
    */
   public abstract long getFilePointer();
 
-  /** Sets current position in this file, where the next read will occur.
+  /** Sets current position in this file, where the next read will occur.  If this is
+   *  beyond the end of the file then this will throw {@code EOFException} and then the
+   *  stream is in an undetermined state.
+   *
    * @see #getFilePointer()
    */
   public abstract void seek(long pos) throws IOException;
@@ -88,32 +74,87 @@ public abstract class IndexInput extends DataInput implements Cloneable,Closeabl
   /** The number of bytes in the file. */
   public abstract long length();
 
-  /**
-   * Copies <code>numBytes</code> bytes to the given {@link IndexOutput}.
-   * <p>
-   * <b>NOTE:</b> this method uses an intermediate buffer to copy the bytes.
-   * Consider overriding it in your implementation, if you can make a better,
-   * optimized copy.
-   * <p>
-   * <b>NOTE</b> ensure that there are enough bytes in the input to copy to
-   * output. Otherwise, different exceptions may be thrown, depending on the
-   * implementation.
-   */
-  public void copyBytes(IndexOutput out, long numBytes) throws IOException {
-    assert numBytes >= 0: "numBytes=" + numBytes;
-
-    byte copyBuf[] = new byte[BufferedIndexInput.BUFFER_SIZE];
-
-    while (numBytes > 0) {
-      final int toCopy = (int) (numBytes > copyBuf.length ? copyBuf.length : numBytes);
-      readBytes(copyBuf, 0, toCopy);
-      out.writeBytes(copyBuf, 0, toCopy);
-      numBytes -= toCopy;
-    }
-  }
-
   @Override
   public String toString() {
     return resourceDescription;
+  }
+  
+  /** {@inheritDoc}
+   * 
+   * <p><b>Warning:</b> Lucene never closes cloned
+   * {@code IndexInput}s, it will only call {@link #close()} on the original object.
+   * 
+   * <p>If you access the cloned IndexInput after closing the original object,
+   * any <code>readXXX</code> methods will throw {@link AlreadyClosedException}.
+   *
+   * <p>This method is NOT thread safe, so if the current {@code IndexInput}
+   * is being used by one thread while {@code clone} is called by another,
+   * disaster could strike.
+   */
+  @Override
+  public IndexInput clone() {
+    return (IndexInput) super.clone();
+  }
+  
+  /**
+   * Creates a slice of this index input, with the given description, offset, and length. 
+   * The slice is seeked to the beginning.
+   */
+  public abstract IndexInput slice(String sliceDescription, long offset, long length) throws IOException;
+
+  /** Subclasses call this to get the String for resourceDescription of a slice of this {@code IndexInput}. */
+  protected String getFullSliceDescription(String sliceDescription) {
+    if (sliceDescription == null) {
+      // Clones pass null sliceDescription:
+      return toString();
+    } else {
+      return toString() + " [slice=" + sliceDescription + "]";
+    }
+  }
+
+  /**
+   * Creates a random-access slice of this index input, with the given offset and length. 
+   * <p>
+   * The default implementation calls {@link #slice}, and it doesn't support random access,
+   * it implements absolute reads as seek+read.
+   */
+  public RandomAccessInput randomAccessSlice(long offset, long length) throws IOException {
+    final IndexInput slice = slice("randomaccess", offset, length);
+    if (slice instanceof RandomAccessInput) {
+      // slice() already supports random access
+      return (RandomAccessInput) slice;
+    } else {
+      // return default impl
+      return new RandomAccessInput() {
+        @Override
+        public byte readByte(long pos) throws IOException {
+          slice.seek(pos);
+          return slice.readByte();
+        }
+        
+        @Override
+        public short readShort(long pos) throws IOException {
+          slice.seek(pos);
+          return slice.readShort();
+        }
+        
+        @Override
+        public int readInt(long pos) throws IOException {
+          slice.seek(pos);
+          return slice.readInt();
+        }
+        
+        @Override
+        public long readLong(long pos) throws IOException {
+          slice.seek(pos);
+          return slice.readLong();
+        }
+
+        @Override
+        public String toString() {
+          return "RandomAccessInput(" + IndexInput.this.toString() + ")";
+        }
+      };
+    }
   }
 }

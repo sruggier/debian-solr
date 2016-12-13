@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,14 +14,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common.params;
 
+import java.io.IOException;
 import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.solr.common.MapSerializable;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.util.NamedList;
 import org.apache.solr.common.util.SimpleOrderedMap;
@@ -29,9 +38,9 @@ import org.apache.solr.common.util.StrUtils;
 
 /**  SolrParams hold request parameters.
  *
- * @version $Id$
+ *
  */
-public abstract class SolrParams implements Serializable {
+public abstract class SolrParams implements Serializable, MapSerializable {
 
   /** returns the String value of a param, or null if not set */
   public abstract String get(String param);
@@ -47,14 +56,14 @@ public abstract class SolrParams implements Serializable {
     String val = get(param);
     return val==null ? def : val;
   }
-  
+
   /** returns a RequiredSolrParams wrapping this */
   public RequiredSolrParams required()
   {
     // TODO? should we want to stash a reference?
     return new RequiredSolrParams(this);
   }
-  
+
   protected String fpname(String field, String param) {
     return "f."+field+'.'+param;
   }
@@ -74,7 +83,7 @@ public abstract class SolrParams implements Serializable {
     String val = get(fpname(field,param));
     return val!=null ? val : get(param, def);
   }
-  
+
   /** returns the String values of the field parameter, "f.field.param", or
    *  the values for "param" if that is not set.
    */
@@ -83,10 +92,23 @@ public abstract class SolrParams implements Serializable {
     return val!=null ? val : getParams(param);
   }
 
-  /** Returns the Boolean value of the param, or null if not set */
+  /** 
+   * Returns the Boolean value of the param, or null if not set. 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value <code>false</code>.  
+   * @see #getBool(String, boolean) 
+   * @see #getPrimitiveBool(String) 
+   *  
+   **/
+  
   public Boolean getBool(String param) {
     String val = get(param);
     return val==null ? null : StrUtils.parseBool(val);
+  }
+  
+  /** Returns the boolean value of the param, or <code>false</code> if not set */
+  public boolean getPrimitiveBool(String param) {
+    return getBool(param, false);
   }
 
   /** Returns the boolean value of the param, or def if not set */
@@ -94,22 +116,47 @@ public abstract class SolrParams implements Serializable {
     String val = get(param);
     return val==null ? def : StrUtils.parseBool(val);
   }
-  
-  /** Returns the Boolean value of the field param, 
-      or the value for param, or null if neither is set. */
+
+  /** 
+   * Returns the Boolean value of the field param,
+   * or the value for param, or null if neither is set. 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value <code>false</code>.  
+   * @see #getFieldBool(String, String, boolean) 
+   * @see #getPrimitiveFieldBool(String, String)    
+   **/
   public Boolean getFieldBool(String field, String param) {
     String val = getFieldParam(field, param);
     return val==null ? null : StrUtils.parseBool(val);
   }
   
-  /** Returns the boolean value of the field param, 
-  or the value for param, or def if neither is set. */
+  /**
+   * Returns the boolean value of the field param, or
+   * the value for param or 
+   * the default value of boolean - <code>false</code> 
+   */
+  public boolean getPrimitiveFieldBool(String field, String param) {
+    return getFieldBool(field, param, false);
+  }
+
+  /** 
+   * Returns the boolean value of the field param,
+   * or the value for param, or def if neither is set. 
+   * 
+   * */
   public boolean getFieldBool(String field, String param, boolean def) {
     String val = getFieldParam(field, param);
     return val==null ? def : StrUtils.parseBool(val);
   }
 
-  /** Returns the Integer value of the param, or null if not set */
+  /** 
+   * Returns the Integer value of the param, or null if not set 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value for int -
+   * zero (<code>0</code>).  
+   * @see #getInt(String, int) 
+   * @see #getPrimitiveInt(String) 
+   * */
   public Integer getInt(String param) {
     String val = get(param);
     try {
@@ -119,21 +166,61 @@ public abstract class SolrParams implements Serializable {
       throw new SolrException( SolrException.ErrorCode.BAD_REQUEST, ex.getMessage(), ex );
     }
   }
+  
+  /**
+   * Returns int value of the the param or 
+   * default value for int - zero (<code>0</code>) if not set. 
+   */
+  public int getPrimitiveInt(String param) {
+    return getInt(param, 0);
+  }
 
   /** Returns the int value of the param, or def if not set */
   public int getInt(String param, int def) {
     String val = get(param);
     try {
-      return val==null ? def : Integer.parseInt(val);
+      return val == null ? def : Integer.parseInt(val);
     }
     catch( Exception ex ) {
       throw new SolrException( SolrException.ErrorCode.BAD_REQUEST, ex.getMessage(), ex );
     }
   }
-  
+
+  /** 
+   * Returns the Long value of the param, or null if not set 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value zero (<code>0</code>).  
+   * @see #getLong(String, long) 
+   *
+   **/
+  public Long getLong(String param) {
+    String val = get(param);
+    try {
+      return val == null ? null : Long.valueOf(val);
+    } catch (Exception ex) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, ex.getMessage(), ex);
+    }
+  }
+
+  /** Returns the long value of the param, or def if not set */
+  public long getLong(String param, long def) {
+    String val = get(param);
+    try {
+      return val == null ? def : Long.parseLong(val);
+    } catch (Exception ex) {
+      throw new SolrException(SolrException.ErrorCode.BAD_REQUEST, ex.getMessage(), ex);
+    }
+  }
+
+
   /**
-   * @return The int value of the field param, or the value for param 
-   * or <code>null</code> if neither is set. 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value zero (<code>0</code>).
+   * 
+   * @return The int value of the field param, or the value for param
+   * or <code>null</code> if neither is set.
+   *   
+   * @see #getFieldInt(String, String, int) 
    **/
   public Integer getFieldInt(String field, String param) {
     String val = getFieldParam(field, param);
@@ -144,8 +231,8 @@ public abstract class SolrParams implements Serializable {
       throw new SolrException( SolrException.ErrorCode.BAD_REQUEST, ex.getMessage(), ex );
     }
   }
-  
-  /** Returns the int value of the field param, 
+
+  /** Returns the int value of the field param,
   or the value for param, or def if neither is set. */
   public int getFieldInt(String field, String param, int def) {
     String val = getFieldParam(field, param);
@@ -158,7 +245,12 @@ public abstract class SolrParams implements Serializable {
   }
 
 
-  /** Returns the Float value of the param, or null if not set */
+  /** 
+   * Returns the Float value of the param, or null if not set 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value zero (<code>0.0f</code>).
+   * @see #getFloat(String, float)
+   **/
   public Float getFloat(String param) {
     String val = get(param);
     try {
@@ -180,7 +272,13 @@ public abstract class SolrParams implements Serializable {
     }
   }
 
-  /** Returns the Float value of the param, or null if not set */
+  /** 
+   * Returns the Float value of the param, or null if not set 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value zero (<code>0.0d</code>).
+   * @see #getDouble(String, double)
+   *
+   **/
   public Double getDouble(String param) {
     String val = get(param);
     try {
@@ -203,7 +301,15 @@ public abstract class SolrParams implements Serializable {
   }
 
 
-  /** Returns the float value of the field param. */
+  /** 
+   * Returns the float value of the field param. 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value zero (<code>0.0f</code>).
+   * 
+   * @see #getFieldFloat(String, String, float)
+   * @see #getPrimitiveFieldFloat(String, String)
+   * 
+   **/
   public Float getFieldFloat(String field, String param) {
     String val = getFieldParam(field, param);
     try {
@@ -212,6 +318,15 @@ public abstract class SolrParams implements Serializable {
     catch( Exception ex ) {
       throw new SolrException( SolrException.ErrorCode.BAD_REQUEST, ex.getMessage(), ex );
     }
+  }
+  
+  /**
+   * Returns the float value of the field param or
+   * the value for param or 
+   * the default value for float - zero (<code>0.0f</code>)   
+   */
+  public float getPrimitiveFieldFloat(String field, String param) {
+    return getFieldFloat(field, param, 0.0f);
   }
 
   /** Returns the float value of the field param,
@@ -226,7 +341,13 @@ public abstract class SolrParams implements Serializable {
     }
   }
 
-  /** Returns the float value of the field param. */
+  /** 
+   * Returns the float value of the field param. 
+   * Use this method only when you want to be explicit 
+   * about absence of a value (<code>null</code>) vs the default value zero (<code>0.0d</code>).
+   * @see #getDouble(String, double)
+   *
+   **/
   public Double getFieldDouble(String field, String param) {
     String val = getFieldParam(field, param);
     try {
@@ -249,16 +370,6 @@ public abstract class SolrParams implements Serializable {
     }
   }
 
-  /** how to transform a String into a boolean... more flexible than
-   * Boolean.parseBoolean() to enable easier integration with html forms.
-   * @deprecated Use org.apache.solr.common.util.StrUtils.parseBool
-   */
-  @Deprecated
-  protected boolean parseBool(String s) {
-    return StrUtils.parseBool(s);
-  }
-
-  @SuppressWarnings({"deprecation"})
   public static SolrParams wrapDefaults(SolrParams params, SolrParams defaults) {
     if (params == null)
       return defaults;
@@ -267,50 +378,70 @@ public abstract class SolrParams implements Serializable {
     return new DefaultSolrParams(params,defaults);
   }
 
-  @SuppressWarnings({"deprecation"})
   public static SolrParams wrapAppended(SolrParams params, SolrParams defaults) {
     if (params == null)
       return defaults;
     if (defaults == null)
       return params;
-    return new AppendedSolrParams(params,defaults);
+    return AppendedSolrParams.wrapAppended(params,defaults);
   }
 
-  /** Create a Map<String,String> from a NamedList given no keys are repeated */
+  /** Create a Map&lt;String,String&gt; from a NamedList given no keys are repeated */
   public static Map<String,String> toMap(NamedList params) {
-    HashMap<String,String> map = new HashMap<String,String>();
+    HashMap<String,String> map = new HashMap<>();
     for (int i=0; i<params.size(); i++) {
       map.put(params.getName(i), params.getVal(i).toString());
     }
     return map;
   }
 
-  /** Create a Map<String,String[]> from a NamedList */
+  /** Create a Map&lt;String,String[]&gt; from a NamedList */
   public static Map<String,String[]> toMultiMap(NamedList params) {
-    HashMap<String,String[]> map = new HashMap<String,String[]>();
+    HashMap<String,String[]> map = new HashMap<>();
     for (int i=0; i<params.size(); i++) {
       String name = params.getName(i);
-      String val = params.getVal(i).toString();
-      MultiMapSolrParams.addParam(name,val,map);
+      Object val = params.getVal(i);
+      if (val instanceof String[]) {
+        MultiMapSolrParams.addParam(name, (String[]) val, map);
+      } else if (val instanceof List) {
+        List l = (List) val;
+        String[] s = new String[l.size()];
+        for (int j = 0; j < l.size(); j++) {
+          s[j] = l.get(j) == null ? null : String.valueOf(l.get(j));
+        }
+        MultiMapSolrParams.addParam(name, s, map);
+      } else {
+        MultiMapSolrParams.addParam(name, val.toString(), map);
+      }
     }
     return map;
   }
 
   /** Create SolrParams from NamedList. */
   public static SolrParams toSolrParams(NamedList params) {
-    // if no keys are repeated use the faster MapSolrParams
-    HashMap<String,String> map = new HashMap<String,String>();
-    for (int i=0; i<params.size(); i++) {
-      String prev = map.put(params.getName(i), params.getVal(i).toString());
-      if (prev!=null) return new MultiMapSolrParams(toMultiMap(params));
-    }
-    return new MapSolrParams(map);
+    // always use MultiMap for easier processing further down the chain
+    return new MultiMapSolrParams(toMultiMap(params));
   }
-  
+
+  /** Create filtered SolrParams. */
+  public SolrParams toFilteredSolrParams(List<String> names) {
+    NamedList<String> nl = new NamedList<>();
+    for (Iterator<String> it = getParameterNamesIterator(); it.hasNext();) {
+      final String name = it.next();
+      if (names.contains(name)) {
+        final String[] values = getParams(name);
+        for (String value : values) {
+          nl.add(name, value);
+        }
+      }
+    }
+    return toSolrParams(nl);
+  }
+
   /** Convert this to a NamedList */
   public NamedList<Object> toNamedList() {
-    final SimpleOrderedMap<Object> result = new SimpleOrderedMap<Object>();
-    
+    final SimpleOrderedMap<Object> result = new SimpleOrderedMap<>();
+
     for(Iterator<String> it=getParameterNamesIterator(); it.hasNext(); ) {
       final String name = it.next();
       final String [] values = getParams(name);
@@ -323,12 +454,86 @@ public abstract class SolrParams implements Serializable {
     }
     return result;
   }
+
+  public Map<String, Object> getAll(Map<String, Object> sink, Collection<String> params) {
+    if (sink == null) sink = new LinkedHashMap<>();
+    for (String param : params) {
+      String[] v = getParams(param);
+      if (v != null && v.length > 0) {
+        if (v.length == 1) {
+          sink.put(param, v[0]);
+        } else {
+          sink.put(param, v);
+        }
+      }
+    }
+    return sink;
+  }
+
+
+  /**Copy all params to the given map or if the given map is null
+   * create a new one
+   */
+  public Map<String, Object> getAll(Map<String, Object> sink, String... params){
+    return getAll(sink, params == null ? Collections.emptyList() : Arrays.asList(params));
+  }
+  
+  /** Returns this SolrParams as a properly URL encoded string, starting with {@code "?"}, if not empty. */
+  public String toQueryString() {
+    try {
+      final String charset = StandardCharsets.UTF_8.name();
+      final StringBuilder sb = new StringBuilder(128);
+      boolean first = true;
+      for (final Iterator<String> it = getParameterNamesIterator(); it.hasNext();) {
+        final String name = it.next(), nameEnc = URLEncoder.encode(name, charset);
+        for (String val : getParams(name)) {
+          sb.append(first ? '?' : '&').append(nameEnc).append('=').append(URLEncoder.encode(val, charset));
+          first = false;
+        }
+      }
+      return sb.toString();
+    } catch (UnsupportedEncodingException e) {
+      // impossible!
+      throw new AssertionError(e);
+    }
+  }
+  
+  /** Like {@link #toQueryString()}, but only replacing enough chars so that
+   * the URL may be unambiguously pasted back into a browser.
+   * This method can be used to properly log query parameters without
+   * making them unreadable.
+   * <p>
+   * Characters with a numeric value less than 32 are encoded.
+   * &amp;,=,%,+,space are encoded.
+   */
+  @Override
+  public String toString() {
+    final StringBuilder sb = new StringBuilder(128);
+    try {
+      boolean first=true;
+      for (final Iterator<String> it = getParameterNamesIterator(); it.hasNext();) {
+        final String name = it.next();
+        for (String val : getParams(name)) {
+          if (!first) sb.append('&');
+          first=false;
+          StrUtils.partialURLEncodeVal(sb, name);
+          sb.append('=');
+          StrUtils.partialURLEncodeVal(sb, val);
+        }
+      }
+      return sb.toString();
+    } catch (IOException e) {
+      // impossible!
+      throw new AssertionError(e);
+    }
+  }
+
+  @Override
+  public Map toMap(Map<String, Object> map) {
+    toNamedList().forEach((k, v) -> {
+      if (v == null || "".equals(v)) return;
+      map.put(k, v);
+    });
+    return map;
+  }
 }
-
-
-
-
-
-
-
-

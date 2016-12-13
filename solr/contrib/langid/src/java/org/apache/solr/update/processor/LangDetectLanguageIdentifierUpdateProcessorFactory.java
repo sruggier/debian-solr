@@ -1,6 +1,4 @@
-package org.apache.solr.update.processor;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,12 +14,13 @@ package org.apache.solr.update.processor;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.update.processor;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -40,7 +39,7 @@ import com.cybozu.labs.langdetect.LangDetectException;
 /**
  * Identifies the language of a set of input fields using 
  * http://code.google.com/p/language-detection
- * <p/>
+ * <p>
  * The UpdateProcessorChain config entry can take a number of parameters
  * which may also be passed as HTTP parameters on the update request
  * and override the defaults. Here is the simplest processor config possible:
@@ -61,6 +60,7 @@ public class LangDetectLanguageIdentifierUpdateProcessorFactory extends
   protected SolrParams appends;
   protected SolrParams invariants;
 
+  @Override
   public void inform(SolrCore core) {
   }
 
@@ -69,6 +69,7 @@ public class LangDetectLanguageIdentifierUpdateProcessorFactory extends
    * to a RequestHandler, with defaults, appends and invariants.
    * @param args a NamedList with the configuration parameters 
    */
+  @Override
   @SuppressWarnings("rawtypes")
   public void init( NamedList args )
   {
@@ -123,11 +124,10 @@ public class LangDetectLanguageIdentifierUpdateProcessorFactory extends
       return;
     }
     loaded = true;
-    List<String> profileData = new ArrayList<String>();
-    Charset encoding = Charset.forName("UTF-8");
+    List<String> profileData = new ArrayList<>();
     for (String language : languages) {
       InputStream stream = LangDetectLanguageIdentifierUpdateProcessor.class.getResourceAsStream("langdetect-profiles/" + language);
-      BufferedReader reader = new BufferedReader(new InputStreamReader(stream, encoding));
+      BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
       profileData.add(new String(IOUtils.toCharArray(reader)));
       reader.close();
     }

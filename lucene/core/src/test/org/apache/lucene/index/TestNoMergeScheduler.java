@@ -1,6 +1,4 @@
-package org.apache.lucene.index;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,14 +14,17 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
+
+
+import com.carrotsearch.randomizedtesting.generators.RandomPicks;
+import org.apache.lucene.util.LuceneTestCase;
+import org.junit.Test;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
-
-import org.apache.lucene.util.LuceneTestCase;
-import org.junit.Test;
 
 public class TestNoMergeScheduler extends LuceneTestCase {
 
@@ -31,7 +32,7 @@ public class TestNoMergeScheduler extends LuceneTestCase {
   public void testNoMergeScheduler() throws Exception {
     MergeScheduler ms = NoMergeScheduler.INSTANCE;
     ms.close();
-    ms.merge(null);
+    ms.merge(null, RandomPicks.randomFrom(random(), MergeTrigger.values()), random().nextBoolean());
   }
 
   @Test

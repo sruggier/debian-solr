@@ -1,6 +1,4 @@
-package org.apache.solr.handler.dataimport;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,6 +14,7 @@ package org.apache.solr.handler.dataimport;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.solr.handler.dataimport;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -25,8 +24,9 @@ public abstract class DIHWriterBase implements DIHWriter {
   protected String keyFieldName;
   protected Set<Object> deltaKeys = null;
   
+  @Override
   public void setDeltaKeys(Set<Map<String,Object>> passedInDeltaKeys) {
-    deltaKeys = new HashSet<Object>();
+    deltaKeys = new HashSet<>();
     for (Map<String,Object> aMap : passedInDeltaKeys) {
       if (aMap.size() > 0) {
         Object key = null;

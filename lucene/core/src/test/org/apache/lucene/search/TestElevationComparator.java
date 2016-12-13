@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,30 +14,37 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
+
 
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.index.*;
 import org.apache.lucene.search.FieldValueHitQueue.Entry;
+import org.apache.lucene.search.similarities.ClassicSimilarity;
 import org.apache.lucene.store.*;
 import org.apache.lucene.util.LuceneTestCase;
+import org.apache.lucene.util.BytesRef;
+
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
 public class TestElevationComparator extends LuceneTestCase {
 
-  private final Map<String,Integer> priority = new HashMap<String,Integer>();
+  private final Map<BytesRef,Integer> priority = new HashMap<>();
 
   //@Test
   public void testSorting() throws Throwable {
     Directory directory = newDirectory();
     IndexWriter writer = new IndexWriter(
         directory,
-        newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random)).
+        newIndexWriterConfig(new MockAnalyzer(random())).
             setMaxBufferedDocs(2).
-            setMergePolicy(newLogMergePolicy(1000))
+            setMergePolicy(newLogMergePolicy(1000)).
+            setSimilarity(new ClassicSimilarity())
     );
     writer.addDocument(adoc(new String[] {"id", "a", "title", "ipod", "str_s", "a"}));
     writer.addDocument(adoc(new String[] {"id", "b", "title", "ipod ipod", "str_s", "b"}));
@@ -48,22 +53,22 @@ public class TestElevationComparator extends LuceneTestCase {
     writer.addDocument(adoc(new String[] {"id", "y", "title", "boosted boosted", "str_s","y"}));
     writer.addDocument(adoc(new String[] {"id", "z", "title", "boosted boosted boosted","str_s", "z"}));
 
-    IndexReader r = IndexReader.open(writer, true);
+    IndexReader r = DirectoryReader.open(writer);
     writer.close();
 
     IndexSearcher searcher = newSearcher(r);
+    searcher.setSimilarity(new ClassicSimilarity());
 
     runTest(searcher, true);
     runTest(searcher, false);
 
-    searcher.close();
     r.close();
     directory.close();
   }
 
   private void runTest(IndexSearcher searcher, boolean reversed) throws Throwable {
 
-    BooleanQuery newq = new BooleanQuery(false);
+    BooleanQuery.Builder newq = new BooleanQuery.Builder();
     TermQuery query = new TermQuery(new Term("title", "ipod"));
 
     newq.add(query, BooleanClause.Occur.SHOULD);
@@ -71,11 +76,11 @@ public class TestElevationComparator extends LuceneTestCase {
 
     Sort sort = new Sort(
         new SortField("id", new ElevationComparatorSource(priority), false),
-        new SortField(null, SortField.SCORE, reversed)
+        new SortField(null, SortField.Type.SCORE, reversed)
       );
 
-    TopDocsCollector<Entry> topCollector = TopFieldCollector.create(sort, 50, false, true, true, true);
-    searcher.search(newq, null, topCollector);
+    TopDocsCollector<Entry> topCollector = TopFieldCollector.create(sort, 50, false, true, true);
+    searcher.search(newq.build(), topCollector);
 
     TopDocs topDocs = topCollector.topDocs(0, 10);
     int nDocsReturned = topDocs.scoreDocs.length;
@@ -108,30 +113,33 @@ public class TestElevationComparator extends LuceneTestCase {
  }
 
  private Query getElevatedQuery(String[] vals) {
-   BooleanQuery q = new BooleanQuery(false);
-   q.setBoost(0);
+   BooleanQuery.Builder b = new BooleanQuery.Builder();
    int max = (vals.length / 2) + 5;
    for (int i = 0; i < vals.length - 1; i += 2) {
-     q.add(new TermQuery(new Term(vals[i], vals[i + 1])), BooleanClause.Occur.SHOULD);
-     priority.put(vals[i + 1], Integer.valueOf(max--));
+     b.add(new TermQuery(new Term(vals[i], vals[i + 1])), BooleanClause.Occur.SHOULD);
+     priority.put(new BytesRef(vals[i + 1]), Integer.valueOf(max--));
      // System.out.println(" pri doc=" + vals[i+1] + " pri=" + (1+max));
    }
-   return q;
+   BooleanQuery q = b.build();
+   return new BoostQuery(q, 0f);
  }
 
  private Document adoc(String[] vals) {
    Document doc = new Document();
    for (int i = 0; i < vals.length - 2; i += 2) {
-     doc.add(newField(vals[i], vals[i + 1], Field.Store.YES, Field.Index.ANALYZED));
+     doc.add(newTextField(vals[i], vals[i + 1], Field.Store.YES));
+     if (vals[i].equals("id")) {
+       doc.add(new SortedDocValuesField(vals[i], new BytesRef(vals[i+1])));
+     }
    }
    return doc;
  }
 }
 
 class ElevationComparatorSource extends FieldComparatorSource {
-  private final Map<String,Integer> priority;
+  private final Map<BytesRef,Integer> priority;
 
-  public ElevationComparatorSource(final Map<String,Integer> boosts) {
+  public ElevationComparatorSource(final Map<BytesRef,Integer> boosts) {
    this.priority = boosts;
   }
 
@@ -139,9 +147,50 @@ class ElevationComparatorSource extends FieldComparatorSource {
   public FieldComparator<Integer> newComparator(final String fieldname, final int numHits, int sortPos, boolean reversed) throws IOException {
    return new FieldComparator<Integer>() {
 
-     FieldCache.StringIndex idIndex;
      private final int[] values = new int[numHits];
      int bottomVal;
+
+     @Override
+    public LeafFieldComparator getLeafComparator(LeafReaderContext context)
+        throws IOException {
+      final SortedDocValues idIndex = DocValues.getSorted(context.reader(), fieldname);
+      return new LeafFieldComparator() {
+
+        @Override
+        public void setBottom(int slot) {
+          bottomVal = values[slot];
+        }
+
+        @Override
+        public int compareTop(int doc) {
+          throw new UnsupportedOperationException();
+        }
+
+        private int docVal(int doc) {
+          int ord = idIndex.getOrd(doc);
+          if (ord == -1) {
+            return 0;
+          } else {
+            final BytesRef term = idIndex.lookupOrd(ord);
+            Integer prio = priority.get(term);
+            return prio == null ? 0 : prio.intValue();
+          }
+        }
+
+        @Override
+        public int compareBottom(int doc) {
+          return docVal(doc) - bottomVal;
+        }
+
+        @Override
+        public void copy(int slot, int doc) {
+          values[slot] = docVal(doc);
+        }
+
+        @Override
+        public void setScorer(Scorer scorer) {}
+      };
+    }
 
      @Override
      public int compare(int slot1, int slot2) {
@@ -149,35 +198,16 @@ class ElevationComparatorSource extends FieldComparatorSource {
      }
 
      @Override
-     public void setBottom(int slot) {
-       bottomVal = values[slot];
-     }
-
-     private int docVal(int doc) throws IOException {
-       String id = idIndex.lookup[idIndex.order[doc]];
-       Integer prio = priority.get(id);
-       return prio == null ? 0 : prio.intValue();
-     }
-
-     @Override
-     public int compareBottom(int doc) throws IOException {
-       return docVal(doc) - bottomVal;
-     }
-
-     @Override
-     public void copy(int slot, int doc) throws IOException {
-       values[slot] = docVal(doc);
-     }
-
-     @Override
-     public void setNextReader(IndexReader reader, int docBase) throws IOException {
-       idIndex = FieldCache.DEFAULT.getStringIndex(reader, fieldname);
+     public void setTopValue(Integer value) {
+       throw new UnsupportedOperationException();
      }
 
      @Override
      public Integer value(int slot) {
        return Integer.valueOf(values[slot]);
      }
+
+
    };
  }
 }

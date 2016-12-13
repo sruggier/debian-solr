@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,39 +14,45 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.request;
 
 import java.io.IOException;
 import java.io.StringWriter;
-import java.util.HashSet;
-import java.util.Set;
-
+import java.nio.charset.StandardCharsets;
 import org.apache.solr.SolrTestCaseJ4;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.params.CommonParams;
 import org.apache.solr.common.util.NamedList;
+import org.apache.solr.search.ReturnFields;
 import org.apache.solr.response.JSONResponseWriter;
-import org.apache.solr.response.PHPSerializedResponseWriter;
 import org.apache.solr.response.PythonResponseWriter;
 import org.apache.solr.response.QueryResponseWriter;
 import org.apache.solr.response.RubyResponseWriter;
 import org.apache.solr.response.SolrQueryResponse;
+import org.apache.solr.search.SolrReturnFields;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 /** Test some aspects of JSON/python writer output (very incomplete)
+ * @Deprecated use {@link org.apache.solr.response.JSONWriterTest} instead
  *
  */
+@Deprecated
 public class JSONWriterTest extends SolrTestCaseJ4 {
   @BeforeClass
   public static void beforeClass() throws Exception {
     initCore("solrconfig.xml","schema.xml");
-  }    
+  }
+
+  private void jsonEq(String expected, String received) {
+    expected = expected.trim();
+    received = received.trim();
+    assertEquals(expected, received);
+  }
   
   @Test
-  public void testNaNInf() throws IOException {
+  public void testTypes() throws IOException {
     SolrQueryRequest req = req("dummy");
     SolrQueryResponse rsp = new SolrQueryResponse();
     QueryResponseWriter w = new PythonResponseWriter();
@@ -56,20 +62,21 @@ public class JSONWriterTest extends SolrTestCaseJ4 {
     rsp.add("data2", Double.NEGATIVE_INFINITY);
     rsp.add("data3", Float.POSITIVE_INFINITY);
     w.write(buf, req, rsp);
-    assertEquals(buf.toString(), "{'data1':float('NaN'),'data2':-float('Inf'),'data3':float('Inf')}");
+    jsonEq(buf.toString(), "{'data1':float('NaN'),'data2':-float('Inf'),'data3':float('Inf')}");
 
     w = new RubyResponseWriter();
     buf = new StringWriter();
     w.write(buf, req, rsp);
-    assertEquals(buf.toString(), "{'data1'=>(0.0/0.0),'data2'=>-(1.0/0.0),'data3'=>(1.0/0.0)}");
+    jsonEq(buf.toString(), "{'data1'=>(0.0/0.0),'data2'=>-(1.0/0.0),'data3'=>(1.0/0.0)}");
 
     w = new JSONResponseWriter();
     buf = new StringWriter();
     w.write(buf, req, rsp);
-    assertEquals(buf.toString(), "{\"data1\":\"NaN\",\"data2\":\"-Infinity\",\"data3\":\"Infinity\"}");
+    jsonEq(buf.toString(), "{\"data1\":\"NaN\",\"data2\":\"-Infinity\",\"data3\":\"Infinity\"}");
     req.close();
   }
 
+  @Test
   public void testJSON() throws IOException {
     SolrQueryRequest req = req("wt","json","json.nl","arrarr");
     SolrQueryResponse rsp = new SolrQueryResponse();
@@ -81,20 +88,23 @@ public class JSONWriterTest extends SolrTestCaseJ4 {
     nl.add(null, 42);
     rsp.add("nl", nl);
 
+    rsp.add("byte", Byte.valueOf((byte)-3));
+    rsp.add("short", Short.valueOf((short)-4));
+    rsp.add("bytes", "abc".getBytes(StandardCharsets.UTF_8));
+
     w.write(buf, req, rsp);
-    assertEquals("{\"nl\":[[\"data1\",\"he\\u2028llo\\u2029!\"],[null,42]]}", buf.toString());
+    jsonEq("{\"nl\":[[\"data1\",\"he\\u2028llo\\u2029!\"],[null,42]],\"byte\":-3,\"short\":-4,\"bytes\":\"YWJj\"}", buf.toString());
     req.close();
   }
 
   @Test
   public void testJSONSolrDocument() throws IOException {
-    SolrQueryRequest req = req(CommonParams.WT,"json");
+    SolrQueryRequest req = req(CommonParams.WT,"json",
+                               CommonParams.FL,"id,score");
     SolrQueryResponse rsp = new SolrQueryResponse();
     JSONResponseWriter w = new JSONResponseWriter();
 
-    Set<String> returnFields = new HashSet<String>(1);
-    returnFields.add("id");
-    returnFields.add("score");
+    ReturnFields returnFields = new SolrReturnFields(req);
     rsp.setReturnFields(returnFields);
 
     StringWriter buf = new StringWriter();
@@ -111,7 +121,7 @@ public class JSONWriterTest extends SolrTestCaseJ4 {
     list.setMaxScore(0.7f);
     list.add(solrDoc);
 
-    rsp.add("response", list);
+    rsp.addResponse(list);
 
     w.write(buf, req, rsp);
     String result = buf.toString();

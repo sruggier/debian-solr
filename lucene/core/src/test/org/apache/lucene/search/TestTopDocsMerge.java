@@ -1,6 +1,4 @@
-package org.apache.lucene.search;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,52 +14,70 @@ package org.apache.lucene.search;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.search;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
-import org.apache.lucene.document.NumericField;
+import org.apache.lucene.document.FloatDocValuesField;
+import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.SortedDocValuesField;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.CompositeReaderContext;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.index.ReaderUtil;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.ReaderUtil;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 public class TestTopDocsMerge extends LuceneTestCase {
 
-  private static class ShardSearcher {
-    private final IndexSearcher subSearcher;
+  private static class ShardSearcher extends IndexSearcher {
+    private final List<LeafReaderContext> ctx;
 
-    public ShardSearcher(IndexReader subReader) {
-      this.subSearcher = new IndexSearcher(subReader);
+    public ShardSearcher(LeafReaderContext ctx, IndexReaderContext parent) {
+      super(parent);
+      this.ctx = Collections.singletonList(ctx);
     }
 
     public void search(Weight weight, Collector collector) throws IOException {
-      subSearcher.search(weight, null, collector);
+      search(ctx, weight, collector);
     }
 
     public TopDocs search(Weight weight, int topN) throws IOException {
-      return subSearcher.search(weight, null, topN);
-    }
+      TopScoreDocCollector collector = TopScoreDocCollector.create(topN);
+      search(ctx, weight, collector);
+      return collector.topDocs();    }
 
     @Override
     public String toString() {
-      return "ShardSearcher(" + subSearcher + ")";
+      return "ShardSearcher(" + ctx.get(0) + ")";
     }
   }
 
-  public void testSort() throws Exception {
+  public void testSort_1() throws Exception {
+    testSort(false);
+  }
+
+  public void testSort_2() throws Exception {
+    testSort(true);
+  }
+
+  void testSort(boolean useFrom) throws Exception {
 
     IndexReader reader = null;
     Directory dir = null;
 
-    final int numDocs = atLeast(1000);
-    //final int numDocs = atLeast(50);
+    final int numDocs = TEST_NIGHTLY ? atLeast(1000) : atLeast(100);
 
     final String[] tokens = new String[] {"a", "b", "c", "d", "e"};
 
@@ -71,7 +87,7 @@ public class TestTopDocsMerge extends LuceneTestCase {
 
     {
       dir = newDirectory();
-      final RandomIndexWriter w = new RandomIndexWriter(random, dir);
+      final RandomIndexWriter w = new RandomIndexWriter(random(), dir);
       // w.setDoRandomForceMerge(false);
 
       // w.w.getConfig().setMaxBufferedDocs(atLeast(100));
@@ -80,27 +96,27 @@ public class TestTopDocsMerge extends LuceneTestCase {
 
       for(int contentIDX=0;contentIDX<content.length;contentIDX++) {
         final StringBuilder sb = new StringBuilder();
-        final int numTokens = _TestUtil.nextInt(random, 1, 10);
+        final int numTokens = TestUtil.nextInt(random(), 1, 10);
         for(int tokenIDX=0;tokenIDX<numTokens;tokenIDX++) {
-          sb.append(tokens[random.nextInt(tokens.length)]).append(' ');
+          sb.append(tokens[random().nextInt(tokens.length)]).append(' ');
         }
         content[contentIDX] = sb.toString();
       }
 
       for(int docIDX=0;docIDX<numDocs;docIDX++) {
         final Document doc = new Document();
-        doc.add(newField("string", _TestUtil.randomRealisticUnicodeString(random), Field.Index.NOT_ANALYZED));
-        doc.add(newField("text", content[random.nextInt(content.length)], Field.Index.ANALYZED));
-        doc.add(new NumericField("float").setFloatValue(random.nextFloat()));
+        doc.add(new SortedDocValuesField("string", new BytesRef(TestUtil.randomRealisticUnicodeString(random()))));
+        doc.add(newTextField("text", content[random().nextInt(content.length)], Field.Store.NO));
+        doc.add(new FloatDocValuesField("float", random().nextFloat()));
         final int intValue;
-        if (random.nextInt(100) == 17) {
+        if (random().nextInt(100) == 17) {
           intValue = Integer.MIN_VALUE;
-        } else if (random.nextInt(100) == 17) {
+        } else if (random().nextInt(100) == 17) {
           intValue = Integer.MAX_VALUE;
         } else {
-          intValue = random.nextInt();
+          intValue = random().nextInt();
         }
-        doc.add(new NumericField("int").setIntValue(intValue));
+        doc.add(new NumericDocValuesField("int", intValue));
         if (VERBOSE) {
           System.out.println("  doc=" + doc);
         }
@@ -114,74 +130,118 @@ public class TestTopDocsMerge extends LuceneTestCase {
     // NOTE: sometimes reader has just one segment, which is
     // important to test
     final IndexSearcher searcher = newSearcher(reader);
-    IndexReader[] subReaders = searcher.getIndexReader().getSequentialSubReaders();
-    if (subReaders == null) {
-      subReaders = new IndexReader[] {searcher.getIndexReader()};
-    }
-    final ShardSearcher[] subSearchers = new ShardSearcher[subReaders.length];
+    final IndexReaderContext ctx = searcher.getTopReaderContext();
 
-    for(int searcherIDX=0;searcherIDX<subSearchers.length;searcherIDX++) { 
-      subSearchers[searcherIDX] = new ShardSearcher(subReaders[searcherIDX]);
-    }
+    final ShardSearcher[] subSearchers;
+    final int[] docStarts;
 
-    final List<SortField> sortFields = new ArrayList<SortField>();
-    sortFields.add(new SortField("string", SortField.STRING, true));
-    sortFields.add(new SortField("string", SortField.STRING, false));
-    sortFields.add(new SortField("int", SortField.INT, true));
-    sortFields.add(new SortField("int", SortField.INT, false));
-    sortFields.add(new SortField("float", SortField.FLOAT, true));
-    sortFields.add(new SortField("float", SortField.FLOAT, false));
-    sortFields.add(new SortField(null, SortField.SCORE, true));
-    sortFields.add(new SortField(null, SortField.SCORE, false));
-    sortFields.add(new SortField(null, SortField.DOC, true));
-    sortFields.add(new SortField(null, SortField.DOC, false));
-
-    final int[] docStarts = new int[subSearchers.length];
-    int docBase = 0;
-    for(int subIDX=0;subIDX<docStarts.length;subIDX++) {
-      docStarts[subIDX] = docBase;
-      docBase += subReaders[subIDX].maxDoc();
-      if (VERBOSE) {
-        System.out.println("docStarts[" + subIDX + "]=" + docStarts[subIDX]);
+    if (ctx instanceof LeafReaderContext) {
+      subSearchers = new ShardSearcher[1];
+      docStarts = new int[1];
+      subSearchers[0] = new ShardSearcher((LeafReaderContext) ctx, ctx);
+      docStarts[0] = 0;
+    } else {
+      final CompositeReaderContext compCTX = (CompositeReaderContext) ctx;
+      final int size = compCTX.leaves().size();
+      subSearchers = new ShardSearcher[size];
+      docStarts = new int[size];
+      int docBase = 0;
+      for(int searcherIDX=0;searcherIDX<subSearchers.length;searcherIDX++) {
+        final LeafReaderContext leave = compCTX.leaves().get(searcherIDX);
+        subSearchers[searcherIDX] = new ShardSearcher(leave, compCTX);
+        docStarts[searcherIDX] = docBase;
+        docBase += leave.reader().maxDoc();
       }
     }
 
-    for(int iter=0;iter<1000*RANDOM_MULTIPLIER;iter++) {
+    final List<SortField> sortFields = new ArrayList<>();
+    sortFields.add(new SortField("string", SortField.Type.STRING, true));
+    sortFields.add(new SortField("string", SortField.Type.STRING, false));
+    sortFields.add(new SortField("int", SortField.Type.INT, true));
+    sortFields.add(new SortField("int", SortField.Type.INT, false));
+    sortFields.add(new SortField("float", SortField.Type.FLOAT, true));
+    sortFields.add(new SortField("float", SortField.Type.FLOAT, false));
+    sortFields.add(new SortField(null, SortField.Type.SCORE, true));
+    sortFields.add(new SortField(null, SortField.Type.SCORE, false));
+    sortFields.add(new SortField(null, SortField.Type.DOC, true));
+    sortFields.add(new SortField(null, SortField.Type.DOC, false));
+
+    int numIters = atLeast(300); 
+    for(int iter=0;iter<numIters;iter++) {
 
       // TODO: custom FieldComp...
-      final Query query = new TermQuery(new Term("text", tokens[random.nextInt(tokens.length)]));
+      final Query query = new TermQuery(new Term("text", tokens[random().nextInt(tokens.length)]));
 
       final Sort sort;
-      if (random.nextInt(10) == 4) {
+      if (random().nextInt(10) == 4) {
         // Sort by score
         sort = null;
       } else {
-        final SortField[] randomSortFields = new SortField[_TestUtil.nextInt(random, 1, 3)];
+        final SortField[] randomSortFields = new SortField[TestUtil.nextInt(random(), 1, 3)];
         for(int sortIDX=0;sortIDX<randomSortFields.length;sortIDX++) {
-          randomSortFields[sortIDX] = sortFields.get(random.nextInt(sortFields.size()));
+          randomSortFields[sortIDX] = sortFields.get(random().nextInt(sortFields.size()));
         }
         sort = new Sort(randomSortFields);
       }
 
-      final int numHits = _TestUtil.nextInt(random, 1, numDocs+5);
+      final int numHits = TestUtil.nextInt(random(), 1, numDocs + 5);
       //final int numHits = 5;
-      
+
       if (VERBOSE) {
         System.out.println("TEST: search query=" + query + " sort=" + sort + " numHits=" + numHits);
       }
 
+      int from = -1;
+      int size = -1;
       // First search on whole index:
       final TopDocs topHits;
       if (sort == null) {
-        topHits = searcher.search(query, numHits);
+        if (useFrom) {
+          TopScoreDocCollector c = TopScoreDocCollector.create(numHits);
+          searcher.search(query, c);
+          from = TestUtil.nextInt(random(), 0, numHits - 1);
+          size = numHits - from;
+          TopDocs tempTopHits = c.topDocs();
+          if (from < tempTopHits.scoreDocs.length) {
+            // Can't use TopDocs#topDocs(start, howMany), since it has different behaviour when start >= hitCount
+            // than TopDocs#merge currently has
+            ScoreDoc[] newScoreDocs = new ScoreDoc[Math.min(size, tempTopHits.scoreDocs.length - from)];
+            System.arraycopy(tempTopHits.scoreDocs, from, newScoreDocs, 0, newScoreDocs.length);
+            tempTopHits.scoreDocs = newScoreDocs;
+            topHits = tempTopHits;
+          } else {
+            topHits = new TopDocs(tempTopHits.totalHits, new ScoreDoc[0], tempTopHits.getMaxScore());
+          }
+        } else {
+          topHits = searcher.search(query, numHits);
+        }
       } else {
-        final TopFieldCollector c = TopFieldCollector.create(sort, numHits, true, true, true, random.nextBoolean());
+        final TopFieldCollector c = TopFieldCollector.create(sort, numHits, true, true, true);
         searcher.search(query, c);
-        topHits = c.topDocs(0, numHits);
+        if (useFrom) {
+          from = TestUtil.nextInt(random(), 0, numHits - 1);
+          size = numHits - from;
+          TopDocs tempTopHits = c.topDocs();
+          if (from < tempTopHits.scoreDocs.length) {
+            // Can't use TopDocs#topDocs(start, howMany), since it has different behaviour when start >= hitCount
+            // than TopDocs#merge currently has
+            ScoreDoc[] newScoreDocs = new ScoreDoc[Math.min(size, tempTopHits.scoreDocs.length - from)];
+            System.arraycopy(tempTopHits.scoreDocs, from, newScoreDocs, 0, newScoreDocs.length);
+            tempTopHits.scoreDocs = newScoreDocs;
+            topHits = tempTopHits;
+          } else {
+            topHits = new TopDocs(tempTopHits.totalHits, new ScoreDoc[0], tempTopHits.getMaxScore());
+          }
+        } else {
+          topHits = c.topDocs(0, numHits);
+        }
       }
 
       if (VERBOSE) {
-        System.out.println("  top search: " + topHits.totalHits + " totalHits; hits=" + (topHits.scoreDocs == null ? "null" : topHits.scoreDocs.length));
+        if (useFrom) {
+          System.out.println("from=" + from + " size=" + size);
+        }
+        System.out.println("  top search: " + topHits.totalHits + " totalHits; hits=" + (topHits.scoreDocs == null ? "null" : topHits.scoreDocs.length + " maxScore=" + topHits.getMaxScore()));
         if (topHits.scoreDocs != null) {
           for(int hitIDX=0;hitIDX<topHits.scoreDocs.length;hitIDX++) {
             final ScoreDoc sd = topHits.scoreDocs[hitIDX];
@@ -191,20 +251,24 @@ public class TestTopDocsMerge extends LuceneTestCase {
       }
 
       // ... then all shards:
-      final Weight w = searcher.createNormalizedWeight(query);
+      final Weight w = searcher.createNormalizedWeight(query, true);
 
-      final TopDocs[] shardHits = new TopDocs[subSearchers.length];
+      final TopDocs[] shardHits;
+      if (sort == null) {
+        shardHits = new TopDocs[subSearchers.length];
+      } else {
+        shardHits = new TopFieldDocs[subSearchers.length];
+      }
       for(int shardIDX=0;shardIDX<subSearchers.length;shardIDX++) {
         final TopDocs subHits;
         final ShardSearcher subSearcher = subSearchers[shardIDX];
         if (sort == null) {
           subHits = subSearcher.search(w, numHits);
         } else {
-          final TopFieldCollector c = TopFieldCollector.create(sort, numHits, true, true, true, random.nextBoolean());
+          final TopFieldCollector c = TopFieldCollector.create(sort, numHits, true, true, true);
           subSearcher.search(w, c);
           subHits = c.topDocs(0, numHits);
         }
-        rebaseDocIDs(docStarts[shardIDX], subHits);
 
         shardHits[shardIDX] = subHits;
         if (VERBOSE) {
@@ -218,17 +282,21 @@ public class TestTopDocsMerge extends LuceneTestCase {
       }
 
       // Merge:
-      final TopDocs mergedHits = TopDocs.merge(sort, numHits, shardHits);
-
-      if (VERBOSE) {
-        System.out.println("  mergedHits: " + mergedHits.totalHits + " totalHits; hits=" + (mergedHits.scoreDocs == null ? "null" : mergedHits.scoreDocs.length));
-        if (mergedHits.scoreDocs != null) {
-          for(int hitIDX=0;hitIDX<mergedHits.scoreDocs.length;hitIDX++) {
-            final ScoreDoc sd = mergedHits.scoreDocs[hitIDX];
-            System.out.println("    doc=" + sd.doc + " score=" + sd.score);
-          }
+      final TopDocs mergedHits;
+      if (useFrom) {
+        if (sort == null) {
+          mergedHits = TopDocs.merge(from, size, shardHits);
+        } else {
+          mergedHits = TopDocs.merge(sort, from, size, (TopFieldDocs[]) shardHits);
+        }
+      } else {
+        if (sort == null) {
+          mergedHits = TopDocs.merge(numHits, shardHits);
+        } else {
+          mergedHits = TopDocs.merge(sort, numHits, (TopFieldDocs[]) shardHits);
         }
       }
+
       if (mergedHits.scoreDocs != null) {
         // Make sure the returned shards are correct:
         for(int hitIDX=0;hitIDX<mergedHits.scoreDocs.length;hitIDX++) {
@@ -239,35 +307,9 @@ public class TestTopDocsMerge extends LuceneTestCase {
         }
       }
 
-      _TestUtil.assertEquals(topHits, mergedHits);
+      TestUtil.assertEquals(topHits, mergedHits);
     }
-    searcher.close();
     reader.close();
     dir.close();
-  }
-
-  private void rebaseDocIDs(int docBase, TopDocs hits) {
-    List<Integer> docFieldLocs = new ArrayList<Integer>();
-    if (hits instanceof TopFieldDocs) {
-      TopFieldDocs fieldHits = (TopFieldDocs) hits;
-      for(int fieldIDX=0;fieldIDX<fieldHits.fields.length;fieldIDX++) {
-        if (fieldHits.fields[fieldIDX].getType() == SortField.DOC) {
-          docFieldLocs.add(fieldIDX);
-        }
-      }
-    }
-
-    for(int hitIDX=0;hitIDX<hits.scoreDocs.length;hitIDX++) {
-      final ScoreDoc sd = hits.scoreDocs[hitIDX];
-      sd.doc += docBase;
-      if (sd instanceof FieldDoc) {
-        final FieldDoc fd = (FieldDoc) sd;
-        if (fd.fields != null) {
-          for(int idx : docFieldLocs) {
-            fd.fields[idx] = Integer.valueOf(((Integer) fd.fields[idx]).intValue() + docBase);
-          }
-        }
-      }
-    }
   }
 }

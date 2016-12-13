@@ -1,6 +1,4 @@
-package org.apache.lucene.store;
-
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,17 +14,18 @@ package org.apache.lucene.store;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.store;
 
-import java.io.File;
+
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.MockAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.RandomIndexWriter;
@@ -34,45 +33,54 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LineFileDocs;
-import org.apache.lucene.util.LuceneTestCase;
-import org.apache.lucene.util.Version;
-import org.apache.lucene.util._TestUtil;
+import org.apache.lucene.util.TestUtil;
 
-public class TestNRTCachingDirectory extends LuceneTestCase {
+public class TestNRTCachingDirectory extends BaseDirectoryTestCase {
+
+  // TODO: RAMDir used here, because it's still too slow to use e.g. SimpleFS
+  // for the threads tests... maybe because of the synchronization in listAll?
+  // would be good to investigate further...
+  @Override
+  protected Directory getDirectory(Path path) throws IOException {
+    return new NRTCachingDirectory(new RAMDirectory(),
+                                   .1 + 2.0*random().nextDouble(),
+                                   .1 + 5.0*random().nextDouble());
+  }
 
   public void testNRTAndCommit() throws Exception {
     Directory dir = newDirectory();
     NRTCachingDirectory cachedDir = new NRTCachingDirectory(dir, 2.0, 25.0);
-    IndexWriterConfig conf = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random));
-    conf.setMergeScheduler(cachedDir.getMergeScheduler());
-    RandomIndexWriter w = new RandomIndexWriter(random, cachedDir, conf);
-    w.w.setInfoStream(VERBOSE ? System.out : null);
-    final LineFileDocs docs = new LineFileDocs(random);    
-    final int numDocs = _TestUtil.nextInt(random, 100, 400);
+    MockAnalyzer analyzer = new MockAnalyzer(random());
+    analyzer.setMaxTokenLength(TestUtil.nextInt(random(), 1, IndexWriter.MAX_TERM_LENGTH));
+    IndexWriterConfig conf = newIndexWriterConfig(analyzer);
+    RandomIndexWriter w = new RandomIndexWriter(random(), cachedDir, conf);
+    final LineFileDocs docs = new LineFileDocs(random());
+    final int numDocs = TestUtil.nextInt(random(), 100, 400);
 
     if (VERBOSE) {
       System.out.println("TEST: numDocs=" + numDocs);
     }
 
-    final List<String> ids = new ArrayList<String>();
-    IndexReader r = null;
+    final List<BytesRef> ids = new ArrayList<>();
+    DirectoryReader r = null;
     for(int docCount=0;docCount<numDocs;docCount++) {
       final Document doc = docs.nextDoc();
-      ids.add(new String(doc.get("docid")));
+      ids.add(new BytesRef(doc.get("docid")));
       w.addDocument(doc);
-      if (random.nextInt(20) == 17) {
+      if (random().nextInt(20) == 17) {
         if (r == null) {
-          r = IndexReader.open(w.w, false);
+          r = DirectoryReader.open(w.w);
         } else {
-          final IndexReader r2 = IndexReader.openIfChanged(r);
+          final DirectoryReader r2 = DirectoryReader.openIfChanged(r);
           if (r2 != null) {
             r.close();
             r = r2;
           }
         }
         assertEquals(1+docCount, r.numDocs());
-        final IndexSearcher s = new IndexSearcher(r);
+        final IndexSearcher s = newSearcher(r);
         // Just make sure search can run; we can't assert
         // totHits since it could be 0
         TopDocs hits = s.search(new TermQuery(new Term("body", "the")), 10);
@@ -93,12 +101,13 @@ public class TestNRTCachingDirectory extends LuceneTestCase {
     }
     assertEquals(0, cachedFiles.length);
     
-    r = IndexReader.open(dir);
-    for(String id : ids) {
+    r = DirectoryReader.open(dir);
+    for(BytesRef id : ids) {
       assertEquals(1, r.docFreq(new Term("docid", id)));
     }
     r.close();
     cachedDir.close();
+    docs.close();
   }
 
   // NOTE: not a test; just here to make sure the code frag
@@ -106,56 +115,25 @@ public class TestNRTCachingDirectory extends LuceneTestCase {
   public void verifyCompiles() throws Exception {
     Analyzer analyzer = null;
 
-    Directory fsDir = FSDirectory.open(new File("/path/to/index"));
+    Directory fsDir = FSDirectory.open(createTempDir("verify"));
     NRTCachingDirectory cachedFSDir = new NRTCachingDirectory(fsDir, 2.0, 25.0);
-    IndexWriterConfig conf = new IndexWriterConfig(Version.LUCENE_32, analyzer);
-    conf.setMergeScheduler(cachedFSDir.getMergeScheduler());
+    IndexWriterConfig conf = new IndexWriterConfig(analyzer);
     IndexWriter writer = new IndexWriter(cachedFSDir, conf);
+    writer.close();
+    cachedFSDir.close();
   }
 
-  public void testDeleteFile() throws Exception {
-    Directory dir = new NRTCachingDirectory(newDirectory(), 2.0, 25.0);
-    dir.createOutput("foo.txt").close();
-    dir.deleteFile("foo.txt");
-    assertEquals(0, dir.listAll().length);
-    dir.close();
-  }
-  
-  // LUCENE-3382 -- make sure we get exception if the directory really does not exist.
-  public void testNoDir() throws Throwable {
-    Directory dir = new NRTCachingDirectory(newFSDirectory(_TestUtil.getTempDir("doesnotexist")), 2.0, 25.0);
-    try {
-      IndexReader.open(dir, true);
-      fail("did not hit expected exception");
-    } catch (NoSuchDirectoryException nsde) {
-      // expected
-    }
-    dir.close();
-  }
-  
-  // LUCENE-3382 test that we can add a file, and then when we call list() we get it back
-  public void testDirectoryFilter() throws IOException {
-    Directory dir = new NRTCachingDirectory(newFSDirectory(_TestUtil.getTempDir("foo")), 2.0, 25.0);
-    String name = "file";
-    try {
-      dir.createOutput(name).close();
-      assertTrue(dir.fileExists(name));
-      assertTrue(Arrays.asList(dir.listAll()).contains(name));
-    } finally {
-      dir.close();
-    }
-  }
-  
-  /** Creates a file of the specified size with sequential data. The first
-   *  byte is written as the start byte provided. All subsequent bytes are
-   *  computed as start + offset where offset is the number of the byte.
-   */
-  private void createSequenceFile(Directory dir, String name, byte start, int size) throws IOException {
-      IndexOutput os = dir.createOutput(name);
-      for (int i=0; i < size; i++) {
-          os.writeByte(start);
-          start ++;
-      }
-      os.close();
+  public void testCreateTempOutputSameName() throws Exception {
+
+    Directory fsDir = FSDirectory.open(createTempDir("verify"));
+    NRTCachingDirectory nrtDir = new NRTCachingDirectory(fsDir, 2.0, 25.0);
+    String name = "foo_bar_0.tmp";
+    nrtDir.createOutput(name, IOContext.DEFAULT).close();
+
+    IndexOutput out = nrtDir.createTempOutput("foo", "bar", IOContext.DEFAULT);
+    assertFalse(name.equals(out.getName()));
+    out.close();
+    nrtDir.close();
+    fsDir.close();
   }
 }

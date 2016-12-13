@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.common;
 
 import java.io.Serializable;
@@ -23,7 +22,7 @@ import java.util.Collection;
 import java.util.Iterator;
 
 /**
- * @version $Id$
+ *
  * @since solr 1.3
  */
 public class SolrInputField implements Iterable<Object>, Serializable
@@ -41,14 +40,16 @@ public class SolrInputField implements Iterable<Object>, Serializable
   //---------------------------------------------------------------
 
   /**
-   * Set the value for a field.  Arrays will be converted to a collection.
+   * Set the value for a field.  Arrays will be converted to a collection. If
+   * a collection is given, then that collection will be used as the backing
+   * collection for the values.
    */
   public void setValue(Object v, float b) {
     boost = b;
 
     if( v instanceof Object[] ) {
       Object[] arr = (Object[])v;
-      Collection<Object> c = new ArrayList<Object>( arr.length );
+      Collection<Object> c = new ArrayList<>( arr.length );
       for( Object o : arr ) {
         c.add( o );
       }
@@ -60,13 +61,22 @@ public class SolrInputField implements Iterable<Object>, Serializable
   }
 
   /**
-   * Add values to a field.  if the added value is a collection, each value
-   * will be added individually
+   * Add values to a field.  If the added value is a collection, each value
+   * will be added individually.
    */
   @SuppressWarnings("unchecked")
   public void addValue(Object v, float b) {
     if( value == null ) {
-      setValue(v, b);
+      if ( v instanceof Collection ) {
+        Collection<Object> c = new ArrayList<>( 3 );
+        for ( Object o : (Collection<Object>)v ) {
+          c.add( o );
+        }
+        setValue(c, b);
+      } else {
+        setValue(v, b);
+      }
+
       return;
     }
     
@@ -81,7 +91,7 @@ public class SolrInputField implements Iterable<Object>, Serializable
       vals = (Collection<Object>)value;
     }
     else {
-      vals = new ArrayList<Object>( 3 );
+      vals = new ArrayList<>( 3 );
       vals.add( value );
       value = vals;
     }
@@ -135,7 +145,7 @@ public class SolrInputField implements Iterable<Object>, Serializable
       return (Collection<Object>)value;
     }
     if( value != null ) {
-      Collection<Object> vals = new ArrayList<Object>(1);
+      Collection<Object> vals = new ArrayList<>(1);
       vals.add( value );
       return vals;
     }
@@ -171,6 +181,7 @@ public class SolrInputField implements Iterable<Object>, Serializable
     this.name = name;
   }
 
+  @Override
   @SuppressWarnings("unchecked")
   public Iterator<Object> iterator() {
     if( value instanceof Collection ) {
@@ -179,15 +190,18 @@ public class SolrInputField implements Iterable<Object>, Serializable
     return new Iterator<Object>() {
       boolean nxt = (value!=null);
       
+      @Override
       public boolean hasNext() {
         return nxt;
       }
 
+      @Override
       public Object next() {
         nxt = false;
         return value;
       }
 
+      @Override
       public void remove() {
         throw new UnsupportedOperationException();
       }
@@ -197,6 +211,21 @@ public class SolrInputField implements Iterable<Object>, Serializable
   @Override
   public String toString()
   {
-    return name + "("+boost+")={" + value + "}";
+    return name + ((boost == 1.0) ? "=" : ("("+boost+")=")) + value;
+  }
+
+  public SolrInputField deepCopy() {
+    SolrInputField clone = new SolrInputField(name);
+    clone.boost = boost;
+    // We can't clone here, so we rely on simple primitives
+    if (value instanceof Collection) {
+      Collection<Object> values = (Collection<Object>) value;
+      Collection<Object> cloneValues = new ArrayList<>(values.size());
+      cloneValues.addAll(values);
+      clone.value = cloneValues;
+    } else {
+      clone.value = value;
+    }
+    return clone;
   }
 }

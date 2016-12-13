@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,17 +16,13 @@
  */
 package org.apache.solr.search;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.queryParser.ParseException;
+import org.apache.lucene.queries.function.FunctionQuery;
+import org.apache.lucene.queries.function.ValueSource;
+import org.apache.lucene.queries.function.valuesource.QueryValueSource;
 import org.apache.lucene.search.*;
 import org.apache.solr.common.params.SolrParams;
-import org.apache.solr.common.util.NamedList;
-import org.apache.solr.core.SolrConfig;
 import org.apache.solr.request.SolrQueryRequest;
 import org.apache.solr.search.function.*;
-
-import java.io.IOException;
-import java.util.Map;
 
 /**
  * Create a range query over a function.
@@ -39,10 +35,7 @@ import java.util.Map;
  * <br>Filter query example: <code>fq={!frange l=0 u=2.2}sum(user_ranking,editor_ranking)</code> 
  */
 public class FunctionRangeQParserPlugin extends QParserPlugin {
-  public static String NAME = "frange";
-
-  public void init(NamedList args) {
-  }
+  public static final String NAME = "frange";
 
   @Override
   public QParser createParser(String qstr, SolrParams localParams, SolrParams params, SolrQueryRequest req) {
@@ -51,7 +44,7 @@ public class FunctionRangeQParserPlugin extends QParserPlugin {
       String funcStr;
 
       @Override
-      public Query parse() throws ParseException {
+      public Query parse() throws SyntaxError {
         funcStr = localParams.get(QueryParsing.V, null);
         Query funcQ = subQuery(funcStr, FunctionQParserPlugin.NAME).getQuery();
         if (funcQ instanceof FunctionQuery) {
@@ -75,42 +68,3 @@ public class FunctionRangeQParserPlugin extends QParserPlugin {
 
 }
 
-// This class works as either a normal constant score query, or as a PostFilter using a collector
-class FunctionRangeQuery extends SolrConstantScoreQuery implements PostFilter {
-  final ValueSourceRangeFilter rangeFilt;
-
-  public FunctionRangeQuery(ValueSourceRangeFilter filter) {
-    super(filter);
-    this.rangeFilt = filter;
-  }
-
-  public DelegatingCollector getFilterCollector(IndexSearcher searcher) {
-    Map fcontext = ValueSource.newContext();
-    return new FunctionRangeCollector(fcontext);
-  }
-
-  class FunctionRangeCollector extends DelegatingCollector {
-    final Map fcontext;
-    ValueSourceScorer scorer;
-    int maxdoc;
-
-    public FunctionRangeCollector(Map fcontext) {
-      this.fcontext = fcontext;
-    }
-
-    @Override
-    public void collect(int doc) throws IOException {
-      if (doc<maxdoc && scorer.matches(doc)) {
-        delegate.collect(doc);
-      }
-    }
-
-    @Override
-    public void setNextReader(IndexReader reader, int docBase) throws IOException {
-      maxdoc = reader.maxDoc();
-      DocValues dv = rangeFilt.getValueSource().getValues(fcontext, reader);
-      scorer = dv.getRangeScorer(reader, rangeFilt.getLowerVal(), rangeFilt.getUpperVal(), rangeFilt.isIncludeLower(), rangeFilt.isIncludeUpper());
-      super.setNextReader(reader, docBase);
-    }
-  }
-}

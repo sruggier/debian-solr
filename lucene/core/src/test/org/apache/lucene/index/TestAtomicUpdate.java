@@ -1,11 +1,10 @@
-package org.apache.lucene.index;
-
-/**
- * Copyright 2004 The Apache Software Foundation
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -15,34 +14,17 @@ package org.apache.lucene.index;
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.lucene.index;
 
-import org.apache.lucene.util.*;
-import org.apache.lucene.store.*;
-import org.apache.lucene.document.*;
+import java.nio.file.Path;
+
 import org.apache.lucene.analysis.MockAnalyzer;
-
-import java.util.Random;
-import java.io.File;
-import java.io.IOException;
+import org.apache.lucene.document.*;
+import org.apache.lucene.store.*;
+import org.apache.lucene.util.*;
 
 public class TestAtomicUpdate extends LuceneTestCase {
   
-  private static final class MockIndexWriter extends IndexWriter {
-
-    static Random RANDOM;
-
-    public MockIndexWriter(Directory dir, IndexWriterConfig conf) throws IOException {
-      super(dir, conf);
-    }
-
-    @Override
-    boolean testPoint(String name) {
-      //      if (name.equals("startCommit")) {
-      if (RANDOM.nextInt(4) == 2)
-        Thread.yield();
-      return true;
-    }
-  }
 
   private static abstract class TimedThread extends Thread {
     volatile boolean failed;
@@ -95,8 +77,10 @@ public class TestAtomicUpdate extends LuceneTestCase {
       // Update all 100 docs...
       for(int i=0; i<100; i++) {
         Document d = new Document();
-        d.add(new Field("id", Integer.toString(i), Field.Store.YES, Field.Index.NOT_ANALYZED));
-        d.add(new Field("contents", English.intToEnglish(i+10*count), Field.Store.NO, Field.Index.ANALYZED));
+        d.add(new StringField("id", Integer.toString(i), Field.Store.YES));
+        d.add(new TextField("contents", English.intToEnglish(i+10*count), Field.Store.NO));
+        d.add(new IntPoint("doc", i));
+        d.add(new IntPoint("doc2d", i, i));
         writer.updateDocument(new Term("id", Integer.toString(i)), d);
       }
     }
@@ -112,7 +96,7 @@ public class TestAtomicUpdate extends LuceneTestCase {
 
     @Override
     public void doWork() throws Throwable {
-      IndexReader r = IndexReader.open(directory, true);
+      IndexReader r = DirectoryReader.open(directory);
       assertEquals(100, r.numDocs());
       r.close();
     }
@@ -126,18 +110,16 @@ public class TestAtomicUpdate extends LuceneTestCase {
 
     TimedThread[] threads = new TimedThread[4];
 
-    IndexWriterConfig conf = new IndexWriterConfig(
-        TEST_VERSION_CURRENT, new MockAnalyzer(random))
+    IndexWriterConfig conf = new IndexWriterConfig(new MockAnalyzer(random()))
         .setMaxBufferedDocs(7);
     ((TieredMergePolicy) conf.getMergePolicy()).setMaxMergeAtOnce(3);
-    IndexWriter writer = new MockIndexWriter(directory, conf);
-    writer.setInfoStream(VERBOSE ? System.out : null);
+    IndexWriter writer = RandomIndexWriter.mockIndexWriter(directory, conf, random());
 
     // Establish a base index of 100 docs:
     for(int i=0;i<100;i++) {
       Document d = new Document();
-      d.add(newField("id", Integer.toString(i), Field.Store.YES, Field.Index.NOT_ANALYZED));
-      d.add(newField("contents", English.intToEnglish(i), Field.Store.NO, Field.Index.ANALYZED));
+      d.add(newStringField("id", Integer.toString(i), Field.Store.YES));
+      d.add(newTextField("contents", English.intToEnglish(i), Field.Store.NO));
       if ((i-1)%7 == 0) {
         writer.commit();
       }
@@ -145,7 +127,7 @@ public class TestAtomicUpdate extends LuceneTestCase {
     }
     writer.commit();
 
-    IndexReader r = IndexReader.open(directory, true);
+    IndexReader r = DirectoryReader.open(directory);
     assertEquals(100, r.numDocs());
     r.close();
 
@@ -186,19 +168,17 @@ public class TestAtomicUpdate extends LuceneTestCase {
     FSDirectory.
   */
   public void testAtomicUpdates() throws Exception {
-    MockIndexWriter.RANDOM = random;
     Directory directory;
 
     // First in a RAM directory:
-    directory = new MockDirectoryWrapper(random, new RAMDirectory());
+    directory = new MockDirectoryWrapper(random(), new RAMDirectory());
     runTest(directory);
     directory.close();
 
     // Second in an FSDirectory:
-    File dirPath = _TestUtil.getTempDir("lucene.test.atomic");
+    Path dirPath = createTempDir("lucene.test.atomic");
     directory = newFSDirectory(dirPath);
     runTest(directory);
     directory.close();
-    _TestUtil.rmDir(dirPath);
   }
 }

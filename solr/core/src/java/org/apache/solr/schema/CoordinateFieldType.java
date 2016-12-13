@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -14,21 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.solr.schema;
 
 /**
  * A CoordinateFieldType is the base class for {@link org.apache.solr.schema.FieldType}s that have semantics
  * related to items in a coordinate system.
- * <br/>
+ * <br>
  * Implementations depend on a delegating work to a sub {@link org.apache.solr.schema.FieldType}, specified by
  * either the {@link #SUB_FIELD_SUFFIX} or the {@link #SUB_FIELD_TYPE} (the latter is used if both are defined.
- * <br/>
+ * <br>
  * Example:
  * <pre>&lt;fieldType name="xy" class="solr.PointType" dimension="2" subFieldType="double"/&gt;
  * </pre>
  * In theory, classes deriving from this should be able to do things like represent a point, a polygon, a line, etc.
- * <br/>
+ * <br>
  * NOTE: There can only be one sub Field Type.
  *
  */

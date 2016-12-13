@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,19 +17,16 @@
 package org.apache.solr.spelling;
 
 import org.apache.lucene.analysis.Token;
-import org.apache.lucene.analysis.WhitespaceAnalyzer;
 import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.FlagsAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
-import org.apache.lucene.util.Version;
-
 import java.util.Collection;
 import java.util.HashSet;
-import java.io.StringReader;
 import java.io.IOException;
 
 
@@ -37,23 +34,25 @@ import java.io.IOException;
  *
  * @since solr 1.3
  **/
-class SimpleQueryConverter extends SpellingQueryConverter{
+class SimpleQueryConverter extends SpellingQueryConverter {
+
   @Override
   public Collection<Token> convert(String origQuery) {
-    Collection<Token> result = new HashSet<Token>();
-    WhitespaceAnalyzer analyzer = new WhitespaceAnalyzer(Version.LUCENE_31);
-    TokenStream ts = analyzer.tokenStream("", new StringReader(origQuery));
-    // TODO: support custom attributes
-    CharTermAttribute termAtt = ts.addAttribute(CharTermAttribute.class);
-    OffsetAttribute offsetAtt = ts.addAttribute(OffsetAttribute.class);
-    TypeAttribute typeAtt = ts.addAttribute(TypeAttribute.class);
-    FlagsAttribute flagsAtt = ts.addAttribute(FlagsAttribute.class);
-    PayloadAttribute payloadAtt = ts.addAttribute(PayloadAttribute.class);
-    PositionIncrementAttribute posIncAtt = ts.addAttribute(PositionIncrementAttribute.class);
+    Collection<Token> result = new HashSet<>();
+    WhitespaceAnalyzer analyzer = new WhitespaceAnalyzer();
     
-    try {
+    try (TokenStream ts = analyzer.tokenStream("", origQuery)) {
+      // TODO: support custom attributes
+      CharTermAttribute termAtt = ts.addAttribute(CharTermAttribute.class);
+      OffsetAttribute offsetAtt = ts.addAttribute(OffsetAttribute.class);
+      TypeAttribute typeAtt = ts.addAttribute(TypeAttribute.class);
+      FlagsAttribute flagsAtt = ts.addAttribute(FlagsAttribute.class);
+      PayloadAttribute payloadAtt = ts.addAttribute(PayloadAttribute.class);
+      PositionIncrementAttribute posIncAtt = ts.addAttribute(PositionIncrementAttribute.class);
+
       ts.reset();
-      while (ts.incrementToken()){
+
+      while (ts.incrementToken()) {
         Token tok = new Token();
         tok.copyBuffer(termAtt.buffer(), 0, termAtt.length());
         tok.setOffset(offsetAtt.startOffset(), offsetAtt.endOffset());
@@ -63,9 +62,10 @@ class SimpleQueryConverter extends SpellingQueryConverter{
         tok.setType(typeAtt.type());
         result.add(tok);
       }
+      ts.end();      
+      return result;
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
-    return result;
   }
 }
