@@ -1,0 +1,21 @@
+From: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
+Date: Tue, 13 Dec 2016 18:09:01 -0500
+Subject: javacc-system
+
+---
+ lucene/queryparser/build.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lucene/queryparser/build.xml b/lucene/queryparser/build.xml
+index b6e43c2..8973ca3 100644
+--- a/lucene/queryparser/build.xml
++++ b/lucene/queryparser/build.xml
+@@ -164,7 +164,7 @@ import org.apache.lucene.queryparser.flexible.core.messages.*;"
+       <javacc
+           target="@{target}"
+           outputDirectory="@{outputDir}"
+-          javacchome="${build.dir}/javacc"
++          javacchome="/usr/share/java/"
+           jdkversion="1.${javac.release}"
+       />
+       <fixcrlf srcdir="@{outputDir}" includes="*.java" encoding="UTF-8">
