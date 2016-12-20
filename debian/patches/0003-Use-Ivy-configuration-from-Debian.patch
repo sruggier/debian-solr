@@ -1,0 +1,36 @@
+From: Simon Ruggier <simon@platform.sh>
+Date: Tue, 20 Dec 2016 18:54:20 -0500
+Subject: Use Ivy configuration from Debian
+
+---
+ lucene/common-build.xml           | 2 +-
+ lucene/top-level-ivy-settings.xml | 4 ++++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/lucene/common-build.xml b/lucene/common-build.xml
+index 44347a2..92a031d 100644
+--- a/lucene/common-build.xml
++++ b/lucene/common-build.xml
+@@ -394,7 +394,7 @@
+           you have an idea, fix it.
+           unless="ivy.settings.uptodate" -->
+     <!-- override: just for safety, should be unnecessary -->
+-    <ivy:configure file="${common.dir}/top-level-ivy-settings.xml" override="true"/>
++    <ivy:configure file="${common.dir}/top-level-ivy-settings.xml" override="false"/>
+     <!-- <property name="ivy.settings.uptodate" value="true"/> -->
+   </target>
+ 
+diff --git a/lucene/top-level-ivy-settings.xml b/lucene/top-level-ivy-settings.xml
+index 175cf4d..5747748 100644
+--- a/lucene/top-level-ivy-settings.xml
++++ b/lucene/top-level-ivy-settings.xml
+@@ -20,5 +20,9 @@
+   <!-- Load ivy-versions.properties as Ivy variables. -->
+   <properties file="${ivy.settings.dir}/ivy-versions.properties" override="false"/>
+   <!-- Include the Ivy settings file pointed to by the "ivysettings.xml" property. -->
++  <!--
+   <include file="${ivysettings.xml}"/>
++  -->
++  <!-- Use Debian's settings instead -->
++  <include file="/usr/share/ivy-debian-helper/ivysettings.xml"/>
+ </ivysettings>
