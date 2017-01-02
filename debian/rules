@@ -9,7 +9,7 @@ DEB_UPSTREAM_VERSION=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^+]+)
 	dh $@ --with maven_repo_helper --buildsystem ivy
 
 override_dh_auto_build:
-	dh_auto_build -- compile
+	dh_auto_build -- -verbose compile
 
 override_dh_installchangelogs:
 	dh_installchangelogs -pliblucene3-java lucene/CHANGES.txt
