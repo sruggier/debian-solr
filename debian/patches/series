@@ -1,3 +1,4 @@
 0001-javacc-system.patch
 0002-remove-prettify.patch
 0003-Use-Ivy-configuration-from-Debian.patch
+0004-Ignore-spatial4j-tests-dependency.patch

@@ -1,0 +1,24 @@
+From: Simon Ruggier <simon@platform.sh>
+Date: Mon, 2 Jan 2017 13:58:46 -0500
+Subject: Ignore spatial4j tests dependency
+
+This may fall under the scope of what maven.ignoreRules is meant to
+cover, but I couldn't make that work.
+---
+ lucene/spatial-extras/ivy.xml | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/lucene/spatial-extras/ivy.xml b/lucene/spatial-extras/ivy.xml
+index 448776f..eb2ded6 100644
+--- a/lucene/spatial-extras/ivy.xml
++++ b/lucene/spatial-extras/ivy.xml
+@@ -26,7 +26,9 @@
+     <dependency org="org.locationtech.spatial4j" name="spatial4j" rev="${/org.locationtech.spatial4j/spatial4j}" conf="compile"/>
+ 
+     <dependency org="org.locationtech.spatial4j" name="spatial4j" rev="${/org.locationtech.spatial4j/spatial4j}" conf="test">
++      <!--
+       <artifact name="spatial4j" type="test" ext="jar" maven:classifier="tests" />
++      -->
+     </dependency>
+ 
+     <dependency org="org.slf4j" name="slf4j-api" rev="${/org.slf4j/slf4j-api}" conf="test"/>
