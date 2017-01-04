@@ -13,15 +13,3 @@
 # and version starting with 3., this dependency is then removed
 # from the POM
 #   junit junit jar s/3\\..*/3.x/
-
-com.ibm.icu         icu4j      * * * *
-javax.mail          mail       * * * *
-jline               jline      * * * *
-net.arnx            jsonic     * * * *
-com.cybozu.labs     langdetect * * * *
-org.apache.tika     *          * * * *
-org.apache.uima     *          * * * *
-org.apache.velocity *          * * * *
-org.carrot2         *          * * * *
-
-org.apache.geronimo.specs geronimo-stax-api_1.0_spec

@@ -17,5 +17,12 @@
 #   junit junit jar s/3\\..*/3.x/
 # net.sourceforge.nekohtml nekohtml * s/.*/debian/ * *
 
+javax.servlet s/servlet-api/javax.servlet-api/ * s/.*/3.1/ * *
+javax.servlet javax.servlet-api * s/3.1.0/3.1/ * *
+org.eclipse.jetty jetty-continuation * s/9\..*/9.x/ * *
+org.eclipse.jetty jetty-http * s/9\..*/9.x/ * *
+org.eclipse.jetty jetty-io * s/9\..*/9.x/ * *
+org.eclipse.jetty jetty-server * s/9\..*/9.x/ * *
+org.eclipse.jetty jetty-servlet * s/9\..*/9.x/ * *
+org.eclipse.jetty jetty-util * s/9\..*/9.x/ * *
 junit junit * s/4\..*/4.x/ * *
-s/org.locationtech.spatial4j/com.spatial4j/ spatial4j * * * *
